@@ -1,11 +1,12 @@
 import { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { eq } from 'drizzle-orm';
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService, type SyncPushDto } from '../src/sync-push.service.js';
+import { SyncConflictService } from '../src/sync-conflict.service.js';
 import * as schema from '../src/schema.js';
 
 describe('Sync Engine / sync_seq integration', () => {
@@ -14,6 +15,7 @@ describe('Sync Engine / sync_seq integration', () => {
   let db: NodePgDatabase<typeof schema>;
   let pull: SyncPullService;
   let push: SyncPushService;
+  let conflict: SyncConflictService;
 
   const agentA = randomUUID();
   const agentB = randomUUID();
@@ -26,11 +28,12 @@ describe('Sync Engine / sync_seq integration', () => {
   db = drizzle(pool, { schema });
   pull = new SyncPullService(db);
   push = new SyncPushService(db);
+  conflict = new SyncConflictService(db);
 });
 
 beforeEach(async () => {
   await pool.query(
-    'TRUNCATE check_ins, missions, sites, sync_idempotency_keys RESTART IDENTITY CASCADE',
+    'TRUNCATE check_ins, missions, sites, sync_idempotency_keys, sync_conflicts RESTART IDENTITY CASCADE',
   );
 
   await pool.query(
@@ -872,5 +875,96 @@ afterAll(async () => {
     // Le sync_seq ne doit pas avoir changé :
     // l'opération interdite doit avoir été entièrement rollbackée.
     expect(Number(after.rows[0].sync_seq)).toBe(originalSyncSeq);
+  });
+
+  it('lists no conflicts when there are none', async () => {
+    const result = await conflict.listConflicts({ agentId: agentA });
+    expect(result).toHaveLength(0);
+  });
+
+  it('lists pending conflicts for the agent', async () => {
+    const id = randomUUID();
+    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+
+    const result = await conflict.listConflicts({ agentId: agentA, status: 'pending' });
+    expect(result).toHaveLength(1);
+    expect(result[0].entityId).toBe(id);
+    expect(result[0].status).toBe('pending');
+  });
+
+  it('does not leak conflicts to another agent', async () => {
+    const id = randomUUID();
+    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+
+    const leaked = await conflict.listConflicts({ agentId: agentB });
+    expect(leaked).toHaveLength(0);
+  });
+
+  it('applies client payload when resolving as client', async () => {
+    const id = randomUUID();
+    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
+    const conflictId = r.conflicts[0].conflict_id;
+
+    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'client', resolvedBy: agentA });
+
+    const after = await pool.query('SELECT check_out_time FROM check_ins WHERE id = $1', [id]);
+    expect(Number(after.rows[0].check_out_time)).toBe(9999);
+
+    const c = await pool.query('SELECT status, resolution FROM sync_conflicts WHERE id = $1', [conflictId]);
+    expect(c.rows[0].status).toBe('resolved');
+    expect(c.rows[0].resolution).toBe('client');
+  });
+
+  it('leaves data untouched when resolving as server', async () => {
+    const id = randomUUID();
+    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
+    const conflictId = r.conflicts[0].conflict_id;
+
+    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'server', resolvedBy: agentA });
+
+    const after = await pool.query('SELECT check_out_time FROM check_ins WHERE id = $1', [id]);
+    expect(after.rows[0].check_out_time).toBeNull();
+
+    const c = await pool.query('SELECT status, resolution FROM sync_conflicts WHERE id = $1', [conflictId]);
+    expect(c.rows[0].resolution).toBe('server');
+  });
+
+  it('marks resolved without applying on dismiss', async () => {
+    const id = randomUUID();
+    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
+    const conflictId = r.conflicts[0].conflict_id;
+
+    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'dismiss', resolvedBy: agentA });
+
+    const after = await pool.query('SELECT check_out_time FROM check_ins WHERE id = $1', [id]);
+    expect(after.rows[0].check_out_time).toBeNull();
+
+    const c = await pool.query('SELECT status, resolution FROM sync_conflicts WHERE id = $1', [conflictId]);
+    expect(c.rows[0].status).toBe('resolved');
+    expect(c.rows[0].resolution).toBe('dismiss');
+  });
+
+  it('rejects resolving an already resolved conflict', async () => {
+    const id = randomUUID();
+    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+    const conflictId = r.conflicts[0].conflict_id;
+
+    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'server', resolvedBy: agentA });
+
+    await expect(
+      conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'client', resolvedBy: agentA }),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });

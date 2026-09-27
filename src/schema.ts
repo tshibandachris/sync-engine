@@ -64,5 +64,8 @@ export const syncConflicts = pgTable('sync_conflicts', {
   clientPayload: jsonb('client_payload').notNull(),
   serverPayload: jsonb('server_payload').notNull(),
   status: text('status').notNull().default('pending'),
+  resolution: text('resolution'),
+  resolvedBy: uuid('resolved_by'),
+  resolvedAt: bigint('resolved_at', { mode: 'number' }),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
 });

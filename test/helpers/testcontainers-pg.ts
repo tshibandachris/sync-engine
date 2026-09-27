@@ -144,6 +144,11 @@ export class TestPostgres {
     'utf8',
   );
 
+  const migration4 = fs.readFileSync(
+    path.join(migrationsDir, '004_conflict_resolution.sql'),
+    'utf8',
+  );
+
     console.log(
       `[TestPostgres] Migration 001: ${migration1File}`,
     );
@@ -156,6 +161,7 @@ export class TestPostgres {
 
     await pool.query(migration2);
   await pool.query(migration3);
+  await pool.query(migration4);
 
     /*
      * ========================================================
