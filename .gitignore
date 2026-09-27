@@ -11,3 +11,6 @@ coverage/
 backup/
 
 backup/
+*.bak*
+*.txt
+backup/
