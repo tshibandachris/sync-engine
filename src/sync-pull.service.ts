@@ -1,59 +1,79 @@
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 
-export interface PullParams {
+export interface SyncPullDto {
   agentId: string;
   lastPulledAt?: number | null;
   limit?: number;
 }
 
-interface SyncCheckInPayload {
+export interface SyncCheckInPayload {
   id: string;
   mission_id: string;
   check_in_time: number;
-  check_out_time?: number;
+  check_out_time?: number | null;
   check_in_lat: number;
   check_in_lng: number;
   check_in_method: string;
 }
 
-interface SyncMissionPayload {
+export interface SyncMissionPayload {
   id: string;
-  site_id: string | null;
+  agent_id: string;
+  site_id?: string | null;
   title: string;
+  created_at: number;
+  updated_at: number;
 }
 
-interface SyncSitePayload {
+export interface SyncSitePayload {
   id: string;
   name: string;
   latitude: number;
   longitude: number;
+  created_at: number;
+  updated_at: number;
 }
 
-export interface PullResult {
-  changes: {
-    check_ins: {
-      created: SyncCheckInPayload[];
-      updated: SyncCheckInPayload[];
-      deleted: string[];
-    };
+interface SyncEventRow {
+  entity_type: 'check_in' | 'mission' | 'site';
 
-    sites: {
-      created: SyncSitePayload[];
-      updated: SyncSitePayload[];
-      deleted: string[];
-    };
+  id: string;
 
-    missions: {
-      created: SyncMissionPayload[];
-      updated: SyncMissionPayload[];
-      deleted: string[];
-    };
-  };
+  mission_id: string | null;
 
-  timestamp: number;
-  has_more: boolean;
+  site_id: string | null;
+
+  agent_id: string | null;
+
+  title: string | null;
+
+  name: string | null;
+
+  latitude: number | null;
+
+  longitude: number | null;
+
+  check_in_time: number | null;
+
+  check_out_time: number | null;
+
+  check_in_lat: number | null;
+
+  check_in_lng: number | null;
+
+  check_in_method: string | null;
+
+  created_at: number | null;
+
+  updated_at: number | null;
+
+  deleted_at: number | null;
+
+  first_sync_seq: number | null;
+
+  sync_seq: number;
 }
 
 export class SyncPullService {
@@ -63,162 +83,323 @@ export class SyncPullService {
     this.db = db;
   }
 
-  async pullChanges({
-    agentId,
-    lastPulledAt = null,
-    limit = 500,
-  }: PullParams): Promise<PullResult> {
-    const safeLimit = Math.min(Math.max(limit, 1), 5_000);
-    const sinceSeq = lastPulledAt ?? 0;
+  async pullChanges(dto: SyncPullDto) {
+    const agentId = dto.agentId;
 
-    const records = await this.db
-      .select()
-      .from(schema.checkIns)
-      .where(
-        and(
-          eq(schema.checkIns.agentId, agentId),
-          gt(schema.checkIns.syncSeq, sinceSeq),
-        ),
+    const sinceSeq = Number(dto.lastPulledAt ?? 0);
+
+    const requestedLimit = Number(dto.limit ?? 500);
+
+    const safeLimit = Math.min(
+      Math.max(requestedLimit, 1),
+      1000,
+    );
+
+    const result = await this.db.execute(sql`
+      WITH events AS (
+
+        SELECT
+          'check_in'::text AS entity_type,
+          ci.id,
+          ci.mission_id,
+          NULL::uuid AS site_id,
+          ci.agent_id,
+          NULL::text AS title,
+          NULL::text AS name,
+          NULL::double precision AS latitude,
+          NULL::double precision AS longitude,
+          ci.check_in_time,
+          ci.check_out_time,
+          ci.check_in_lat,
+          ci.check_in_lng,
+          ci.check_in_method,
+          ci.created_at,
+          ci.updated_at,
+          ci.deleted_at,
+          NULL::bigint AS first_sync_seq,
+          ci.sync_seq
+        FROM check_ins ci
+        WHERE ci.agent_id = ${agentId}
+          AND ci.sync_seq > ${sinceSeq}
+
+        UNION ALL
+
+        SELECT
+          'mission'::text AS entity_type,
+          m.id,
+          NULL::uuid AS mission_id,
+          m.site_id,
+          m.agent_id,
+          m.title,
+          NULL::text AS name,
+          NULL::double precision AS latitude,
+          NULL::double precision AS longitude,
+          NULL::bigint AS check_in_time,
+          NULL::bigint AS check_out_time,
+          NULL::double precision AS check_in_lat,
+          NULL::double precision AS check_in_lng,
+          NULL::text AS check_in_method,
+          m.created_at,
+          m.updated_at,
+          m.deleted_at,
+          m.first_sync_seq,
+          m.sync_seq
+        FROM missions m
+        WHERE m.agent_id = ${agentId}
+          AND m.sync_seq > ${sinceSeq}
+
+        UNION ALL
+
+        SELECT
+          'site'::text AS entity_type,
+          s.id,
+          NULL::uuid AS mission_id,
+          s.id AS site_id,
+          NULL::uuid AS agent_id,
+          NULL::text AS title,
+          s.name,
+          s.latitude,
+          s.longitude,
+          NULL::bigint AS check_in_time,
+          NULL::bigint AS check_out_time,
+          NULL::double precision AS check_in_lat,
+          NULL::double precision AS check_in_lng,
+          NULL::text AS check_in_method,
+          s.created_at,
+          s.updated_at,
+          s.deleted_at,
+          s.first_sync_seq,
+          s.sync_seq
+        FROM sites s
+        WHERE s.sync_seq > ${sinceSeq}
+          AND EXISTS (
+            SELECT 1
+            FROM missions m
+            WHERE m.agent_id = ${agentId}
+              AND m.site_id = s.id
+          )
       )
-      .orderBy(asc(schema.checkIns.syncSeq))
-      .limit(safeLimit + 1);
 
-    const hasMore = records.length > safeLimit;
-    const sliced = records.slice(0, safeLimit);
+      SELECT *
+      FROM events
+      ORDER BY sync_seq ASC, entity_type ASC, id ASC
+      LIMIT ${safeLimit + 1}
+    `);
 
-    const created: SyncCheckInPayload[] = [];
-    const updated: SyncCheckInPayload[] = [];
-    const deleted: string[] = [];
+    /*
+     * PostgreSQL retourne les BIGINT sous forme de string avec pg.
+     * Le curseur sync_seq doit rester numerique cote TypeScript.
+     */
+    const rows: SyncEventRow[] = result.rows.map((raw) => {
+      const row = raw as Record<string, unknown>;
 
-    for (const record of sliced) {
-      if (record.deletedAt !== null) {
-        deleted.push(record.id);
-      } else if (
-        record.createdAt === record.updatedAt ||
-        record.syncSeq === record.createdAt
-      ) {
-        created.push(this.mapCheckIn(record));
-      } else {
-        updated.push(this.mapCheckIn(record));
+      return {
+        entity_type: row.entity_type as SyncEventRow['entity_type'],
+
+        id: String(row.id),
+
+        mission_id:
+          row.mission_id === null || row.mission_id === undefined
+            ? null
+            : String(row.mission_id),
+
+        site_id:
+          row.site_id === null || row.site_id === undefined
+            ? null
+            : String(row.site_id),
+
+        agent_id:
+          row.agent_id === null || row.agent_id === undefined
+            ? null
+            : String(row.agent_id),
+
+        title:
+          row.title === null || row.title === undefined
+            ? null
+            : String(row.title),
+
+        name:
+          row.name === null || row.name === undefined
+            ? null
+            : String(row.name),
+
+        latitude:
+          row.latitude === null || row.latitude === undefined
+            ? null
+            : Number(row.latitude),
+
+        longitude:
+          row.longitude === null || row.longitude === undefined
+            ? null
+            : Number(row.longitude),
+
+        check_in_time:
+          row.check_in_time === null || row.check_in_time === undefined
+            ? null
+            : Number(row.check_in_time),
+
+        check_out_time:
+          row.check_out_time === null || row.check_out_time === undefined
+            ? null
+            : Number(row.check_out_time),
+
+        check_in_lat:
+          row.check_in_lat === null || row.check_in_lat === undefined
+            ? null
+            : Number(row.check_in_lat),
+
+        check_in_lng:
+          row.check_in_lng === null || row.check_in_lng === undefined
+            ? null
+            : Number(row.check_in_lng),
+
+        check_in_method:
+          row.check_in_method === null ||
+          row.check_in_method === undefined
+            ? null
+            : String(row.check_in_method),
+
+        created_at:
+          row.created_at === null || row.created_at === undefined
+            ? null
+            : Number(row.created_at),
+
+        updated_at:
+          row.updated_at === null || row.updated_at === undefined
+            ? null
+            : Number(row.updated_at),
+
+        deleted_at:
+          row.deleted_at === null || row.deleted_at === undefined
+            ? null
+            : Number(row.deleted_at),
+
+        first_sync_seq:
+          row.first_sync_seq === null ||
+          row.first_sync_seq === undefined
+            ? null
+            : Number(row.first_sync_seq),
+
+        sync_seq: Number(row.sync_seq),
+      };
+    });
+
+    const hasMore = rows.length > safeLimit;
+
+    const consumedRows = hasMore
+      ? rows.slice(0, safeLimit)
+      : rows;
+
+    const changes = {
+      check_ins: {
+        created: [] as SyncCheckInPayload[],
+        updated: [] as SyncCheckInPayload[],
+        deleted: [] as string[],
+      },
+
+      missions: {
+        created: [] as SyncMissionPayload[],
+        updated: [] as SyncMissionPayload[],
+        deleted: [] as string[],
+      },
+
+      sites: {
+        created: [] as SyncSitePayload[],
+        updated: [] as SyncSitePayload[],
+        deleted: [] as string[],
+      },
+    };
+
+    for (const row of consumedRows) {
+      if (row.deleted_at !== null) {
+        if (row.entity_type === 'check_in') {
+          changes.check_ins.deleted.push(row.id);
+        }
+        else if (row.entity_type === 'mission') {
+          changes.missions.deleted.push(row.id);
+        }
+        else {
+          changes.sites.deleted.push(row.id);
+        }
+
+        continue;
+      }
+
+      if (row.entity_type === 'check_in') {
+        const payload: SyncCheckInPayload = {
+          id: row.id,
+          mission_id: row.mission_id!,
+          check_in_time: row.check_in_time!,
+          check_out_time: row.check_out_time,
+          check_in_lat: row.check_in_lat!,
+          check_in_lng: row.check_in_lng!,
+          check_in_method: row.check_in_method!,
+        };
+
+        if (row.created_at === row.updated_at) {
+          changes.check_ins.created.push(payload);
+        }
+        else {
+          changes.check_ins.updated.push(payload);
+        }
+
+        continue;
+      }
+
+      if (row.entity_type === 'mission') {
+        const payload: SyncMissionPayload = {
+          id: row.id,
+          agent_id: row.agent_id!,
+          site_id: row.site_id,
+          title: row.title!,
+          created_at: row.created_at!,
+          updated_at: row.updated_at!,
+        };
+
+        if (
+          row.first_sync_seq !== null &&
+          Number(row.first_sync_seq) > sinceSeq
+        ) {
+          changes.missions.created.push(payload);
+        }
+        else {
+          changes.missions.updated.push(payload);
+        }
+
+        continue;
+      }
+
+      if (row.entity_type === 'site') {
+        const payload: SyncSitePayload = {
+          id: row.id,
+          name: row.name!,
+          latitude: row.latitude!,
+          longitude: row.longitude!,
+          created_at: row.created_at!,
+          updated_at: row.updated_at!,
+        };
+
+        if (
+          row.first_sync_seq !== null &&
+          Number(row.first_sync_seq) > sinceSeq
+        ) {
+          changes.sites.created.push(payload);
+        }
+        else {
+          changes.sites.updated.push(payload);
+        }
       }
     }
 
     const timestamp =
-      sliced.length > 0
-        ? Number(sliced[sliced.length - 1].syncSeq)
+      consumedRows.length > 0
+        ? Number(consumedRows[consumedRows.length - 1].sync_seq)
         : sinceSeq;
 
-    let missions: {
-      created: SyncMissionPayload[];
-      updated: SyncMissionPayload[];
-      deleted: string[];
-    } = {
-      created: [],
-      updated: [],
-      deleted: [],
-    };
-
-    let sites: {
-      created: SyncSitePayload[];
-      updated: SyncSitePayload[];
-      deleted: string[];
-    } = {
-      created: [],
-      updated: [],
-      deleted: [],
-    };
-
-    /*
-     * Premier pull uniquement :
-     * récupération des missions appartenant à l'agent
-     * et des sites associés.
-     */
-    if (sinceSeq === 0) {
-      const missionRows = await this.db
-        .select()
-        .from(schema.missions)
-        .where(eq(schema.missions.agentId, agentId));
-
-      for (const mission of missionRows) {
-        if (mission.deletedAt !== null) {
-          missions.deleted.push(mission.id);
-        } else {
-          missions.created.push({
-            id: mission.id,
-            site_id: mission.siteId,
-            title: mission.title,
-          });
-        }
-      }
-
-      const siteIds = Array.from(
-        new Set(
-          missionRows
-            .map((mission) => mission.siteId)
-            .filter(
-              (value): value is string =>
-                value !== null && value !== undefined,
-            ),
-        ),
-      );
-
-      if (siteIds.length > 0) {
-        const siteRows = await this.db
-          .select()
-          .from(schema.sites);
-
-        for (const site of siteRows) {
-          if (!siteIds.includes(site.id)) {
-            continue;
-          }
-
-          if (site.deletedAt !== null) {
-            sites.deleted.push(site.id);
-          } else {
-            sites.created.push({
-              id: site.id,
-              name: site.name,
-              latitude: Number(site.latitude),
-              longitude: Number(site.longitude),
-            });
-          }
-        }
-      }
-    }
-
     return {
-      changes: {
-        check_ins: {
-          created,
-          updated,
-          deleted,
-        },
-        sites,
-        missions,
-      },
       timestamp,
       has_more: hasMore,
-    };
-  }
-
-  private mapCheckIn(
-    record: schema.CheckIn,
-  ): SyncCheckInPayload {
-    return {
-      id: record.id,
-      mission_id: record.missionId,
-      check_in_time: record.checkInTime,
-
-      ...(record.checkOutTime !== null &&
-      record.checkOutTime !== undefined
-        ? {
-            check_out_time: record.checkOutTime,
-          }
-        : {}),
-
-      check_in_lat: record.checkInLat,
-      check_in_lng: record.checkInLng,
-      check_in_method: record.checkInMethod,
+      changes,
     };
   }
 }

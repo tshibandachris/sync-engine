@@ -1,98 +1,188 @@
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { readFile } from 'node:fs/promises';
+import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as schema from '../../src/schema.js';
 
-export interface TestPostgres {
-  container: StartedPostgreSqlContainer;
-  pool: Pool;
-  stop: () => Promise<void>;
-}
+export class TestPostgres {
+  private readonly container: Awaited<
+    ReturnType<PostgreSqlContainer['start']>
+  >;
 
-export async function startTestPostgres(): Promise<TestPostgres> {
-  const container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  readonly pool: Pool;
 
-  const pool = new Pool({
-    connectionString: container.getConnectionUri(),
-  });
+  readonly db: ReturnType<typeof drizzle<typeof schema>>;
 
-  /*
-   * Tables minimales avant application de la migration.
-   *
-   * IMPORTANT :
-   * Le schéma Drizzle doit correspondre exactement aux colonnes
-   * réellement présentes dans PostgreSQL.
-   */
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS sites (
-      id UUID PRIMARY KEY,
-      name TEXT NOT NULL,
-      latitude DOUBLE PRECISION NOT NULL DEFAULT 0,
-      longitude DOUBLE PRECISION NOT NULL DEFAULT 0,
-      deleted_at BIGINT,
-      sync_seq BIGINT NOT NULL DEFAULT 0
+  private constructor(
+    container: Awaited<
+      ReturnType<PostgreSqlContainer['start']>
+    >,
+    pool: Pool,
+    db: ReturnType<typeof drizzle<typeof schema>>,
+  ) {
+    this.container = container;
+    this.pool = pool;
+    this.db = db;
+  }
+
+  static async start(): Promise<TestPostgres> {
+    const container = await new PostgreSqlContainer(
+      'postgres:16-alpine',
+    )
+      .withDatabase('sync_engine_test')
+      .withUsername('postgres')
+      .withPassword('postgres')
+      .start();
+
+    const pool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: container.getUsername(),
+      password: container.getPassword(),
+    });
+
+    /*
+     * ========================================================
+     * TABLES DE BASE
+     * ========================================================
+     *
+     * IMPORTANT :
+     * check_ins possède sync_seq.
+     *
+     * missions/sites recevront leurs colonnes incrémentales
+     * via migration 002.
+     */
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sites (
+        id UUID PRIMARY KEY,
+        name TEXT NOT NULL,
+        latitude DOUBLE PRECISION NOT NULL DEFAULT 0,
+        longitude DOUBLE PRECISION NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS missions (
+        id UUID PRIMARY KEY,
+        agent_id UUID NOT NULL,
+        site_id UUID,
+        title TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS check_ins (
+        id UUID PRIMARY KEY,
+        mission_id UUID NOT NULL,
+        agent_id UUID NOT NULL,
+        check_in_time BIGINT NOT NULL,
+        check_out_time BIGINT,
+        check_in_lat DOUBLE PRECISION NOT NULL,
+        check_in_lng DOUBLE PRECISION NOT NULL,
+        check_in_method TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        deleted_at BIGINT,
+        sync_seq BIGINT NOT NULL DEFAULT 0
+      );
+    `);
+
+    /*
+     * ========================================================
+     * MIGRATIONS
+     * ========================================================
+     */
+
+    const migrationsDir = path.resolve('migrations');
+
+    const migrationFiles = fs
+      .readdirSync(migrationsDir)
+      .filter((file) => file.endsWith('.sql'))
+      .sort();
+
+    const migration1File = migrationFiles.find((file) => {
+      if (file === '002_incremental_missions_sites.sql') {
+        return false;
+      }
+
+      const content = fs.readFileSync(
+        path.join(migrationsDir, file),
+        'utf8',
+      );
+
+      return content.includes('global_sync_seq');
+    });
+
+    if (!migration1File) {
+      throw new Error(
+        'Migration sync infrastructure introuvable dans migrations/.',
+      );
+    }
+
+    const migration2Path = path.join(
+      migrationsDir,
+      '002_incremental_missions_sites.sql',
     );
 
-    CREATE TABLE IF NOT EXISTS missions (
-      id UUID PRIMARY KEY,
-      agent_id UUID NOT NULL,
-      site_id UUID,
-      title TEXT NOT NULL,
-      deleted_at BIGINT,
-      sync_seq BIGINT NOT NULL DEFAULT 0
+    if (!fs.existsSync(migration2Path)) {
+      throw new Error(
+        'Migration 002_incremental_missions_sites.sql introuvable.',
+      );
+    }
+
+    const migration1 = fs.readFileSync(
+      path.join(migrationsDir, migration1File),
+      'utf8',
     );
 
-    CREATE TABLE IF NOT EXISTS check_ins (
-      id UUID PRIMARY KEY,
-      mission_id UUID NOT NULL,
-      agent_id UUID NOT NULL,
-      check_in_time BIGINT NOT NULL,
-      check_out_time BIGINT,
-      check_in_lat DOUBLE PRECISION NOT NULL,
-      check_in_lng DOUBLE PRECISION NOT NULL,
-      check_in_method TEXT NOT NULL,
-      created_at BIGINT NOT NULL,
-      updated_at BIGINT NOT NULL,
-      deleted_at BIGINT,
-      sync_seq BIGINT NOT NULL DEFAULT 0
+    const migration2 = fs.readFileSync(
+      migration2Path,
+      'utf8',
     );
-  `);
 
-  /*
-   * Compatibilité avec une base initiale éventuellement créée
-   * avec l'ancien schéma minimal.
-   */
-  await pool.query(`
-    ALTER TABLE sites
-      ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS deleted_at BIGINT,
-      ADD COLUMN IF NOT EXISTS sync_seq BIGINT NOT NULL DEFAULT 0;
-
-    ALTER TABLE missions
-      ADD COLUMN IF NOT EXISTS site_id UUID,
-      ADD COLUMN IF NOT EXISTS deleted_at BIGINT,
-      ADD COLUMN IF NOT EXISTS sync_seq BIGINT NOT NULL DEFAULT 0;
-
-    ALTER TABLE check_ins
-      ADD COLUMN IF NOT EXISTS sync_seq BIGINT NOT NULL DEFAULT 0;
-  `);
-
-  /*
-   * Application de la migration sync_seq.
-   */
-  const migration = await readFile(
-    new URL('../../migrations/001_sync_infra.sql', import.meta.url),
+  const migration3 = fs.readFileSync(
+    path.join(migrationsDir, '003_sync_conflicts.sql'),
     'utf8',
   );
 
-  await pool.query(migration);
+    console.log(
+      `[TestPostgres] Migration 001: ${migration1File}`,
+    );
 
-  return {
-    container,
-    pool,
-    stop: async () => {
-      await pool.end();
-      await container.stop();
-    },
-  };
+    console.log(
+      '[TestPostgres] Migration 002: 002_incremental_missions_sites.sql',
+    );
+
+    await pool.query(migration1);
+
+    await pool.query(migration2);
+  await pool.query(migration3);
+
+    /*
+     * ========================================================
+     * DRIZZLE
+     * ========================================================
+     */
+
+    const db = drizzle(pool, {
+      schema,
+    });
+
+    return new TestPostgres(
+      container,
+      pool,
+      db,
+    );
+  }
+
+  async stop(): Promise<void> {
+    await this.pool.end();
+    await this.container.stop();
+  }
+}
+
+/*
+ * Compatibilité avec le test existant.
+ */
+export async function startTestPostgres(): Promise<TestPostgres> {
+  return TestPostgres.start();
 }

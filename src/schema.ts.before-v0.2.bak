@@ -1,7 +1,6 @@
 import {
   bigint,
   doublePrecision,
-  jsonb,
   pgTable,
   text,
   uuid,
@@ -53,16 +52,3 @@ export type NewMission = typeof missions.$inferInsert;
 export type CheckIn = typeof checkIns.$inferSelect;
 export type NewCheckIn = typeof checkIns.$inferInsert;
 export type SyncDatabase = typeof import('./schema.js');
-
-export const syncConflicts = pgTable('sync_conflicts', {
-  id: uuid('id').primaryKey(),
-  agentId: uuid('agent_id').notNull(),
-  entityType: text('entity_type').notNull(),
-  entityId: uuid('entity_id').notNull(),
-  clientVersion: bigint('client_version', { mode: 'number' }).notNull(),
-  serverVersion: bigint('server_version', { mode: 'number' }).notNull(),
-  clientPayload: jsonb('client_payload').notNull(),
-  serverPayload: jsonb('server_payload').notNull(),
-  status: text('status').notNull().default('pending'),
-  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
-});

@@ -21,36 +21,32 @@ describe('Sync Engine / sync_seq integration', () => {
   const siteA = randomUUID();
 
   beforeAll(async () => {
-  pg = await startTestPostgres();
-  pool = pg.pool;
-  db = drizzle(pool, { schema });
-  pull = new SyncPullService(db);
-  push = new SyncPushService(db);
-});
+    pg = await startTestPostgres();
+    pool = pg.pool;
+    db = drizzle(pool, { schema });
+    pull = new SyncPullService(db);
+    push = new SyncPushService(db);
 
-beforeEach(async () => {
-  await pool.query(
-    'TRUNCATE check_ins, missions, sites, sync_idempotency_keys RESTART IDENTITY CASCADE',
-  );
+    await pool.query('ALTER SEQUENCE global_sync_seq RESTART WITH 1');
+    await pool.query('DELETE FROM check_ins');
+    await pool.query('DELETE FROM missions');
+    await pool.query('DELETE FROM sync_idempotency_keys');
+    await pool.query('DELETE FROM sites');
 
-  await pool.query(
-    'ALTER SEQUENCE global_sync_seq RESTART WITH 1',
-  );
+    await pool.query(
+      'INSERT INTO sites (id, name, latitude, longitude) VALUES ($1, $2, $3, $4)',
+      [siteA, 'Site A', 48.85, 2.35],
+    );
 
-  await pool.query(
-    'INSERT INTO sites (id, name, latitude, longitude) VALUES ($1, $2, $3, $4)',
-    [siteA, 'Site A', 48.85, 2.35],
-  );
+    await pool.query(
+      'INSERT INTO missions (id, agent_id, title, site_id) VALUES ($1, $2, $3, $4)',
+      [missionA, agentA, 'Mission A', siteA],
+    );
+  });
 
-  await pool.query(
-    'INSERT INTO missions (id, agent_id, title, site_id) VALUES ($1, $2, $3, $4)',
-    [missionA, agentA, 'Mission A', siteA],
-  );
-});
-
-afterAll(async () => {
-  await pg.stop();
-});
+  afterAll(async () => {
+    await pg.stop();
+  });
 
   it('paginates 1200 records in 3 batches', async () => {
     const rows = Array.from({ length: 1200 }, () => ({
@@ -127,16 +123,12 @@ afterAll(async () => {
       },
     });
 
-    const vr1 = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
-    const v1 = Number(vr1.rows[0].sync_seq);
-
     await push.pushChanges(agentA, {
       changes: {
         check_ins: {
           updated: [
             {
               id,
-              version: v1,
               check_out_time: 1650003600000,
             },
           ],
@@ -160,7 +152,6 @@ afterAll(async () => {
             updated: [
               {
                 id: randomUUID(),
-                version: 1,
                 check_out_time: Date.now(),
               },
             ],
@@ -230,7 +221,6 @@ afterAll(async () => {
             updated: [
               {
                 id,
-                version: 1,
                 check_out_time: Date.now(),
               },
             ],
@@ -673,204 +663,5 @@ afterAll(async () => {
     ).toBe(
       createdMissionIds.length,
     );
-  });
-  it('applies an update when client version matches server version', async () => {
-    const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
-    const vr = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
-    const version = Number(vr.rows[0].sync_seq);
-    const response = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version, check_out_time: Date.now() }] } } });
-    expect(response.applied.updated).toBe(1);
-    expect(response.conflicts).toHaveLength(0);
-  });
-
-  it('records a conflict when client version is stale', async () => {
-    const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
-    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    const response = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
-    expect(response.applied.updated).toBe(0);
-    expect(response.conflicts).toHaveLength(1);
-    expect(response.conflicts[0].entity_id).toBe(id);
-  });
-
-  it('applies valid updates and records conflicts in the same batch', async () => {
-    const ids = [randomUUID(), randomUUID(), randomUUID()];
-    await push.pushChanges(agentA, { changes: { check_ins: { created: ids.map((id) => ({ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' })) } } });
-    const versions = await pool.query('SELECT id, sync_seq FROM check_ins WHERE id = ANY($1::uuid[])', [ids]);
-    const vmap = new Map(versions.rows.map((r) => [r.id, Number(r.sync_seq)]));
-    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [ids[1]]);
-    const response = await push.pushChanges(agentA, { changes: { check_ins: { updated: [
-      { id: ids[0], version: vmap.get(ids[0])!, check_out_time: Date.now() },
-      { id: ids[1], version: vmap.get(ids[1])!, check_out_time: Date.now() },
-      { id: ids[2], version: vmap.get(ids[2])!, check_out_time: Date.now() },
-    ] } } });
-    expect(response.applied.updated).toBe(2);
-    expect(response.conflicts).toHaveLength(1);
-    expect(response.conflicts[0].entity_id).toBe(ids[1]);
-  });
-
-  it('rolls back the whole batch on a technical error', async () => {
-    const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
-    const vr = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
-    const version = Number(vr.rows[0].sync_seq);
-    const ghost = randomUUID();
-    await expect(push.pushChanges(agentA, { changes: { check_ins: { updated: [
-      { id, version, check_out_time: Date.now() },
-      { id: ghost, version: 1, check_out_time: Date.now() },
-    ] } } })).rejects.toBeInstanceOf(ForbiddenException);
-    const check = await pool.query('SELECT check_out_time FROM check_ins WHERE id = $1', [id]);
-    expect(check.rows[0].check_out_time).toBeNull();
-  });
-
-  it('does not duplicate conflict on idempotent replay', async () => {
-    const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
-    await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    const dto = { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } };
-    const r1 = await push.pushChanges(agentA, dto, 'conflict-key');
-    const r2 = await push.pushChanges(agentA, dto, 'conflict-key');
-    expect(r1.conflicts).toHaveLength(1);
-    expect(r2.conflicts).toHaveLength(0);
-    const count = await pool.query('SELECT COUNT(*)::int AS n FROM sync_conflicts WHERE entity_id = $1', [id]);
-    expect(count.rows[0].n).toBe(1);
-  });
-
-  it('detects conflict between two concurrent clients', async () => {
-    const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
-    const vr = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
-    const v = Number(vr.rows[0].sync_seq);
-    const rA = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: v, check_out_time: Date.now() }] } } });
-    expect(rA.applied.updated).toBe(1);
-    const rB = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: v, check_out_time: Date.now() + 1000 }] } } });
-    expect(rB.applied.updated).toBe(0);
-    expect(rB.conflicts).toHaveLength(1);
-  });
-
-  it("rejects an update that moves a check-in to another agent's mission", async () => {
-    const checkInId = randomUUID();
-    const missionB = randomUUID();
-    const agentB = randomUUID();
-
-    // Mission appartenant à un autre agent.
-    await pool.query(
-      `
-        INSERT INTO missions (
-          id,
-          agent_id,
-          title,
-          site_id
-        )
-        VALUES ($1, $2, $3, $4)
-      `,
-      [
-        missionB,
-        agentB,
-        'Mission B',
-        siteA,
-      ],
-    );
-
-    // Check-in appartenant à agentA sur missionA.
-    await pool.query(
-      `
-        INSERT INTO check_ins (
-          id,
-          mission_id,
-          agent_id,
-          check_in_time,
-          check_out_time,
-          check_in_lat,
-          check_in_lng,
-          check_in_method,
-          created_at,
-          updated_at,
-          deleted_at,
-          sync_seq
-        )
-        VALUES (
-          $1,
-          $2,
-          $3,
-          $4,
-          NULL,
-          $5,
-          $6,
-          $7,
-          $8,
-          $8,
-          NULL,
-          0
-        )
-      `,
-      [
-        checkInId,
-        missionA,
-        agentA,
-        1650000000000,
-        48.85,
-        2.35,
-        'GPS',
-        Date.now(),
-      ],
-    );
-
-    const before = await pool.query(
-      `
-        SELECT
-          mission_id,
-          check_out_time,
-          sync_seq
-        FROM check_ins
-        WHERE id = $1
-      `,
-      [checkInId],
-    );
-
-    expect(before.rows).toHaveLength(1);
-
-    const currentVersion = Number(before.rows[0].sync_seq);
-    const originalMissionId = before.rows[0].mission_id;
-    const originalSyncSeq = currentVersion;
-
-    await expect(
-      push.pushChanges(agentA, {
-        changes: {
-          check_ins: {
-            updated: [
-              {
-                id: checkInId,
-                version: currentVersion,
-                mission_id: missionB,
-              },
-            ],
-          },
-        },
-      }),
-    ).rejects.toThrow(/mission .* non autorisee/);
-
-    // Vérifie que le check-in n'a pas été modifié.
-    const after = await pool.query(
-      `
-        SELECT
-          mission_id,
-          check_out_time,
-          sync_seq
-        FROM check_ins
-        WHERE id = $1
-      `,
-      [checkInId],
-    );
-
-    expect(after.rows).toHaveLength(1);
-
-    expect(after.rows[0].mission_id).toBe(originalMissionId);
-    expect(after.rows[0].check_out_time).toBeNull();
-
-    // Le sync_seq ne doit pas avoir changé :
-    // l'opération interdite doit avoir été entièrement rollbackée.
-    expect(Number(after.rows[0].sync_seq)).toBe(originalSyncSeq);
   });
 });
