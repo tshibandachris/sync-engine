@@ -7,6 +7,7 @@ import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-p
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService, type SyncPushDto } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
+import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 import * as schema from '../src/schema.js';
 
 describe('Sync Engine / sync_seq integration', () => {
@@ -16,6 +17,7 @@ describe('Sync Engine / sync_seq integration', () => {
   let pull: SyncPullService;
   let push: SyncPushService;
   let conflict: SyncConflictService;
+  let maintenance: SyncMaintenanceService;
 
   const agentA = randomUUID();
   const agentB = randomUUID();
@@ -29,6 +31,7 @@ describe('Sync Engine / sync_seq integration', () => {
   pull = new SyncPullService(db);
   push = new SyncPushService(db);
   conflict = new SyncConflictService(db);
+  maintenance = new SyncMaintenanceService(db);
 });
 
 beforeEach(async () => {
@@ -966,5 +969,80 @@ afterAll(async () => {
     await expect(
       conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'client', resolvedBy: agentA }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('purges old idempotency keys and keeps recent ones', async () => {
+    const oldTs = Date.now() - 8 * 24 * 3600 * 1000;
+    const recentTs = Date.now() - 1 * 24 * 3600 * 1000;
+
+    await pool.query(
+      "INSERT INTO sync_idempotency_keys (agent_id, idempotency_key, created_at) VALUES ($1, $2, $3)",
+      [agentA, 'old-key', new Date(oldTs)],
+    );
+    await pool.query(
+      "INSERT INTO sync_idempotency_keys (agent_id, idempotency_key, created_at) VALUES ($1, $2, $3)",
+      [agentA, 'recent-key', new Date(recentTs)],
+    );
+
+    const result = await maintenance.purge({ ttlIdempotencyDays: 7, ttlConflictsDays: 30 });
+    expect(result.idempotencyDeleted).toBe(1);
+
+    const remaining = await pool.query('SELECT idempotency_key FROM sync_idempotency_keys WHERE agent_id = $1', [agentA]);
+    expect(remaining.rows).toHaveLength(1);
+    expect(remaining.rows[0].idempotency_key).toBe('recent-key');
+  });
+
+  it('purges only resolved conflicts older than threshold', async () => {
+    const now = Date.now();
+    const oldResolved = now - 40 * 24 * 3600 * 1000;
+    const recentResolved = now - 5 * 24 * 3600 * 1000;
+
+    const id1 = randomUUID();
+    const id2 = randomUUID();
+    const id3 = randomUUID();
+
+    const entityId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
+       VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'resolved', 'server', $4, $5)`,
+      [id1, agentA, entityId, oldResolved, oldResolved],
+    );
+    await pool.query(
+      `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
+       VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'resolved', 'server', $4, $5)`,
+      [id2, agentA, entityId, recentResolved, recentResolved],
+    );
+    await pool.query(
+      `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, created_at)
+       VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'pending', $4)`,
+      [id3, agentA, entityId, oldResolved],
+    );
+
+    const result = await maintenance.purge({ ttlIdempotencyDays: 7, ttlConflictsDays: 30 });
+    expect(result.conflictsDeleted).toBe(1);
+
+    const remaining = await pool.query('SELECT id, status FROM sync_conflicts ORDER BY id');
+    expect(remaining.rows).toHaveLength(2);
+    const ids = remaining.rows.map((r) => r.id);
+    expect(ids).toContain(id2);
+    expect(ids).toContain(id3);
+    expect(ids).not.toContain(id1);
+  });
+
+  it('purges everything resolved with zero TTL', async () => {
+    const now = Date.now();
+    const entityId = randomUUID();
+
+    for (let i = 0; i < 3; i++) {
+      await pool.query(
+        `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
+         VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'resolved', 'dismiss', $4, $5)`,
+        [randomUUID(), agentA, entityId, now - i * 1000, now - i * 1000],
+      );
+    }
+
+    const result = await maintenance.purge({ ttlIdempotencyDays: 0, ttlConflictsDays: 0 });
+    expect(result.conflictsDeleted).toBe(3);
   });
 });
