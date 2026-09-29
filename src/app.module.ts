@@ -7,6 +7,7 @@ import { SyncPushService } from './sync-push.service.js';
 import { SyncConflictService } from './sync-conflict.service.js';
 import { SyncMaintenanceService } from './sync-maintenance.service.js';
 import { SyncController } from './sync.controller.js';
+import { AuthController } from './auth.controller.js';
 import { JwtAuthGuard } from './jwt.guard.js';
 
 export interface AppModuleOptions {
@@ -19,7 +20,6 @@ export interface AppModuleOptions {
 export class AppModule {
   static register(options: AppModuleOptions): DynamicModule {
     const { db, jwtSecret, jwtExpiresIn = '30d' } = options;
-
     return {
       module: AppModule,
       imports: [
@@ -28,7 +28,7 @@ export class AppModule {
           signOptions: { expiresIn: jwtExpiresIn as any },
         }),
       ],
-      controllers: [SyncController],
+      controllers: [SyncController, AuthController],
       providers: [
         { provide: 'DRIZZLE_DB', useValue: db },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
