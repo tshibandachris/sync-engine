@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
+import { JwtModule, JwtService } from '@nestjs/jwt';
 import request from 'supertest';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { randomUUID } from 'node:crypto';
@@ -9,11 +10,21 @@ import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncController } from '../src/sync.controller.js';
+import { JwtAuthGuard } from '../src/jwt.guard.js';
+import {
+  TEST_JWT_SECRET,
+  createTestJwtService,
+  signAgentToken,
+  signExpiredToken,
+  signInvalidToken,
+} from './helpers/jwt.js';
 
 describe('Sync Engine / HTTP', () => {
   let pg: TestPostgres;
   let db: NodePgDatabase<typeof schema>;
   let app: INestApplication;
+  let jwt: JwtService;
+  let tokenA: string;
 
   const agentA = randomUUID();
   const missionA = randomUUID();
@@ -22,14 +33,23 @@ describe('Sync Engine / HTTP', () => {
   beforeAll(async () => {
     pg = await startTestPostgres();
     db = drizzle(pg.pool, { schema });
+    jwt = createTestJwtService();
+    tokenA = signAgentToken(agentA, jwt);
 
     const moduleRef = await Test.createTestingModule({
+      imports: [
+        JwtModule.register({
+          secret: TEST_JWT_SECRET,
+          signOptions: { expiresIn: '30d' },
+        }),
+      ],
       controllers: [SyncController],
       providers: [
         { provide: 'DRIZZLE_DB', useValue: db },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
+        JwtAuthGuard,
       ],
     }).compile();
 
@@ -56,15 +76,31 @@ describe('Sync Engine / HTTP', () => {
     );
   });
 
-  it('rejects a request without x-agent-id', async () => {
+  it('rejects a request without Authorization header', async () => {
     const res = await request(app.getHttpServer()).post('/sync/pull').send({});
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a request with an invalid token signature', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/sync/pull')
+      .set('Authorization', 'Bearer ' + signInvalidToken())
+      .send({});
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a request with an expired token', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/sync/pull')
+      .set('Authorization', 'Bearer ' + signExpiredToken(agentA, jwt))
+      .send({});
     expect(res.status).toBe(401);
   });
 
   it('POST /sync/pull returns the mission and site for the agent', async () => {
     const res = await request(app.getHttpServer())
       .post('/sync/pull')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ last_pulled_at: null, limit: 500 });
 
     expect(res.status).toBe(201);
@@ -77,7 +113,7 @@ describe('Sync Engine / HTTP', () => {
     const id = randomUUID();
     const res = await request(app.getHttpServer())
       .post('/sync/push')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({
         changes: {
           check_ins: {
@@ -97,14 +133,14 @@ describe('Sync Engine / HTTP', () => {
     const id = randomUUID();
     await request(app.getHttpServer())
       .post('/sync/push')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
 
     const res = await request(app.getHttpServer())
       .post('/sync/push')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     expect(res.status).toBe(201);
@@ -116,18 +152,18 @@ describe('Sync Engine / HTTP', () => {
     const id = randomUUID();
     await request(app.getHttpServer())
       .post('/sync/push')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     await request(app.getHttpServer())
       .post('/sync/push')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const res = await request(app.getHttpServer())
       .get('/sync/conflicts?status=pending')
-      .set('x-agent-id', agentA);
+      .set('Authorization', 'Bearer ' + tokenA);
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
@@ -138,20 +174,20 @@ describe('Sync Engine / HTTP', () => {
     const id = randomUUID();
     await request(app.getHttpServer())
       .post('/sync/push')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     const pushed = await request(app.getHttpServer())
       .post('/sync/push')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const conflictId = pushed.body.conflicts[0].conflict_id;
 
     const res = await request(app.getHttpServer())
       .post('/sync/conflicts/' + conflictId + '/resolve')
-      .set('x-agent-id', agentA)
+      .set('Authorization', 'Bearer ' + tokenA)
       .send({ resolution: 'server', resolved_by: agentA });
 
     expect(res.status).toBe(201);
