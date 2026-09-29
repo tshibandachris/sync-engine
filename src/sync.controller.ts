@@ -27,6 +27,7 @@ export class SyncController {
   async pullEndpoint(@Req() req: any, @Body() body: PullBody) {
     return this.pull.pullChanges({
       agentId: req.agentId,
+      tenantId: req.tenantId,
       lastPulledAt: body?.last_pulled_at ?? null,
       limit: body?.limit,
     });
@@ -37,7 +38,7 @@ export class SyncController {
     if (!body || !body.changes) throw new BadRequestException('changes requis.');
     const raw = req.headers['idempotency-key'];
     const idempotencyKey = Array.isArray(raw) ? raw[0] : raw;
-    return this.push.pushChanges(req.agentId, body, idempotencyKey);
+    return this.push.pushChanges(req.agentId, body, idempotencyKey, req.tenantId);
   }
 
   @Get('conflicts')
@@ -49,6 +50,7 @@ export class SyncController {
   ) {
     return this.conflict.listConflicts({
       agentId: req.agentId,
+      tenantId: req.tenantId,
       status,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
@@ -63,6 +65,7 @@ export class SyncController {
     await this.conflict.resolveConflict({
       conflictId: id,
       agentId: req.agentId,
+      tenantId: req.tenantId,
       resolution: body.resolution,
       resolvedBy: body.resolved_by,
     });

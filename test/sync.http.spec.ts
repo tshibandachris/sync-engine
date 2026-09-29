@@ -27,6 +27,8 @@ describe('Sync Engine / HTTP', () => {
   let tokenA: string;
 
   const agentA = randomUUID();
+  const tenantA = randomUUID();
+  const tenantB = randomUUID();
   const missionA = randomUUID();
   const siteA = randomUUID();
 
@@ -34,7 +36,7 @@ describe('Sync Engine / HTTP', () => {
     pg = await startTestPostgres();
     db = drizzle(pg.pool, { schema });
     jwt = createTestJwtService();
-    tokenA = signAgentToken(agentA, jwt);
+    tokenA = signAgentToken(agentA, jwt, tenantA);
 
     const moduleRef = await Test.createTestingModule({
       imports: [
@@ -67,12 +69,12 @@ describe('Sync Engine / HTTP', () => {
     await pg.pool.query('ALTER SEQUENCE global_sync_seq RESTART WITH 1');
 
     await pg.pool.query(
-      'INSERT INTO sites (id, name, latitude, longitude) VALUES ($1, $2, $3, $4)',
-      [siteA, 'Site A', 48.85, 2.35],
+      'INSERT INTO sites (id, tenant_id, name, latitude, longitude) VALUES ($1, $2, $3, $4, $5)',
+      [siteA, tenantA, 'Site A', 48.85, 2.35],
     );
     await pg.pool.query(
-      'INSERT INTO missions (id, agent_id, title, site_id) VALUES ($1, $2, $3, $4)',
-      [missionA, agentA, 'Mission A', siteA],
+      'INSERT INTO missions (id, tenant_id, agent_id, title, site_id) VALUES ($1, $2, $3, $4, $5)',
+      [missionA, tenantA, agentA, 'Mission A', siteA],
     );
   });
 
@@ -192,5 +194,82 @@ describe('Sync Engine / HTTP', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('ok');
+  });
+
+  it('does not leak missions across tenants', async () => {
+    const tokenB = signAgentToken(agentA, jwt, tenantB);
+
+    const res = await request(app.getHttpServer())
+      .post('/sync/pull')
+      .set('Authorization', 'Bearer ' + tokenB)
+      .send({ last_pulled_at: null, limit: 500 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.changes.missions.created).toHaveLength(0);
+    expect(res.body.changes.sites.created).toHaveLength(0);
+  });
+
+  it('does not allow a check-in push into another tenant mission', async () => {
+    const tokenB = signAgentToken(agentA, jwt, tenantB);
+    const id = randomUUID();
+
+    const res = await request(app.getHttpServer())
+      .post('/sync/push')
+      .set('Authorization', 'Bearer ' + tokenB)
+      .send({
+        changes: {
+          check_ins: {
+            created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }],
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('does not allow resolving another tenant conflict', async () => {
+    const id = randomUUID();
+    await request(app.getHttpServer())
+      .post('/sync/push')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+
+    await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    const pushed = await request(app.getHttpServer())
+      .post('/sync/push')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+
+    const conflictId = pushed.body.conflicts[0].conflict_id;
+    const tokenB = signAgentToken(agentA, jwt, tenantB);
+
+    const res = await request(app.getHttpServer())
+      .post('/sync/conflicts/' + conflictId + '/resolve')
+      .set('Authorization', 'Bearer ' + tokenB)
+      .send({ resolution: 'server', resolved_by: agentA });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('does not list conflicts from another tenant', async () => {
+    const id = randomUUID();
+    await request(app.getHttpServer())
+      .post('/sync/push')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+
+    await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
+    await request(app.getHttpServer())
+      .post('/sync/push')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+
+    const tokenB = signAgentToken(agentA, jwt, tenantB);
+    const res = await request(app.getHttpServer())
+      .get('/sync/conflicts?status=pending')
+      .set('Authorization', 'Bearer ' + tokenB);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(0);
   });
 });

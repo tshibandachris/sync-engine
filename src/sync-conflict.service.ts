@@ -5,8 +5,11 @@ import * as schema from './schema.js';
 
 export type Resolution = 'client' | 'server' | 'dismiss';
 
+const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
+
 export interface ListConflictsDto {
   agentId: string;
+  tenantId?: string;
   status?: string;
   limit?: number;
   offset?: number;
@@ -31,6 +34,7 @@ export interface ConflictRow {
 export interface ResolveConflictDto {
   conflictId: string;
   agentId: string;
+  tenantId?: string;
   resolution: Resolution;
   resolvedBy: string;
 }
@@ -45,10 +49,11 @@ export class SyncConflictService {
   async listConflicts(dto: ListConflictsDto): Promise<ConflictRow[]> {
     const limit = Math.min(Math.max(dto.limit ?? 100, 1), 500);
     const offset = Math.max(dto.offset ?? 0, 0);
+    const tenantId = dto.tenantId ?? DEFAULT_TENANT_ID;
 
     const whereClause = dto.status
-      ? and(eq(schema.syncConflicts.agentId, dto.agentId), eq(schema.syncConflicts.status, dto.status))
-      : eq(schema.syncConflicts.agentId, dto.agentId);
+      ? and(eq(schema.syncConflicts.tenantId, tenantId), eq(schema.syncConflicts.agentId, dto.agentId), eq(schema.syncConflicts.status, dto.status))
+      : and(eq(schema.syncConflicts.tenantId, tenantId), eq(schema.syncConflicts.agentId, dto.agentId));
 
     const rows = await this.db
       .select()
@@ -82,10 +87,11 @@ export class SyncConflictService {
     if (dto.resolution !== 'client' && dto.resolution !== 'server' && dto.resolution !== 'dismiss') {
       throw new BadRequestException('resolution invalide.');
     }
+    const tenantId = dto.tenantId ?? DEFAULT_TENANT_ID;
 
     await this.db.transaction(async (tx) => {
       const locked = await tx.execute(sql`
-        SELECT id, agent_id, entity_type, entity_id, status, client_payload
+        SELECT id, tenant_id, agent_id, entity_type, entity_id, status, client_payload
         FROM sync_conflicts
         WHERE id = ${dto.conflictId}::uuid
         FOR UPDATE
@@ -94,13 +100,14 @@ export class SyncConflictService {
       const conflict = locked.rows[0] as Record<string, unknown> | undefined;
 
       if (!conflict) throw new NotFoundException('Conflit introuvable.');
-      if (conflict.agent_id !== dto.agentId) throw new ForbiddenException('Conflit non accessible.');
+      if (conflict.tenant_id !== tenantId || conflict.agent_id !== dto.agentId) throw new ForbiddenException('Conflit non accessible.');
       if (conflict.status !== 'pending') throw new ConflictException('Conflit deja resolu.');
       if (conflict.entity_type !== 'check_in') throw new BadRequestException('entity_type non supporte.');
 
       if (dto.resolution === 'client') {
         await this.applyClientPayload(
           tx,
+          tenantId,
           dto.agentId,
           String(conflict.entity_id),
           conflict.client_payload as Record<string, unknown>,
@@ -115,12 +122,13 @@ export class SyncConflictService {
           resolvedBy: dto.resolvedBy,
           resolvedAt: Date.now(),
         })
-        .where(eq(schema.syncConflicts.id, dto.conflictId));
+        .where(and(eq(schema.syncConflicts.id, dto.conflictId), eq(schema.syncConflicts.tenantId, tenantId)));
     });
   }
 
   private async applyClientPayload(
     tx: any,
+    tenantId: string,
     agentId: string,
     checkInId: string,
     payload: Record<string, unknown>,
@@ -128,7 +136,7 @@ export class SyncConflictService {
     const target = await tx
       .select({ id: schema.checkIns.id, agentId: schema.checkIns.agentId })
       .from(schema.checkIns)
-      .where(eq(schema.checkIns.id, checkInId));
+      .where(and(eq(schema.checkIns.id, checkInId), eq(schema.checkIns.tenantId, tenantId)));
 
     if (target.length === 0) throw new NotFoundException('Check-in cible introuvable.');
     if (target[0].agentId !== agentId) throw new ForbiddenException('Check-in non accessible.');
@@ -140,6 +148,7 @@ export class SyncConflictService {
         .where(and(
           eq(schema.missions.id, String(payload.mission_id)),
           eq(schema.missions.agentId, agentId),
+          eq(schema.missions.tenantId, tenantId),
         ));
 
       if (m.length !== 1) throw new ForbiddenException('Resolution refusee : mission non autorisee.');
@@ -153,6 +162,6 @@ export class SyncConflictService {
     if (payload.check_in_lng !== undefined) fields.checkInLng = payload.check_in_lng;
     if (payload.check_in_method !== undefined) fields.checkInMethod = payload.check_in_method;
 
-    await tx.update(schema.checkIns).set(fields).where(eq(schema.checkIns.id, checkInId));
+    await tx.update(schema.checkIns).set(fields).where(and(eq(schema.checkIns.id, checkInId), eq(schema.checkIns.tenantId, tenantId)));
   }
 }

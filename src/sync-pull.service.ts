@@ -2,8 +2,11 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 
+const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
+
 export interface SyncPullDto {
   agentId: string;
+  tenantId?: string;
   lastPulledAt?: number | null;
   limit?: number;
 }
@@ -87,6 +90,7 @@ export class SyncPullService {
     const agentId = dto.agentId;
 
     const sinceSeq = Number(dto.lastPulledAt ?? 0);
+    const tenantId = dto.tenantId ?? DEFAULT_TENANT_ID;
 
     const requestedLimit = Number(dto.limit ?? 500);
 
@@ -120,6 +124,7 @@ export class SyncPullService {
           ci.sync_seq
         FROM check_ins ci
         WHERE ci.agent_id = ${agentId}
+          AND ci.tenant_id = ${tenantId}::uuid
           AND ci.sync_seq > ${sinceSeq}
 
         UNION ALL
@@ -146,6 +151,7 @@ export class SyncPullService {
           m.sync_seq
         FROM missions m
         WHERE m.agent_id = ${agentId}
+          AND m.tenant_id = ${tenantId}::uuid
           AND m.sync_seq > ${sinceSeq}
 
         UNION ALL
@@ -171,11 +177,13 @@ export class SyncPullService {
           s.first_sync_seq,
           s.sync_seq
         FROM sites s
-        WHERE s.sync_seq > ${sinceSeq}
+        WHERE s.tenant_id = ${tenantId}::uuid
+          AND s.sync_seq > ${sinceSeq}
           AND EXISTS (
             SELECT 1
             FROM missions m
             WHERE m.agent_id = ${agentId}
+              AND m.tenant_id = ${tenantId}::uuid
               AND m.site_id = s.id
           )
       )

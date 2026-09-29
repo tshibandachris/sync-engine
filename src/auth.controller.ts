@@ -2,9 +2,11 @@ import { BadRequestException, Body, Controller, ForbiddenException, Inject, Post
 import { JwtService } from '@nestjs/jwt';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
 
 interface TokenDto {
   agent_id?: string;
+  tenant_id?: string;
 }
 
 @Controller('auth')
@@ -21,18 +23,23 @@ export class AuthController {
       throw new ForbiddenException('Delivrance de token desactivee. Configurez un IdP.');
     }
 
-    const raw = body?.agent_id;
-    if (!raw || typeof raw !== 'string' || !UUID_RE.test(raw.trim())) {
+    const agentId = body?.agent_id?.trim();
+    if (!agentId || !UUID_RE.test(agentId)) {
       throw new BadRequestException('agent_id UUID requis.');
     }
 
-    const agentId = raw.trim();
-    const token = await this.jwtService.signAsync({ sub: agentId });
+    const tenantId = (body?.tenant_id ?? DEFAULT_TENANT_ID).trim();
+    if (!UUID_RE.test(tenantId)) {
+      throw new BadRequestException('tenant_id UUID requis.');
+    }
+
+    const token = await this.jwtService.signAsync({ sub: agentId, tenantId });
 
     return {
       token,
       expires_in: 30 * 24 * 3600,
       agent_id: agentId,
+      tenant_id: tenantId,
     };
   }
 }

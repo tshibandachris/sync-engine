@@ -51,6 +51,8 @@ export interface PushResponse {
   conflicts: PushConflict[];
 }
 
+const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
+
 const EMPTY_RESPONSE: PushResponse = {
   applied: { created: 0, updated: 0, deleted: 0 },
   conflicts: [],
@@ -67,6 +69,7 @@ export class SyncPushService {
     agentId: string,
     dto: SyncPushDto,
     idempotencyKey?: string,
+    tenantId: string = DEFAULT_TENANT_ID,
   ): Promise<PushResponse> {
     if (!agentId) throw new BadRequestException('agentId requis.');
 
@@ -99,7 +102,7 @@ export class SyncPushService {
         const validMissions = await tx
           .select({ id: schema.missions.id })
           .from(schema.missions)
-          .where(and(inArray(schema.missions.id, missionIds), eq(schema.missions.agentId, agentId)));
+          .where(and(inArray(schema.missions.id, missionIds), eq(schema.missions.agentId, agentId), eq(schema.missions.tenantId, tenantId)));
 
         if (validMissions.length !== missionIds.length) {
           throw new ForbiddenException('Creation refusee : mission non autorisee.');
@@ -112,6 +115,7 @@ export class SyncPushService {
             .insert(schema.checkIns)
             .values({
               id: item.id,
+              tenantId,
               missionId: item.mission_id,
               agentId,
               checkInTime: item.check_in_time,
@@ -133,19 +137,19 @@ export class SyncPushService {
           }
 
           const existing = await tx.execute(sql`
-            SELECT agent_id, deleted_at, sync_seq,
+            SELECT tenant_id, agent_id, deleted_at, sync_seq,
                    mission_id, check_in_time, check_out_time,
                    check_in_lat, check_in_lng, check_in_method
             FROM check_ins
-            WHERE id = ${item.id}::uuid
+            WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
           `);
           const row = existing.rows[0] as Record<string, unknown> | undefined;
 
           if (!row) {
             throw new ForbiddenException('Creation refusee : etat incoherent pour ' + item.id + '.');
           }
-          if (row.agent_id !== agentId) {
-            throw new ForbiddenException('Creation refusee : check-in ' + item.id + ' appartient a un autre agent.');
+          if (row.tenant_id !== tenantId || row.agent_id !== agentId) {
+            throw new ForbiddenException('Creation refusee : check-in ' + item.id + ' appartient a un autre tenant ou agent.');
           }
           if (row.deleted_at !== null) {
             throw new ForbiddenException('Creation refusee : check-in ' + item.id + ' est supprime.');
@@ -167,6 +171,7 @@ export class SyncPushService {
           const conflictId = randomUUID();
           await tx.insert(schema.syncConflicts).values({
             id: conflictId,
+            tenantId,
             agentId,
             entityType: 'check_in',
             entityId: item.id,
@@ -204,6 +209,7 @@ export class SyncPushService {
             .where(and(
               eq(schema.missions.id, item.mission_id),
               eq(schema.missions.agentId, agentId),
+              eq(schema.missions.tenantId, tenantId),
             ));
 
           if (target.length !== 1) {
@@ -225,6 +231,7 @@ export class SyncPushService {
           .where(and(
             eq(schema.checkIns.id, item.id),
             eq(schema.checkIns.agentId, agentId),
+            eq(schema.checkIns.tenantId, tenantId),
             isNull(schema.checkIns.deletedAt),
             eq(schema.checkIns.syncSeq, item.version),
           ))
@@ -236,19 +243,19 @@ export class SyncPushService {
         }
 
         const existing = await tx.execute(sql`
-          SELECT agent_id, deleted_at, sync_seq,
+          SELECT tenant_id, agent_id, deleted_at, sync_seq,
                  mission_id, check_in_time, check_out_time,
                  check_in_lat, check_in_lng, check_in_method
           FROM check_ins
-          WHERE id = ${item.id}::uuid
+          WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
         `);
         const row = existing.rows[0] as Record<string, unknown> | undefined;
 
         if (!row) {
           throw new ForbiddenException('Update refuse : check-in ' + item.id + ' introuvable.');
         }
-        if (row.agent_id !== agentId) {
-          throw new ForbiddenException('Update refuse : check-in ' + item.id + ' appartient a un autre agent.');
+        if (row.tenant_id !== tenantId || row.agent_id !== agentId) {
+          throw new ForbiddenException('Update refuse : check-in ' + item.id + ' appartient a un autre tenant ou agent.');
         }
         if (row.deleted_at !== null) {
           throw new ForbiddenException('Update refuse : check-in ' + item.id + ' supprime.');
@@ -259,6 +266,7 @@ export class SyncPushService {
         const conflictId = randomUUID();
         await tx.insert(schema.syncConflicts).values({
           id: conflictId,
+          tenantId,
           agentId,
           entityType: 'check_in',
           entityId: item.id,
@@ -295,6 +303,7 @@ export class SyncPushService {
           .where(and(
             inArray(schema.checkIns.id, deleted),
             eq(schema.checkIns.agentId, agentId),
+            eq(schema.checkIns.tenantId, tenantId),
             isNull(schema.checkIns.deletedAt),
           ))
           .returning({ id: schema.checkIns.id });
@@ -307,8 +316,8 @@ export class SyncPushService {
 
       if (idempotencyKey) {
         await tx.execute(sql`
-          INSERT INTO sync_idempotency_keys (agent_id, idempotency_key)
-          VALUES (${agentId}::uuid, ${idempotencyKey})
+          INSERT INTO sync_idempotency_keys (tenant_id, agent_id, idempotency_key)
+          VALUES (${tenantId}::uuid, ${agentId}::uuid, ${idempotencyKey})
         `);
       }
 
