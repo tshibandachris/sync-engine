@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "sync-engine",
   "version": "0.1.0",
   "type": "module",
@@ -9,15 +9,20 @@
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",
+    "@nestjs/core": "^10.4.22",
+    "@nestjs/platform-express": "^10.4.22",
     "drizzle-orm": "^0.33.0",
     "pg": "^8.12.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },
   "devDependencies": {
+    "@nestjs/testing": "^10.4.22",
     "@testcontainers/postgresql": "^10.13.0",
     "@types/node": "^22.5.0",
     "@types/pg": "^8.11.10",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.3.0",
     "testcontainers": "^10.13.0",
     "typescript": "^5.6.0",
     "uuid": "^10.0.0",

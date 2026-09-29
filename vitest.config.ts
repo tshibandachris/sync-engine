@@ -5,12 +5,15 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.spec.ts'],
-
     testTimeout: 120_000,
     hookTimeout: 120_000,
-
     pool: 'forks',
-    maxWorkers: 1,
-    isolate: false,
+    poolOptions: {
+      forks: {
+        minForks: 1,
+        maxForks: 1,
+        isolate: false,
+      },
+    },
   },
 });
