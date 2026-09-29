@@ -9,6 +9,7 @@ import {
 
 export const sites = pgTable('sites', {
   id: uuid('id').primaryKey(),
+  tenantId: uuid('tenant_id'),
   name: text('name').notNull(),
   latitude: doublePrecision('latitude').notNull(),
   longitude: doublePrecision('longitude').notNull(),
@@ -21,6 +22,7 @@ export const sites = pgTable('sites', {
 
 export const missions = pgTable('missions', {
   id: uuid('id').primaryKey(),
+  tenantId: uuid('tenant_id'),
   agentId: uuid('agent_id').notNull(),
   siteId: uuid('site_id'),
   title: text('title').notNull(),
@@ -33,6 +35,7 @@ export const missions = pgTable('missions', {
 
 export const checkIns = pgTable('check_ins', {
   id: uuid('id').primaryKey(),
+  tenantId: uuid('tenant_id'),
   missionId: uuid('mission_id').notNull(),
   agentId: uuid('agent_id').notNull(),
   checkInTime: bigint('check_in_time', { mode: 'number' }).notNull(),
@@ -56,6 +59,7 @@ export type SyncDatabase = typeof import('./schema.js');
 
 export const syncConflicts = pgTable('sync_conflicts', {
   id: uuid('id').primaryKey(),
+  tenantId: uuid('tenant_id'),
   agentId: uuid('agent_id').notNull(),
   entityType: text('entity_type').notNull(),
   entityId: uuid('entity_id').notNull(),
