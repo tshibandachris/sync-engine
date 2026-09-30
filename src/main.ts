@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
 import { AppModule, type AppModuleOptions } from './app.module.js';
+import { runBootGuards } from './boot-guards.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 import { S3AttachmentStorage } from './s3-attachment-storage.js';
 
@@ -19,6 +20,8 @@ export async function createApp(
 }
 
 async function bootstrap(): Promise<void> {
+  runBootGuards();
+
   const databaseUrl = process.env.DATABASE_URL;
   const jwtSecret = process.env.JWT_SECRET;
   const port = Number(process.env.PORT ?? 3000);
