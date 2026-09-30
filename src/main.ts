@@ -1,14 +1,17 @@
 import { NestFactory } from '@nestjs/core';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
-import { AppModule } from './app.module.js';
+import { AppModule, type AppModuleOptions } from './app.module.js';
+import type { AttachmentStorage } from './attachment-storage.js';
+import { S3AttachmentStorage } from './s3-attachment-storage.js';
 
 export async function createApp(
   db: NodePgDatabase<typeof schema>,
   jwtSecret: string,
+  storage: AttachmentStorage,
 ) {
   const moduleRef = await NestFactory.create(
-    AppModule.register({ db, jwtSecret }),
+    AppModule.register({ db, jwtSecret, storage }),
     { logger: false },
   );
 
@@ -29,7 +32,18 @@ async function bootstrap(): Promise<void> {
   const pool = new Pool({ connectionString: databaseUrl });
   const db = drizzle(pool, { schema });
 
-  const app = await createApp(db, jwtSecret);
+  const bucket = process.env.S3_BUCKET;
+  if (!bucket) throw new Error('S3_BUCKET requis.');
+
+  const storage = new S3AttachmentStorage({
+    bucket,
+    region: process.env.S3_REGION,
+    endpoint: process.env.S3_ENDPOINT,
+    accessKeyId: process.env.S3_ACCESS_KEY_ID,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+  });
+
+  const app = await createApp(db, jwtSecret, storage);
   await app.listen(port);
 
   console.log('Sync engine listening on port ' + port);

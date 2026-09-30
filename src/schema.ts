@@ -1,9 +1,13 @@
 import {
   bigint,
   doublePrecision,
+  foreignKey,
+  index,
   jsonb,
   pgTable,
   text,
+  unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -73,3 +77,30 @@ export const syncConflicts = pgTable('sync_conflicts', {
   resolvedAt: bigint('resolved_at', { mode: 'number' }),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
 });
+
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    checkInId: uuid('check_in_id').notNull(),
+    agentId: uuid('agent_id').notNull(),
+    objectKey: text('object_key').notNull(),
+    contentType: text('content_type').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    checksumSha256: text('checksum_sha256').notNull(),
+    status: text('status').notNull().default('pending'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    uploadedAt: bigint('uploaded_at', { mode: 'number' }),
+  },
+  (table) => ({
+    objectKeyIdx: uniqueIndex('attachments_object_key_idx').on(table.objectKey),
+    tenantCheckInIdx: index('attachments_tenant_check_in_idx').on(table.tenantId, table.checkInId),
+    tenantStatusIdx: index('attachments_tenant_status_idx').on(table.tenantId, table.status),
+    fkCheckInTenant: foreignKey({
+      columns: [table.checkInId, table.tenantId],
+      foreignColumns: [checkIns.id, checkIns.tenantId],
+      name: 'fk_attachments_check_in_tenant',
+    }).onDelete('cascade'),
+  })
+);
