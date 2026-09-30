@@ -2,16 +2,16 @@
 
 ## What it is
 
-Multi-tenant synchronisation engine for a field-agent mobile app
-(Flutter/React Native + WatermelonDB).
+Multi-tenant synchronisation engine for a field-agent mobile app.
+Mobile stack: **React Native + WatermelonDB** (to be confirmed — see Open questions).
 
 - Incremental pull/push of `check_ins`, `missions`, `sites`
-- Conflict detection + resolution (LWW via `sync_seq`)
+- Conflict detection + resolution (LWW on `sync_seq`)
 - Idempotent push (advisory locks + idempotency keys)
 - JWT auth with tenant scoping
 - S3 presigned uploads for incident photos
 
-**Current state: v0.5, 58 tests green, working tree clean.**
+**Current state: tag `v0.5-sync-engine`, 58 tests green.**
 
 ## Stack
 
@@ -31,7 +31,30 @@ Multi-tenant synchronisation engine for a field-agent mobile app
     npm run typecheck
     npx vitest run
 
-Requirements: Docker running. First run pulls `postgres:16-alpine` (~60s).
+Requirements: Docker running. The first run pulls `postgres:16-alpine`
+(~60s). Subsequent test runs take ~90s end to end (4 test files, each
+spins its own container).
+
+### Running the app locally
+
+    cp .env.example .env
+    # edit .env with your DATABASE_URL, JWT_SECRET, S3_* values
+    npm run dev
+
+`npm run dev` is not defined yet — see Debt / "no dev script".
+In the meantime, `npx tsx src/main.ts` works.
+
+`.env.example`:
+
+    DATABASE_URL=postgres://postgres:postgres@localhost:5432/sync
+    JWT_SECRET=change-me-at-least-32-characters-long
+    PORT=3000
+    AUTH_ALLOW_DEV_TOKEN=true
+    S3_BUCKET=sync-attachments-dev
+    S3_REGION=us-east-1
+    S3_ENDPOINT=http://localhost:9000
+    S3_ACCESS_KEY_ID=minio
+    S3_SECRET_ACCESS_KEY=minio123
 
 ## Architecture
 
@@ -41,17 +64,29 @@ Four routes:
 
 | Route | Purpose |
 |---|---|
-| POST /sync/pull | Get changes since cursor (`sync_seq`) |
+| POST /sync/pull | Get changes since cursor |
 | POST /sync/push | Send local changes (versioned, idempotent) |
 | GET /sync/conflicts | List pending conflicts |
 | POST /sync/conflicts/:id/resolve | Resolve (client/server/dismiss) |
 
-**Cursor:** one global sequence (`global_sync_seq`) shared across
-`sites`, `missions`, `check_ins`. Ensures coherent cross-table ordering.
+**Cursor.** One global sequence (`global_sync_seq`) shared across
+`sites`, `missions`, `check_ins`. Pull returns rows with
+`sync_seq > cursor`, ordered ascending, plus `has_more: boolean`.
+Default page size 500, max 1000.
 
-**Conflict model:** each row has `sync_seq`. Clients send `version`
-in updates. If `version < server.sync_seq`, write goes to
-`sync_conflicts` instead of being applied. LWW for now.
+**Conflict model.** Each row has a `sync_seq`. When a client updates
+a row, it sends `version`, which is the `sync_seq` value the client
+last saw for that row. If `version != server row's current sync_seq`,
+the write is recorded in `sync_conflicts` instead of applied. LWW
+for now — see Open questions for merge-by-field considerations.
+
+**Known bug — cursor gaps.** `nextval` is not transactional. A
+transaction that obtains seq 100 can commit after one that obtained
+seq 101. A client that pulls in between sees 101, advances its cursor
+to 101, and never sees 100. The current advisory lock serialises by
+`(agent, idempotency_key)` pair, not by tenant, so two agents of the
+same tenant can write concurrently. **This is a data-loss bug and
+must be fixed before production.** See Roadmap v0.5.1.
 
 ### Attachments
 
@@ -61,29 +96,119 @@ in updates. If `version < server.sync_seq`, write goes to
 | POST /attachments/:id/confirm | HEAD-checks S3, marks uploaded |
 | GET /attachments?check_in_id=... | Lists uploaded + presigned GET URLs (1h) |
 
-S3 never proxied. Client uploads directly.
+S3 is never proxied. The client uploads directly.
+
+**Limits:** 5 attachments per check-in, 10 MB each, content types
+`image/jpeg`, `image/png`, `image/heic`. `checksum_sha256` must be
+64 hex characters.
+
+**S3 key format:** `tenants/<tenant_id>/checkins/<check_in_id>/<attachment_id>.<ext>`.
+This allows per-tenant lifecycle rules and bulk deletion later.
+
+**Known limitation:** presigned PUT does not enforce size or type on
+the S3 side. `confirm` does a HEAD but currently only checks
+existence. See Roadmap v0.5.3.
 
 ### Multi-tenancy
 
-- `tenant_id` on 5 tables
-- Composite FKs: `(site_id, tenant_id)`, `(mission_id, tenant_id)`,
-  `(check_in_id, tenant_id)`
-- Every query filters `WHERE tenant_id = ?` (app-level)
-- **RLS NOT enabled yet** — see Debt below.
+`tenant_id` column on 6 tables: `sites`, `missions`, `check_ins`,
+`sync_conflicts`, `sync_idempotency_keys`, `attachments`.
+
+Composite FKs: `(site_id, tenant_id)`, `(mission_id, tenant_id)`,
+`(check_in_id, tenant_id)`. This makes cross-tenant references
+structurally impossible, not just filtered at query time.
+
+Every query filters `WHERE tenant_id = ?` at the application level.
+**RLS is not enabled yet** — see Roadmap v0.5.2.
 
 ### Auth
 
-JWT Bearer with `{ sub: agentId, tenantId }`. `/auth/token` issues
-tokens, gated behind `AUTH_ALLOW_DEV_TOKEN=true` (dev only).
+JWT Bearer with payload `{ sub: agentId, tenantId }`. `/auth/token`
+issues tokens, gated behind `AUTH_ALLOW_DEV_TOKEN=true`.
 
 **Not production-ready:** no real IdP. Replace `/auth/token` with
-OAuth2 / Azure AD B2C / real credential store in prod.
+OAuth2 / Azure AD B2C / real credential store before any external
+exposure.
+
+## API contract
+
+### POST /sync/pull
+
+Request:
+
+    {
+      "last_pulled_at": 12345,
+      "limit": 500
+    }
+
+Response:
+
+    {
+      "changes": {
+        "check_ins": { "created": [], "updated": [], "deleted": [] },
+        "missions":  { "created": [], "updated": [], "deleted": [] },
+        "sites":     { "created": [], "updated": [], "deleted": [] }
+      },
+      "timestamp": 12500,
+      "has_more": false
+    }
+
+`timestamp` is an opaque cursor, to be sent back as `last_pulled_at`
+on the next call. `has_more` indicates pagination should continue
+immediately.
+
+### POST /sync/push
+
+Headers: `Idempotency-Key: <uuid>` (optional but recommended).
+
+Request:
+
+    {
+      "changes": {
+        "check_ins": {
+          "created": [ ... ],
+          "updated": [ { "id": "...", "version": 42, ... } ],
+          "deleted": [ "uuid1", "uuid2" ]
+        }
+      }
+    }
+
+Response:
+
+    {
+      "applied":  { "created": 1, "updated": 2, "deleted": 0 },
+      "conflicts": [
+        {
+          "entity_type": "check_in",
+          "entity_id": "...",
+          "client_version": 42,
+          "server_version": 45,
+          "conflict_id": "..."
+        }
+      ]
+    }
+
+Push is transactional: on any technical error, the whole batch rolls
+back. Conflicts are recorded but do not roll back the batch — they
+represent a legitimate race the client must resolve.
+
+**Idempotency TTL:** 7 days (row in `sync_idempotency_keys`).
+**Max push size:** not enforced yet — see Debt.
+
+### Error codes
+
+- `400` — validation failure
+- `401` — missing or invalid JWT
+- `403` — resource not accessible (wrong tenant or agent)
+- `404` — resource not found
+- `409` — idempotency conflict or already-resolved conflict
+- `410` — cursor too old, client must resync from scratch (not implemented, see Debt)
 
 ## Project layout
 
     migrations/          SQL migrations 001 to 007
     src/
-      schema.ts          Drizzle schema
+      schema.ts
       sync-pull.service.ts
       sync-push.service.ts
       sync-conflict.service.ts
@@ -98,10 +223,10 @@ OAuth2 / Azure AD B2C / real credential store in prod.
       app.module.ts
       main.ts
     test/
-      sync.integration.spec.ts   (31 tests)
-      sync.http.spec.ts          (12 tests)
-      auth.http.spec.ts          (4 tests)
-      attachments.http.spec.ts   (11 tests)
+      sync.integration.spec.ts     (31 tests)
+      sync.http.spec.ts            (12 tests)
+      auth.http.spec.ts            (4 tests)
+      attachments.http.spec.ts     (11 tests)
       helpers/testcontainers-pg.ts
       helpers/jwt.ts
 
@@ -120,49 +245,117 @@ OAuth2 / Azure AD B2C / real credential store in prod.
     v0.4.1b     Tenant propagation                   47/47
     v0.5        Attachments (S3)                     58/58
 
+## Roadmap
+
+Version numbers below were chosen to be linear — prior drafts had
+"v0.4.2" appearing after "v0.5" in the tag list, which was confusing.
+
+### v0.5.1 — Fix cursor gaps (critical, before any production use)
+
+Root cause: `nextval` is not transactional. Two concurrent writes
+in the same tenant can commit out of order.
+
+Options considered:
+
+1. Tenant-level advisory lock held for the whole write transaction.
+2. Switch the pull cursor to `xmin` (transactional by nature).
+3. Transactional outbox table feeding the sync stream.
+
+Test that must exist before the fix: two parallel transactions that
+force an out-of-order commit, one client pulling in between, assert
+the earlier row is still delivered.
+
+### v0.5.2 — Row-Level Security
+
+- Enable RLS + `FORCE ROW LEVEL SECURITY` on all 6 tables.
+- App must connect with a non-owner role, otherwise RLS is bypassed.
+- Wrap every request in `withTenant(db, tenantId, fn)` which calls
+  `SELECT set_config('app.current_tenant_id', $1, true)`.
+- Policies use `current_setting('app.current_tenant_id', true)` so
+  missing variable → zero rows (fail closed), not all rows.
+- Rewrite all test seeds to run inside `withTenant`.
+- Remove the temporary `trg_*_default_tenant` triggers once seeds
+  are explicit.
+
+Pitfalls to keep in mind (from review):
+- Owner/superuser bypasses RLS. `FORCE` handles this partially, but
+  the connection role still matters.
+- `SET LOCAL` cannot take bind parameters; use `set_config`.
+- Backup tools (`pg_dump`) need `--enable-row-security=false` or a
+  superuser with `SET row_security = off`.
+
+### v0.5.3 — S3 purge + orphan cleanup
+
+- Purge attachments whose check-in has been soft-deleted > 30 days.
+- Purge `pending` attachments never confirmed > 7 days.
+- Scan for S3 objects without a matching row.
+- Must run inside `withTenant` or with an explicit list of tenants.
+
+### v0.6 — API versioning
+
+Headers `X-Schema-Version`, `X-Client-Version`. Reject mismatches
+with `426 Upgrade Required`.
+
+### v0.7 — SSE
+
+A `DATA_CHANGED` event per tenant. Client re-pulls on receipt.
+Server sends notification only, not data.
+
+### v0.8 — Observability
+
+`sync_logs` table + metrics: push latency, conflict rate, idempotency
+hit rate, average payload size.
+
 ## Debt / Known issues
 
 | Item | Severity | Notes |
 |---|---|---|
-| RLS not enabled | High (prod) | App-level filters only. A missed WHERE leaks across tenants. |
-| Triggers `trg_*_default_tenant` still active | Low | Safety net for INSERTs missing tenant_id. Remove in v0.4.2. |
-| No real IdP | High (prod) | /auth/token is dev-only. |
-| S3 purge after soft-delete | Medium | Objects stay in bucket forever. v0.5.1. |
-| Test execution ~90s | Low | Each test file spawns its own PG container. |
-| Schema drift potential | Low | src/schema.ts and migrations can desync silently. |
-
-## Next steps
-
-1. **v0.4.2 — RLS.** Enable RLS + policies. Introduce
-   `withTenant(db, tenantId, fn)` wrapper doing
-   `SET LOCAL app.current_tenant_id`. Rewrite all test seeds.
-   Remove temporary triggers.
-
-2. **v0.5.1 — S3 purge.** Job + `DeleteObject` for attachments
-   whose check-in has been soft-deleted > 30 days.
-
-3. **v0.6 — API versioning.** Headers `X-Schema-Version`,
-   `X-Client-Version`. Reject mismatches with 426.
-
-4. **v0.7 — SSE.** A `DATA_CHANGED` event per tenant.
-
-5. **v0.8 — Observability.** `sync_logs` table + metrics.
+| Cursor gaps in `sync_seq` | **Critical** | Non-transactional `nextval`. Data loss possible. Fix in v0.5.1. |
+| RLS not enabled | High | App-level filters only. A missed WHERE leaks across tenants. |
+| No real IdP | High | `/auth/token` is dev-only. |
+| No prod guard on `AUTH_ALLOW_DEV_TOKEN` | High | App boots with dev flag in production. Add `NODE_ENV` check. |
+| Purge vs offline clients | High | A client offline longer than retention never learns of deletions. Needs `410 GONE` on stale cursor. |
+| `trg_*_default_tenant` triggers active | Medium | An INSERT missing `tenant_id` silently lands in the zero tenant. Masks the exact bug RLS should reveal. Remove in v0.5.2. |
+| Upload validation incomplete | Medium | Presigned PUT cannot enforce size or content-type. HEAD `confirm` must reject on mismatch. |
+| Orphan attachments | Medium | Pending rows never confirmed, and S3 objects without rows, are not cleaned up. v0.5.3. |
+| S3 purge after soft-delete | Medium | Objects stay in bucket forever. v0.5.3. |
+| No CI | Medium | A GitHub Action on `ubuntu-latest` answers the "does it run on Mac/Linux" question on every commit. |
+| No dev script | Low | `npm run dev` referenced but not defined. Add `tsx watch src/main.ts`. |
+| Test execution ~90s | Low | Each test file spawns its own PG container. Vitest `globalSetup` + schema-per-file would cut this to ~30s. |
+| Schema drift potential | Low | `src/schema.ts` and migrations can desync silently. Add a test that applies migrations to a fresh container and compares with the Drizzle schema. |
+| Max push size not enforced | Low | A client can send an arbitrarily large batch. |
 
 ## Working conventions
 
 - Commit + tag immediately after green tests.
-- Test before fix. Every bug found in v0.1-v0.5 was caught by a test.
-- Prefer Node `.cjs` scripts over PowerShell here-strings for patches.
+- Test before fix. Every bug found in v0.1–v0.5 was caught by a test.
 - Never modify `src/schema.ts` without a matching migration.
+- Prefer Node `.cjs` scripts over PowerShell here-strings for
+  multi-line patches on Windows. PowerShell 5.x breaks on backticks
+  inside TypeScript and SQL string literals, producing
+  unterminated-string errors that are hard to trace.
+
+## Open questions
+
+- **Mobile stack.** WatermelonDB targets React Native only, not
+  Flutter. If Flutter is the real target, the sync protocol shape
+  (`{ changes, timestamp }`) can be revisited; if RN, keep as-is.
+  **Decision needed before v0.6.**
+- **Conflict resolution UI.** Conflicts accumulate in `sync_conflicts`
+  with no resolution path other than the API. Who resolves them, and
+  how?
+- **Merge semantics.** LWW is fine for scalar fields. If two clients
+  edit different fields of the same check-in, LWW loses one. Future
+  work may need field-level merge (JSON Patch or similar).
 
 ## Environment variables
 
 | Var | Required in prod |
 |---|---|
 | DATABASE_URL | yes |
-| JWT_SECRET | yes |
+| JWT_SECRET | yes (min 32 chars — add boot check) |
 | PORT | no (default 3000) |
-| AUTH_ALLOW_DEV_TOKEN | **no — must be false in prod** |
+| AUTH_ALLOW_DEV_TOKEN | **must be false in prod** (add boot check) |
 | S3_BUCKET | yes |
 | S3_REGION | yes |
 | S3_ENDPOINT | no (MinIO) |
@@ -171,4 +364,6 @@ OAuth2 / Azure AD B2C / real credential store in prod.
 
 ## Contact
 
-<ton nom / email / slack>
+<ton nom>
+<email>
+<GitHub: @tshibandachris>
