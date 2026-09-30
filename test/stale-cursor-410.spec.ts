@@ -32,6 +32,7 @@ import { TEST_JWT_SECRET } from './helpers/jwt.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
+import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 
@@ -40,6 +41,7 @@ describe('sync pull / stale cursor (410 GONE)', () => {
   let app: INestApplication;
   let jwt: JwtService;
   let baseUrl: string;
+  let maintenance: SyncMaintenanceService;
 
   // Tenant A owns the data. Tenant B has no data and no watermark.
   const tenantA = randomUUID();
@@ -93,6 +95,8 @@ describe('sync pull / stale cursor (410 GONE)', () => {
 
   // Nest answers 201 to a POST by default, so /sync/pull currently returns 201.
   // "Fresh" means: any 2xx, and in particular not 410.
+  const freshStatus = (res: { status: number; json: any }) => res.status >= 200 && res.status < 300;
+
   const expectFresh = (res: { status: number; json: any }) => {
     expect(res.status, JSON.stringify(res.json)).toBeGreaterThanOrEqual(200);
     expect(res.status, JSON.stringify(res.json)).toBeLessThan(300);
@@ -128,12 +132,14 @@ describe('sync pull / stale cursor (410 GONE)', () => {
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
+        { provide: SyncMaintenanceService, useFactory: (d: any) => new SyncMaintenanceService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
       ],
     }).compile();
 
     app = moduleRef.createNestApplication();
     jwt = moduleRef.get(JwtService);
+    maintenance = moduleRef.get(SyncMaintenanceService);
     await app.listen(0);
     baseUrl = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
 
@@ -244,9 +250,87 @@ describe('sync pull / stale cursor (410 GONE)', () => {
     expectFresh(next);
   });
 
-  // Purge side: needs the maintenance service API. Fill in once it is wired.
-  it.todo('purge sets purged_up_to_seq to the highest sync_seq among the tombstones it removed, in the same transaction');
-  it.todo('purged_up_to_seq never decreases (GREATEST on update)');
-  it.todo('a purge that removes nothing leaves the watermark unchanged');
-  it.todo('a pull racing with a purge cannot miss deletions (watermark re-checked after the data read, or one REPEATABLE READ transaction)');
+  // ---------------------------------------------------------------------------
+  // Purge side (v0.5.3)
+  // ---------------------------------------------------------------------------
+
+  const oldDeletedAt = () => Date.now() - 40 * 24 * 3600 * 1000;
+
+  it('purge sets purged_up_to_seq to the highest sync_seq among the tombstones it removed, in the same transaction', async () => {
+    const c1 = randomUUID();
+    const c2 = randomUUID();
+    for (const id of [c1, c2]) {
+      const r = await post('/sync/push', tokenA(), { changes: { check_ins: { created: [checkInRow(id)] } } }, { 'Idempotency-Key': randomUUID() });
+      expect(r.status, JSON.stringify(r.json)).toBeLessThan(300);
+    }
+
+    // Soft-delete both with an old deleted_at so they qualify for purge
+    const ts = oldDeletedAt();
+    await pg.pool.query('UPDATE check_ins SET deleted_at = $1 WHERE id = ANY($2::uuid[])', [ts, [c1, c2]]);
+
+    const seqs = await pg.pool.query('SELECT sync_seq FROM check_ins WHERE id = ANY($1::uuid[])', [[c1, c2]]);
+    const maxSeq = Math.max(...seqs.rows.map((r: any) => Number(r.sync_seq)));
+
+    const result = await maintenance.purgeTenantTombstones(tenantA, 30);
+
+    expect(result.checkInsDeleted).toBe(2);
+    expect(result.purgedUpToSeq).toBe(maxSeq);
+
+    const wm = await pg.pool.query('SELECT purged_up_to_seq FROM sync_purge_state WHERE tenant_id = $1', [tenantA]);
+    expect(Number(wm.rows[0].purged_up_to_seq)).toBe(maxSeq);
+
+    const remaining = await pg.pool.query('SELECT id FROM check_ins WHERE id = ANY($1::uuid[])', [[c1, c2]]);
+    expect(remaining.rows).toHaveLength(0);
+  });
+
+  it('purged_up_to_seq never decreases (GREATEST on update)', async () => {
+    await setWatermark(tenantA, 1000);
+
+    const c1 = randomUUID();
+    await post('/sync/push', tokenA(), { changes: { check_ins: { created: [checkInRow(c1)] } } }, { 'Idempotency-Key': randomUUID() });
+    await pg.pool.query('UPDATE check_ins SET deleted_at = $1 WHERE id = $2', [oldDeletedAt(), c1]);
+
+    const result = await maintenance.purgeTenantTombstones(tenantA, 30);
+
+    expect(result.purgedUpToSeq).toBe(1000);
+
+    const wm = await pg.pool.query('SELECT purged_up_to_seq FROM sync_purge_state WHERE tenant_id = $1', [tenantA]);
+    expect(Number(wm.rows[0].purged_up_to_seq)).toBe(1000);
+  });
+
+  it('a purge that removes nothing leaves the watermark unchanged', async () => {
+    await setWatermark(tenantA, 1000);
+
+    const result = await maintenance.purgeTenantTombstones(tenantA, 30);
+
+    expect(result.checkInsDeleted).toBe(0);
+    expect(result.purgedUpToSeq).toBe(1000);
+  });
+
+  it('a pull racing with a purge cannot miss deletions', async () => {
+    const c1 = randomUUID();
+    const r = await post('/sync/push', tokenA(), { changes: { check_ins: { created: [checkInRow(c1)] } } }, { 'Idempotency-Key': randomUUID() });
+    expect(r.status, JSON.stringify(r.json)).toBeLessThan(300);
+
+    const before = await pg.pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [c1]);
+    const seqBeforeDelete = Number(before.rows[0].sync_seq);
+
+    await pg.pool.query('UPDATE check_ins SET deleted_at = $1 WHERE id = $2', [oldDeletedAt(), c1]);
+    const after = await pg.pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [c1]);
+    const seqAfterDelete = Number(after.rows[0].sync_seq);
+    expect(seqAfterDelete).toBeGreaterThan(seqBeforeDelete);
+
+    const purgeResult = await maintenance.purgeTenantTombstones(tenantA, 30);
+    expect(purgeResult.purgedUpToSeq).toBe(seqAfterDelete);
+
+    // A client whose cursor predates the deletion is told to resync.
+    const stalePull = await pull(tokenA(), seqBeforeDelete);
+    expect(stalePull.status).toBe(410);
+    expect(stalePull.json?.changes).toBeUndefined();
+
+    // Resync from scratch: the deletion is reflected (c1 is gone, no tombstone).
+    const fullPull = await pull(tokenA(), 0);
+    expect(freshStatus(fullPull));
+    expect(idsIn(fullPull.json)).not.toContain(c1);
+  });
 });

@@ -12,6 +12,13 @@ export interface PurgeOptions {
   ttlConflictsDays?: number;
 }
 
+export interface PurgeTombstonesResult {
+  checkInsDeleted: number;
+  missionsDeleted: number;
+  sitesDeleted: number;
+  purgedUpToSeq: number;
+}
+
 export class SyncMaintenanceService {
   private readonly db: NodePgDatabase<typeof schema>;
 
@@ -44,6 +51,32 @@ export class SyncMaintenanceService {
     return {
       idempotencyDeleted: Number(payload.idempotency_deleted ?? 0),
       conflictsDeleted: Number(payload.conflicts_deleted ?? 0),
+    };
+  }
+
+  async purgeTenantTombstones(
+    tenantId: string,
+    ttlDays: number = 30,
+  ): Promise<PurgeTombstonesResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
+    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+
+    const result = await this.db.execute(sql`
+      SELECT purge_tenant_tombstones(${tenantId}::uuid, ${ttlDays}::int) AS result
+    `);
+
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    const payload = row?.result as Record<string, unknown> | undefined;
+
+    if (!payload) {
+      throw new Error('purge_tenant_tombstones a retourne un resultat vide.');
+    }
+
+    return {
+      checkInsDeleted: Number(payload.check_ins_deleted ?? 0),
+      missionsDeleted: Number(payload.missions_deleted ?? 0),
+      sitesDeleted: Number(payload.sites_deleted ?? 0),
+      purgedUpToSeq: Number(payload.purged_up_to_seq ?? 0),
     };
   }
 }
