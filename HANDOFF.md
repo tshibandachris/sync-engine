@@ -111,6 +111,51 @@ trade-off for correctness. The alternative is a transactional outbox
 fed by a non-cached sequence — a larger refactor, deliberately
 deferred.
 
+### Row-Level Security
+
+`ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` on all 7
+tenant-scoped tables (`sites`, `missions`, `check_ins`,
+`sync_conflicts`, `sync_idempotency_keys`, `attachments`,
+`sync_purge_state`). Policies are `FOR ALL` with `USING` + `WITH CHECK`,
+keyed on `current_setting('app.current_tenant_id', true)`.
+
+**Fail-closed:** missing `app.current_tenant_id` yields zero rows, not all
+rows. `NULLIF(current_setting(...), '')::uuid` turns both the absent
+setting and the empty string into `NULL`, and `tenant_id = NULL` is
+filtered out by SQL semantics.
+
+**App role.** The app connects as `sync_app`, a non-superuser,
+non-owner role created in migration 011. `postgres` (superuser) bypasses
+RLS by PostgreSQL rule and is used only by the test setup to seed data.
+
+**Context injection.** Two wrappers in `src/`:
+
+- `withTenant(db, tenantId, fn)` - read paths. Opens a transaction,
+  calls `set_config('app.current_tenant_id', $1, true)`, runs `fn`.
+- `lockTenantWrites(tx, tenantId)` - write paths. Same `set_config`,
+  plus the tenant-level advisory lock.
+
+**Paths that use them:**
+
+| Service | Method | Wrapper |
+|---|---|---|
+| SyncPullService | pullChanges | withTenant |
+| SyncConflictService | listConflicts | withTenant |
+| SyncAttachmentService | listForCheckIn | withTenant |
+| SyncMaintenanceService | purgeTenantTombstones | withTenant |
+| SyncPushService | pushChanges | lockTenantWrites |
+| SyncConflictService | resolveConflict | lockTenantWrites |
+
+**Proof.** `test/rls-isolation.spec.ts` runs 6 tests through the
+`sync_app` pool:
+
+- Without `set_config`, SELECT returns zero rows (fail-closed).
+- With `set_config` for tenant A, SELECT returns only A's rows, even
+  with an explicit `WHERE id = <tenant B row>`.
+- An INSERT with a mismatched `tenant_id` is rejected by the
+  `WITH CHECK` clause.
+- `withTenant` makes both A and B see only their own data.
+
 ### Attachments
 
 | Route | Purpose |
@@ -130,7 +175,7 @@ This allows per-tenant lifecycle rules and bulk deletion later.
 
 **Known limitation:** presigned PUT does not enforce size or type on
 the S3 side. `confirm` does a HEAD but currently only checks
-existence. See Roadmap v0.5.4.
+existence. See Roadmap v0.5.5.
 
 ### Multi-tenancy
 
@@ -269,7 +314,9 @@ represent a legitimate race the client must resolve.
     v0.4.1a     Multi-tenant schema                  43/43
     v0.4.1b     Tenant propagation                   47/47
     v0.5        Attachments (S3)                     58/58
-    v0.5.1+2    Tenant lock + 410 stale cursors      67/67 + 4 todo
+    v0.5.1+2    Tenant lock + 410 stale cursors      67/67
+    v0.5.3      Purge tombstones + watermark         71/71
+    v0.5.4      Row-Level Security (a/b/c)           77/77
 
 ## Roadmap
 
@@ -305,26 +352,12 @@ Design:
 Regression test: a client pulls with a cursor below
 `purged_up_to_seq` and receives 410.
 
-### v0.5.3 — Row-Level Security
+### v0.5.4 — Row-Level Security (done)
 
-- Enable RLS + `FORCE ROW LEVEL SECURITY` on all 6 tables.
-- App must connect with a non-owner role, otherwise RLS is bypassed.
-- Wrap every request in `withTenant(db, tenantId, fn)` which calls
-  `SELECT set_config('app.current_tenant_id', $1, true)`.
-- Policies use `current_setting('app.current_tenant_id', true)` so
-  missing variable → zero rows (fail closed), not all rows.
-- Rewrite all test seeds to run inside `withTenant`.
-- Remove the temporary `trg_*_default_tenant` triggers once seeds
-  are explicit.
+Implemented across a/b/c. See the "Row-Level Security" architecture
+block above and `test/rls-isolation.spec.ts` for the proof.
 
-Pitfalls to keep in mind (from review):
-- Owner/superuser bypasses RLS. `FORCE` handles this partially, but
-  the connection role still matters.
-- `SET LOCAL` cannot take bind parameters; use `set_config`.
-- Backup tools (`pg_dump`) need `--enable-row-security=false` or a
-  superuser with `SET row_security = off`.
-
-### v0.5.4 — S3 purge + orphan cleanup
+### v0.5.5 — S3 purge + orphan cleanup
 
 - Purge attachments whose check-in has been soft-deleted > 30 days.
 - Purge `pending` attachments never confirmed > 7 days.
@@ -350,14 +383,12 @@ hit rate, average payload size.
 
 | Item | Severity | Notes |
 |---|---|---|
-| RLS not enabled | High | App-level filters only. A missed WHERE leaks across tenants. |
 | No real IdP | High | `/auth/token` is dev-only. |
 | No prod guard on `AUTH_ALLOW_DEV_TOKEN` | High | App boots with dev flag in production. Add `NODE_ENV` check. |
 | Purge vs offline clients | High | A client offline longer than retention never learns of deletions. Needs `410 GONE` on stale cursor. |
-| `trg_*_default_tenant` triggers active | Medium | An INSERT missing `tenant_id` silently lands in the zero tenant. Masks the exact bug RLS should reveal. Remove in v0.5.3. |
 | Upload validation incomplete | Medium | Presigned PUT cannot enforce size or content-type. HEAD `confirm` must reject on mismatch. v0.5.4. |
 | Orphan attachments | Medium | Pending rows never confirmed, and S3 objects without rows, are not cleaned up. v0.5.4. |
-| S3 purge after soft-delete | Medium | Objects stay in bucket forever. v0.5.4. |
+| S3 purge after soft-delete | Medium | Objects stay in bucket forever. v0.5.5. |
 | No CI | Medium | A GitHub Action on `ubuntu-latest` answers the "does it run on Mac/Linux" question on every commit. |
 | No dev script | Low | `npm run dev` referenced but not defined. Add `tsx watch src/main.ts`. |
 | Test execution ~90s | Low | Each test file spawns its own PG container. Vitest `globalSetup` + schema-per-file would cut this to ~30s. |

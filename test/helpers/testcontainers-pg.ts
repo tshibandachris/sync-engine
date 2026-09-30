@@ -14,16 +14,24 @@ export class TestPostgres {
 
   readonly db: ReturnType<typeof drizzle<typeof schema>>;
 
+  readonly appPool: Pool;
+
+  readonly appDb: ReturnType<typeof drizzle<typeof schema>>;
+
   private constructor(
     container: Awaited<
       ReturnType<PostgreSqlContainer['start']>
     >,
     pool: Pool,
     db: ReturnType<typeof drizzle<typeof schema>>,
+    appPool: Pool,
+    appDb: ReturnType<typeof drizzle<typeof schema>>,
   ) {
     this.container = container;
     this.pool = pool;
     this.db = db;
+    this.appPool = appPool;
+    this.appDb = appDb;
   }
 
   static async start(): Promise<TestPostgres> {
@@ -179,6 +187,11 @@ export class TestPostgres {
     'utf8',
   );
 
+  const migration11 = fs.readFileSync(
+    path.join(migrationsDir, '011_sync_app_role.sql'),
+    'utf8',
+  );
+
     console.log(
       `[TestPostgres] Migration 001: ${migration1File}`,
     );
@@ -198,6 +211,7 @@ export class TestPostgres {
   await pool.query(migration8);
   await pool.query(migration9);
   await pool.query(migration10);
+  await pool.query(migration11);
 
     /*
      * ========================================================
@@ -209,14 +223,31 @@ export class TestPostgres {
       schema,
     });
 
+    // Second pool connected as the non-superuser application role.
+    // RLS applies fully: no bypass, no ownership exception.
+    const appPool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: 'sync_app',
+      password: 'sync_app_pw',
+    });
+
+    const appDb = drizzle(appPool, {
+      schema,
+    });
+
     return new TestPostgres(
       container,
       pool,
       db,
+      appPool,
+      appDb,
     );
   }
 
   async stop(): Promise<void> {
+    await this.appPool.end();
     await this.pool.end();
     await this.container.stop();
   }
