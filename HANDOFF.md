@@ -32,7 +32,7 @@ Mobile stack: **React Native + WatermelonDB** (to be confirmed — see Open ques
     npx vitest run
 
 Requirements: Docker running. The first run pulls `postgres:16-alpine`
-(~60s). Subsequent test runs take ~90s end to end (4 test files, each
+(~60s). Subsequent test runs take ~120s end to end (5 test files, each
 spins its own container).
 
 ### Running the app locally
@@ -80,13 +80,36 @@ last saw for that row. If `version != server row's current sync_seq`,
 the write is recorded in `sync_conflicts` instead of applied. LWW
 for now — see Open questions for merge-by-field considerations.
 
-**Known bug — cursor gaps.** `nextval` is not transactional. A
-transaction that obtains seq 100 can commit after one that obtained
-seq 101. A client that pulls in between sees 101, advances its cursor
-to 101, and never sees 100. The current advisory lock serialises by
-`(agent, idempotency_key)` pair, not by tenant, so two agents of the
-same tenant can write concurrently. **This is a data-loss bug and
-must be fixed before production.** See Roadmap v0.5.1.
+**Write serialisation (tenant-level lock).**
+
+Every code path that writes to a `sync_seq`-bearing table takes a
+tenant-level advisory lock for the whole transaction:
+
+    SELECT pg_advisory_xact_lock(7301, hashtext('<tenant_id>'))
+
+- Constant namespace `7301` — disjoint from the idempotency locks and
+  from the test gate key in `test/cursor-gaps.spec.ts` (424242).
+- Helper: `src/tenant-write-lock.ts` → `lockTenantWrites(tx, tenantId)`.
+- Must be the **first statement** of the transaction, before the
+  per-(agent, key) idempotency lock and before any INSERT/UPDATE that
+  fires the `sync_seq` trigger.
+- Paths that take it: `SyncPushService.pushChanges`,
+  `SyncConflictService.resolveConflict` (only when resolution is
+  `client`, which writes to `check_ins`).
+- Path that does **not** take it: `SyncMaintenanceService.purge` — it
+  only touches `sync_conflicts` and `sync_idempotency_keys`, neither
+  of which carries a `sync_seq` column.
+
+**Why:** `nextval('global_sync_seq')` is not transactional. Without a
+lock, a transaction that obtains seq N can commit after one that
+obtained seq N+1, leaving a gap. A client pulling between the two
+commits advances past the gap and never sees the earlier row.
+
+**Cost:** all pushes of a single tenant are serialised. At 10k agents
+on the same tenant, a peak at shift start becomes a queue. Documented
+trade-off for correctness. The alternative is a transactional outbox
+fed by a non-cached sequence — a larger refactor, deliberately
+deferred.
 
 ### Attachments
 
@@ -107,7 +130,7 @@ This allows per-tenant lifecycle rules and bulk deletion later.
 
 **Known limitation:** presigned PUT does not enforce size or type on
 the S3 side. `confirm` does a HEAD but currently only checks
-existence. See Roadmap v0.5.3.
+existence. See Roadmap v0.5.4.
 
 ### Multi-tenancy
 
@@ -119,7 +142,7 @@ Composite FKs: `(site_id, tenant_id)`, `(mission_id, tenant_id)`,
 structurally impossible, not just filtered at query time.
 
 Every query filters `WHERE tenant_id = ?` at the application level.
-**RLS is not enabled yet** — see Roadmap v0.5.2.
+**RLS is not enabled yet** — see Roadmap v0.5.3.
 
 ### Auth
 
@@ -216,6 +239,7 @@ represent a legitimate race the client must resolve.
       sync-attachment.service.ts
       s3-attachment-storage.ts
       attachment-storage.ts
+      tenant-write-lock.ts
       sync.controller.ts
       sync-attachment.controller.ts
       auth.controller.ts
@@ -227,6 +251,7 @@ represent a legitimate race the client must resolve.
       sync.http.spec.ts            (12 tests)
       auth.http.spec.ts            (4 tests)
       attachments.http.spec.ts     (11 tests)
+      cursor-gaps.spec.ts          (2 tests)
       helpers/testcontainers-pg.ts
       helpers/jwt.ts
 
@@ -244,28 +269,43 @@ represent a legitimate race the client must resolve.
     v0.4.1a     Multi-tenant schema                  43/43
     v0.4.1b     Tenant propagation                   47/47
     v0.5        Attachments (S3)                     58/58
+    v0.5.1      Tenant write lock (cursor gaps fix)  60/60
 
 ## Roadmap
 
 Version numbers below were chosen to be linear — prior drafts had
 "v0.4.2" appearing after "v0.5" in the tag list, which was confusing.
 
-### v0.5.1 — Fix cursor gaps (critical, before any production use)
+### v0.5.1 — Tenant lock + cursor gaps fix (done)
 
-Root cause: `nextval` is not transactional. Two concurrent writes
-in the same tenant can commit out of order.
+Implemented. See the "Write serialisation" block above.
 
-Options considered:
+- `src/tenant-write-lock.ts` — `lockTenantWrites(tx, tenantId)`.
+- Applied in `SyncPushService.pushChanges` and
+  `SyncConflictService.resolveConflict`.
+- Regression test: `test/cursor-gaps.spec.ts`. Red before the fix,
+  green after. Log line `B finished while A was still open` flips
+  from `true` to `false`.
 
-1. Tenant-level advisory lock held for the whole write transaction.
-2. Switch the pull cursor to `xmin` (transactional by nature).
-3. Transactional outbox table feeding the sync stream.
+### v0.5.2 — 410 GONE for stale cursors
 
-Test that must exist before the fix: two parallel transactions that
-force an out-of-order commit, one client pulling in between, assert
-the earlier row is still delivered.
+The purge function (v0.3.3) deletes rows older than retention. A
+client offline longer than retention never learns those rows were
+deleted.
 
-### v0.5.2 — Row-Level Security
+Design:
+
+- The purge records a `purged_up_to_seq` per tenant. Table:
+  `sync_purge_state(tenant_id UUID PRIMARY KEY, purged_up_to_seq BIGINT, updated_at BIGINT)`.
+- `/sync/pull` returns `410 GONE` when
+  `last_pulled_at < purged_up_to_seq` for the requesting tenant.
+- Client must resync from scratch (full pull, no cursor).
+- Retention policy documented in the API contract.
+
+Regression test: a client pulls with a cursor below
+`purged_up_to_seq` and receives 410.
+
+### v0.5.3 — Row-Level Security
 
 - Enable RLS + `FORCE ROW LEVEL SECURITY` on all 6 tables.
 - App must connect with a non-owner role, otherwise RLS is bypassed.
@@ -284,7 +324,7 @@ Pitfalls to keep in mind (from review):
 - Backup tools (`pg_dump`) need `--enable-row-security=false` or a
   superuser with `SET row_security = off`.
 
-### v0.5.3 — S3 purge + orphan cleanup
+### v0.5.4 — S3 purge + orphan cleanup
 
 - Purge attachments whose check-in has been soft-deleted > 30 days.
 - Purge `pending` attachments never confirmed > 7 days.
@@ -310,15 +350,14 @@ hit rate, average payload size.
 
 | Item | Severity | Notes |
 |---|---|---|
-| Cursor gaps in `sync_seq` | **Critical** | Non-transactional `nextval`. Data loss possible. Fix in v0.5.1. |
 | RLS not enabled | High | App-level filters only. A missed WHERE leaks across tenants. |
 | No real IdP | High | `/auth/token` is dev-only. |
 | No prod guard on `AUTH_ALLOW_DEV_TOKEN` | High | App boots with dev flag in production. Add `NODE_ENV` check. |
 | Purge vs offline clients | High | A client offline longer than retention never learns of deletions. Needs `410 GONE` on stale cursor. |
-| `trg_*_default_tenant` triggers active | Medium | An INSERT missing `tenant_id` silently lands in the zero tenant. Masks the exact bug RLS should reveal. Remove in v0.5.2. |
-| Upload validation incomplete | Medium | Presigned PUT cannot enforce size or content-type. HEAD `confirm` must reject on mismatch. |
-| Orphan attachments | Medium | Pending rows never confirmed, and S3 objects without rows, are not cleaned up. v0.5.3. |
-| S3 purge after soft-delete | Medium | Objects stay in bucket forever. v0.5.3. |
+| `trg_*_default_tenant` triggers active | Medium | An INSERT missing `tenant_id` silently lands in the zero tenant. Masks the exact bug RLS should reveal. Remove in v0.5.3. |
+| Upload validation incomplete | Medium | Presigned PUT cannot enforce size or content-type. HEAD `confirm` must reject on mismatch. v0.5.4. |
+| Orphan attachments | Medium | Pending rows never confirmed, and S3 objects without rows, are not cleaned up. v0.5.4. |
+| S3 purge after soft-delete | Medium | Objects stay in bucket forever. v0.5.4. |
 | No CI | Medium | A GitHub Action on `ubuntu-latest` answers the "does it run on Mac/Linux" question on every commit. |
 | No dev script | Low | `npm run dev` referenced but not defined. Add `tsx watch src/main.ts`. |
 | Test execution ~90s | Low | Each test file spawns its own PG container. Vitest `globalSetup` + schema-per-file would cut this to ~30s. |

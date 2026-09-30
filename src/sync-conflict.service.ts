@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import * as schema from './schema.js';
+import { lockTenantWrites } from './tenant-write-lock.js';
 
 export type Resolution = 'client' | 'server' | 'dismiss';
 
@@ -90,6 +91,8 @@ export class SyncConflictService {
     const tenantId = dto.tenantId ?? DEFAULT_TENANT_ID;
 
     await this.db.transaction(async (tx) => {
+      await lockTenantWrites(tx, tenantId);
+
       const locked = await tx.execute(sql`
         SELECT id, tenant_id, agent_id, entity_type, entity_id, status, client_payload
         FROM sync_conflicts
