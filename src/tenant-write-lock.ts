@@ -25,6 +25,11 @@ export async function lockTenantWrites(
   tx: AdvisoryExecutor,
   tenantId: string,
 ): Promise<void> {
+  // Set the RLS context first, so the advisory-lock SELECT and every
+  // following statement see only this tenant's rows.
+  await tx.execute(
+    sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`,
+  );
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(${TENANT_WRITE_LOCK_NS}::int, hashtext(${tenantId}::text))`,
   );

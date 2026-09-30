@@ -10,6 +10,8 @@ import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 import * as schema from '../src/schema.js';
 
+const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000000';
+
 describe('Sync Engine / sync_seq integration', () => {
   let pg: TestPostgres;
   let pool: Pool;
@@ -44,13 +46,13 @@ beforeEach(async () => {
   );
 
   await pool.query(
-    'INSERT INTO sites (id, name, latitude, longitude) VALUES ($1, $2, $3, $4)',
-    [siteA, 'Site A', 48.85, 2.35],
+    'INSERT INTO sites (id, tenant_id, name, latitude, longitude) VALUES ($1, $2, $3, $4, $5)',
+    [siteA, TEST_TENANT_ID, 'Site A', 48.85, 2.35],
   );
 
   await pool.query(
-    'INSERT INTO missions (id, agent_id, title, site_id) VALUES ($1, $2, $3, $4)',
-    [missionA, agentA, 'Mission A', siteA],
+    'INSERT INTO missions (id, tenant_id, agent_id, title, site_id) VALUES ($1, $2, $3, $4, $5)',
+    [missionA, TEST_TENANT_ID, agentA, 'Mission A', siteA],
   );
 });
 
@@ -76,6 +78,7 @@ afterAll(async () => {
       await db.insert(schema.checkIns).values(
         rows.slice(i, i + 400).map((row) => ({
           ...row,
+          tenantId: TEST_TENANT_ID,
           syncSeq: 0,
         })),
       );
@@ -181,6 +184,7 @@ afterAll(async () => {
 
     await db.insert(schema.checkIns).values({
       id,
+      tenantId: TEST_TENANT_ID,
       missionId: missionA,
       agentId: agentA,
       checkInTime: Date.now(),
@@ -209,6 +213,7 @@ afterAll(async () => {
 
     await db.insert(schema.checkIns).values({
       id,
+      tenantId: TEST_TENANT_ID,
       missionId: missionA,
       agentId: agentA,
       checkInTime: Date.now(),
@@ -518,9 +523,10 @@ afterAll(async () => {
       crypto.randomUUID();
 
     await pool.query(
-      "INSERT INTO missions (id, agent_id, title) VALUES ($1, $2, $3)",
+      "INSERT INTO missions (id, tenant_id, agent_id, title) VALUES ($1, $2, $3, $4)",
       [
         newMissionId,
+        TEST_TENANT_ID,
         agentA,
         'Mission créée après Pull',
       ],
@@ -602,9 +608,10 @@ afterAll(async () => {
       createdMissionIds.push(id);
 
       await pool.query(
-        "INSERT INTO missions (id, agent_id, title) VALUES ($1, $2, $3)",
+        "INSERT INTO missions (id, tenant_id, agent_id, title) VALUES ($1, $2, $3, $4)",
         [
           id,
+          TEST_TENANT_ID,
           agentA,
           `Pagination Mission ${i}`,
         ],
@@ -765,14 +772,16 @@ afterAll(async () => {
       `
         INSERT INTO missions (
           id,
+          tenant_id,
           agent_id,
           title,
           site_id
         )
-        VALUES ($1, $2, $3, $4)
+        VALUES ($1, $2, $3, $4, $5)
       `,
       [
         missionB,
+        TEST_TENANT_ID,
         agentB,
         'Mission B',
         siteA,
@@ -784,6 +793,7 @@ afterAll(async () => {
       `
         INSERT INTO check_ins (
           id,
+          tenant_id,
           mission_id,
           agent_id,
           check_in_time,
@@ -801,18 +811,20 @@ afterAll(async () => {
           $2,
           $3,
           $4,
-          NULL,
           $5,
+          NULL,
           $6,
           $7,
           $8,
-          $8,
+          $9,
+          $9,
           NULL,
           0
         )
       `,
       [
         checkInId,
+        TEST_TENANT_ID,
         missionA,
         agentA,
         1650000000000,
@@ -976,12 +988,12 @@ afterAll(async () => {
     const recentTs = Date.now() - 1 * 24 * 3600 * 1000;
 
     await pool.query(
-      "INSERT INTO sync_idempotency_keys (agent_id, idempotency_key, created_at) VALUES ($1, $2, $3)",
-      [agentA, 'old-key', new Date(oldTs)],
+      "INSERT INTO sync_idempotency_keys (tenant_id, agent_id, idempotency_key, created_at) VALUES ($1, $2, $3, $4)",
+      [TEST_TENANT_ID, agentA, 'old-key', new Date(oldTs)],
     );
     await pool.query(
-      "INSERT INTO sync_idempotency_keys (agent_id, idempotency_key, created_at) VALUES ($1, $2, $3)",
-      [agentA, 'recent-key', new Date(recentTs)],
+      "INSERT INTO sync_idempotency_keys (tenant_id, agent_id, idempotency_key, created_at) VALUES ($1, $2, $3, $4)",
+      [TEST_TENANT_ID, agentA, 'recent-key', new Date(recentTs)],
     );
 
     const result = await maintenance.purge({ ttlIdempotencyDays: 7, ttlConflictsDays: 30 });
@@ -1004,19 +1016,19 @@ afterAll(async () => {
     const entityId = randomUUID();
 
     await pool.query(
-      `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
-       VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'resolved', 'server', $4, $5)`,
-      [id1, agentA, entityId, oldResolved, oldResolved],
+      `INSERT INTO sync_conflicts (id, tenant_id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
+       VALUES ($1, $2, $3, 'check_in', $4, 1, 2, '{}', '{}', 'resolved', 'server', $5, $6)`,
+      [id1, TEST_TENANT_ID, agentA, entityId, oldResolved, oldResolved],
     );
     await pool.query(
-      `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
-       VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'resolved', 'server', $4, $5)`,
-      [id2, agentA, entityId, recentResolved, recentResolved],
+      `INSERT INTO sync_conflicts (id, tenant_id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
+       VALUES ($1, $2, $3, 'check_in', $4, 1, 2, '{}', '{}', 'resolved', 'server', $5, $6)`,
+      [id2, TEST_TENANT_ID, agentA, entityId, recentResolved, recentResolved],
     );
     await pool.query(
-      `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, created_at)
-       VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'pending', $4)`,
-      [id3, agentA, entityId, oldResolved],
+      `INSERT INTO sync_conflicts (id, tenant_id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, created_at)
+       VALUES ($1, $2, $3, 'check_in', $4, 1, 2, '{}', '{}', 'pending', $5)`,
+      [id3, TEST_TENANT_ID, agentA, entityId, oldResolved],
     );
 
     const result = await maintenance.purge({ ttlIdempotencyDays: 7, ttlConflictsDays: 30 });
@@ -1036,9 +1048,9 @@ afterAll(async () => {
 
     for (let i = 0; i < 3; i++) {
       await pool.query(
-        `INSERT INTO sync_conflicts (id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
-         VALUES ($1, $2, 'check_in', $3, 1, 2, '{}', '{}', 'resolved', 'dismiss', $4, $5)`,
-        [randomUUID(), agentA, entityId, now - i * 1000, now - i * 1000],
+        `INSERT INTO sync_conflicts (id, tenant_id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
+         VALUES ($1, $2, $3, 'check_in', $4, 1, 2, '{}', '{}', 'resolved', 'dismiss', $5, $6)`,
+        [randomUUID(), TEST_TENANT_ID, agentA, entityId, now - i * 1000, now - i * 1000],
       );
     }
 
