@@ -269,7 +269,7 @@ represent a legitimate race the client must resolve.
     v0.4.1a     Multi-tenant schema                  43/43
     v0.4.1b     Tenant propagation                   47/47
     v0.5        Attachments (S3)                     58/58
-    v0.5.1      Tenant write lock (cursor gaps fix)  60/60
+    v0.5.1+2    Tenant lock + 410 stale cursors      67/67 + 4 todo
 
 ## Roadmap
 
