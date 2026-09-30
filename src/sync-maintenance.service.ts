@@ -1,6 +1,7 @@
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
+import { withTenant } from './with-tenant.js';
 
 export interface PurgeResult {
   idempotencyDeleted: number;
@@ -61,7 +62,8 @@ export class SyncMaintenanceService {
     if (!tenantId) throw new Error('tenantId requis.');
     if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
 
-    const result = await this.db.execute(sql`
+    return withTenant(this.db, tenantId, async (tx) => {
+    const result = await tx.execute(sql`
       SELECT purge_tenant_tombstones(${tenantId}::uuid, ${ttlDays}::int) AS result
     `);
 
@@ -78,5 +80,6 @@ export class SyncMaintenanceService {
       sitesDeleted: Number(payload.sites_deleted ?? 0),
       purgedUpToSeq: Number(payload.purged_up_to_seq ?? 0),
     };
+    });
   }
 }

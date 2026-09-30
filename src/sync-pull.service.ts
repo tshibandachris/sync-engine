@@ -1,4 +1,5 @@
 import { GoneException } from '@nestjs/common';
+import { withTenant } from './with-tenant.js';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
@@ -100,7 +101,8 @@ export class SyncPullService {
       1000,
     );
 
-    const result = await this.db.execute(sql`
+    return withTenant(this.db, tenantId, async (tx) => {
+    const result = await tx.execute(sql`
       WITH events AS (
 
         SELECT
@@ -204,7 +206,7 @@ export class SyncPullService {
      * and is never stale, otherwise a client could never recover.
      */
     if (sinceSeq > 0) {
-      const purge = await this.db.execute(sql`
+      const purge = await tx.execute(sql`
         SELECT purged_up_to_seq
         FROM sync_purge_state
         WHERE tenant_id = ${tenantId}::uuid
@@ -439,5 +441,6 @@ export class SyncPullService {
       has_more: hasMore,
       changes,
     };
+    });
   }
 }

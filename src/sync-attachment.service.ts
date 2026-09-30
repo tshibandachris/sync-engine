@@ -3,6 +3,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, desc, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import * as schema from './schema.js';
+import { withTenant } from './with-tenant.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -181,7 +182,8 @@ export class AttachmentService {
   async listForCheckIn(dto: ListAttachmentsDto): Promise<AttachmentItem[]> {
     if (!UUID_RE.test(dto.checkInId)) throw new BadRequestException('checkInId UUID requis.');
 
-    const rows = await this.db
+    return withTenant(this.db, dto.tenantId, async (tx) => {
+    const rows = await tx
       .select()
       .from(schema.attachments)
       .where(and(
@@ -207,5 +209,6 @@ export class AttachmentService {
       });
     }
     return items;
+    });
   }
 }

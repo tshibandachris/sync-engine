@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import * as schema from './schema.js';
+import { withTenant } from './with-tenant.js';
 import { lockTenantWrites } from './tenant-write-lock.js';
 
 export type Resolution = 'client' | 'server' | 'dismiss';
@@ -56,7 +57,8 @@ export class SyncConflictService {
       ? and(eq(schema.syncConflicts.tenantId, tenantId), eq(schema.syncConflicts.agentId, dto.agentId), eq(schema.syncConflicts.status, dto.status))
       : and(eq(schema.syncConflicts.tenantId, tenantId), eq(schema.syncConflicts.agentId, dto.agentId));
 
-    const rows = await this.db
+    return withTenant(this.db, tenantId, async (tx) => {
+    const rows = await tx
       .select()
       .from(schema.syncConflicts)
       .where(whereClause)
@@ -79,6 +81,7 @@ export class SyncConflictService {
       resolvedAt: r.resolvedAt === null || r.resolvedAt === undefined ? null : Number(r.resolvedAt),
       createdAt: Number(r.createdAt),
     }));
+    });
   }
 
   async resolveConflict(dto: ResolveConflictDto): Promise<void> {
