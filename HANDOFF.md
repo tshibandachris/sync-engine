@@ -1,3 +1,5 @@
+![CI](https://github.com/tshibandachris/sync-engine/actions/workflows/ci.yml/badge.svg)
+
 # Sync Engine — Handoff
 
 ## What it is
