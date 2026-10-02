@@ -1,4 +1,4 @@
-﻿// test/orphan-site-reassignment.spec.ts
+// test/orphan-site-reassignment.spec.ts
 //
 // Bug 1 : après réaffectation d'une mission de A vers B, le site A disparaît du pull
 // alors que des check-ins historiques y renvoient (perte silencieuse de contexte).
