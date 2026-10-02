@@ -1,6 +1,4 @@
+# Normalize to LF in the repository, keep native on checkout.
 * text=auto eol=lf
-*.png binary
-*.jpg binary
-*.ico binary
-*.bak binary
-*.bak-* binary
+*.ps1 text eol=crlf
+*.bat text eol=crlf
