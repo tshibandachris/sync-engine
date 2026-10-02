@@ -9,6 +9,7 @@ import * as schema from '../src/schema.js';
 import { AttachmentService } from '../src/sync-attachment.service.js';
 import { AttachmentController } from '../src/sync-attachment.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
+import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import type { AttachmentStorage, PresignedPut, PresignedGet, HeadResult } from '../src/attachment-storage.js';
 import {
   TEST_JWT_SECRET,
@@ -76,13 +77,14 @@ describe('Attachments / HTTP', () => {
       ],
       controllers: [AttachmentController],
       providers: [
-        { provide: 'DRIZZLE_DB', useValue: db },
+        { provide: 'DRIZZLE_DB', useValue: pg.appDb },
         { provide: AttachmentService, useFactory: (d: any) => new AttachmentService(d, storage), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
       ],
     }).compile();
 
     app = moduleRef.createNestApplication();
+    await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
     await app.init();
   });
 

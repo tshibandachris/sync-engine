@@ -11,6 +11,7 @@ import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
+import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import {
   TEST_JWT_SECRET,
   createTestJwtService,
@@ -47,7 +48,7 @@ describe('Sync Engine / HTTP', () => {
       ],
       controllers: [SyncController],
       providers: [
-        { provide: 'DRIZZLE_DB', useValue: db },
+        { provide: 'DRIZZLE_DB', useValue: pg.appDb },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
@@ -56,6 +57,7 @@ describe('Sync Engine / HTTP', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
     await app.init();
   });
 
@@ -248,7 +250,10 @@ describe('Sync Engine / HTTP', () => {
       .set('Authorization', 'Bearer ' + tokenB)
       .send({ resolution: 'server', resolved_by: agentA });
 
-    expect(res.status).toBe(403);
+    // Under RLS, another tenant's conflict is invisible to the query, so the
+    // service cannot distinguish "does not exist" from "exists but not yours".
+    // 404 is the correct answer and leaks no existence information.
+    expect(res.status).toBe(404);
   });
 
   it('does not list conflicts from another tenant', async () => {

@@ -28,6 +28,7 @@ import { JwtModule, JwtService } from '@nestjs/jwt';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET } from './helpers/jwt.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
@@ -128,7 +129,7 @@ describe('sync pull / stale cursor (410 GONE)', () => {
       imports: [JwtModule.register({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '30d' } })],
       controllers: [SyncController],
       providers: [
-        { provide: 'DRIZZLE_DB', useValue: pg.db },
+        { provide: 'DRIZZLE_DB', useValue: pg.appDb },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
@@ -138,6 +139,8 @@ describe('sync pull / stale cursor (410 GONE)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+
+    await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
     jwt = moduleRef.get(JwtService);
     maintenance = moduleRef.get(SyncMaintenanceService);
     await app.listen(0);

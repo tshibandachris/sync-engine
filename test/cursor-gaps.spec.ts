@@ -36,6 +36,7 @@ import type { AddressInfo } from 'node:net';
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET } from './helpers/jwt.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
@@ -209,7 +210,7 @@ describe('sync cursor gaps (out-of-order commit)', () => {
       ],
       controllers: [SyncController],
       providers: [
-        { provide: 'DRIZZLE_DB', useValue: pg.db },
+        { provide: 'DRIZZLE_DB', useValue: pg.appDb },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
@@ -218,6 +219,8 @@ describe('sync cursor gaps (out-of-order commit)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+
+    await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
     jwt = moduleRef.get(JwtService);
     // A real listener (not supertest on getHttpServer()): supertest closes the shared
     // server after each request, which could cut the other in-flight push.

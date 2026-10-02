@@ -1,6 +1,6 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
@@ -13,6 +13,10 @@ const MAX_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_PER_CHECK_IN = 5;
 const PUT_TTL_SECONDS = 15 * 60;
 const GET_TTL_SECONDS = 60 * 60;
+
+// Advisory-lock namespace for attachment mutations. Distinct from the sync
+// namespace so a slow attachment upload cannot block a sync push.
+const ATTACHMENT_LOCK_NS = 0x41545441; // "ATTA"
 
 export interface RequestUploadDto {
   tenantId: string;
@@ -85,58 +89,66 @@ export class AttachmentService {
       throw new BadRequestException('checksum_sha256 invalide (64 hex).');
     }
 
-    const checkIn = await this.db
-      .select({ id: schema.checkIns.id })
-      .from(schema.checkIns)
-      .where(and(
-        eq(schema.checkIns.id, dto.checkInId),
-        eq(schema.checkIns.tenantId, dto.tenantId),
-        eq(schema.checkIns.agentId, dto.agentId),
-      ));
+    return withTenant(this.db, dto.tenantId, async (tx) => {
+      // Serialize concurrent uploads for the same check-in: the count-then-
+      // insert below must not race two requests past MAX_PER_CHECK_IN.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(${ATTACHMENT_LOCK_NS}::int, hashtext(${dto.checkInId})::int)`,
+      );
 
-    if (checkIn.length !== 1) {
-      throw new ForbiddenException('Check-in introuvable ou non accessible.');
-    }
+      const checkIn = await tx
+        .select({ id: schema.checkIns.id })
+        .from(schema.checkIns)
+        .where(and(
+          eq(schema.checkIns.id, dto.checkInId),
+          eq(schema.checkIns.tenantId, dto.tenantId),
+          eq(schema.checkIns.agentId, dto.agentId),
+        ));
 
-    const existing = await this.db
-      .select({ id: schema.attachments.id })
-      .from(schema.attachments)
-      .where(and(
-        eq(schema.attachments.tenantId, dto.tenantId),
-        eq(schema.attachments.checkInId, dto.checkInId),
-      ));
+      if (checkIn.length !== 1) {
+        throw new ForbiddenException('Check-in introuvable ou non accessible.');
+      }
 
-    if (existing.length >= MAX_PER_CHECK_IN) {
-      throw new ConflictException('Maximum ' + MAX_PER_CHECK_IN + ' pieces jointes par check-in.');
-    }
+      const existing = await tx
+        .select({ id: schema.attachments.id })
+        .from(schema.attachments)
+        .where(and(
+          eq(schema.attachments.tenantId, dto.tenantId),
+          eq(schema.attachments.checkInId, dto.checkInId),
+        ));
 
-    const attachmentId = randomUUID();
-    const ext = dto.contentType === 'image/png' ? 'png'
-      : dto.contentType === 'image/heic' ? 'heic'
-      : 'jpg';
-    const objectKey = 'tenants/' + dto.tenantId + '/checkins/' + dto.checkInId + '/' + attachmentId + '.' + ext;
+      if (existing.length >= MAX_PER_CHECK_IN) {
+        throw new ConflictException('Maximum ' + MAX_PER_CHECK_IN + ' pieces jointes par check-in.');
+      }
 
-    await this.db.insert(schema.attachments).values({
-      id: attachmentId,
-      tenantId: dto.tenantId,
-      checkInId: dto.checkInId,
-      agentId: dto.agentId,
-      objectKey,
-      contentType: dto.contentType,
-      sizeBytes: dto.sizeBytes,
-      checksumSha256: dto.checksumSha256.toLowerCase(),
-      status: 'pending',
-      createdAt: Date.now(),
+      const attachmentId = randomUUID();
+      const ext = dto.contentType === 'image/png' ? 'png'
+        : dto.contentType === 'image/heic' ? 'heic'
+        : 'jpg';
+      const objectKey = 'tenants/' + dto.tenantId + '/checkins/' + dto.checkInId + '/' + attachmentId + '.' + ext;
+
+      await tx.insert(schema.attachments).values({
+        id: attachmentId,
+        tenantId: dto.tenantId,
+        checkInId: dto.checkInId,
+        agentId: dto.agentId,
+        objectKey,
+        contentType: dto.contentType,
+        sizeBytes: dto.sizeBytes,
+        checksumSha256: dto.checksumSha256.toLowerCase(),
+        status: 'pending',
+        createdAt: Date.now(),
+      });
+
+      const presigned = await this.storage.presignPut(objectKey, dto.contentType, PUT_TTL_SECONDS);
+
+      return {
+        attachment_id: attachmentId,
+        object_key: objectKey,
+        upload_url: presigned.url,
+        expires_in: presigned.expiresIn,
+      };
     });
-
-    const presigned = await this.storage.presignPut(objectKey, dto.contentType, PUT_TTL_SECONDS);
-
-    return {
-      attachment_id: attachmentId,
-      object_key: objectKey,
-      upload_url: presigned.url,
-      expires_in: presigned.expiresIn,
-    };
   }
 
   async confirmUpload(dto: ConfirmUploadDto): Promise<ConfirmUploadResult> {
@@ -144,71 +156,79 @@ export class AttachmentService {
     if (!UUID_RE.test(dto.agentId)) throw new BadRequestException('agentId UUID requis.');
     if (!UUID_RE.test(dto.attachmentId)) throw new BadRequestException('attachmentId UUID requis.');
 
-    const rows = await this.db
-      .select()
-      .from(schema.attachments)
-      .where(and(
-        eq(schema.attachments.id, dto.attachmentId),
-        eq(schema.attachments.tenantId, dto.tenantId),
-        eq(schema.attachments.agentId, dto.agentId),
-      ));
+    return withTenant(this.db, dto.tenantId, async (tx) => {
+      // Serialize concurrent confirms of the same attachment: two clients
+      // racing to confirm must not both call S3 HEAD and both write.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(${ATTACHMENT_LOCK_NS}::int, hashtext(${dto.attachmentId})::int)`,
+      );
 
-    const attachment = rows[0];
-    if (!attachment) throw new NotFoundException('Piece jointe introuvable.');
-    if (attachment.status === 'uploaded') {
-      return { attachment_id: attachment.id, status: 'uploaded', uploaded_at: attachment.uploadedAt ?? Date.now() };
-    }
-    if (attachment.status !== 'pending') {
-      throw new ConflictException('Piece jointe dans un etat non confirme : ' + attachment.status);
-    }
+      const rows = await tx
+        .select()
+        .from(schema.attachments)
+        .where(and(
+          eq(schema.attachments.id, dto.attachmentId),
+          eq(schema.attachments.tenantId, dto.tenantId),
+          eq(schema.attachments.agentId, dto.agentId),
+        ));
 
-    const head = await this.storage.head(attachment.objectKey);
-    if (!head.exists) {
-      throw new ConflictException('Objet absent du stockage. Upload non effectue.');
-    }
+      const attachment = rows[0];
+      if (!attachment) throw new NotFoundException('Piece jointe introuvable.');
+      if (attachment.status === 'uploaded') {
+        return { attachment_id: attachment.id, status: 'uploaded', uploaded_at: attachment.uploadedAt ?? Date.now() };
+      }
+      if (attachment.status !== 'pending') {
+        throw new ConflictException('Piece jointe dans un etat non confirme : ' + attachment.status);
+      }
 
-    const uploadedAt = Date.now();
-    await this.db
-      .update(schema.attachments)
-      .set({ status: 'uploaded', uploadedAt })
-      .where(and(
-        eq(schema.attachments.id, attachment.id),
-        eq(schema.attachments.tenantId, dto.tenantId),
-      ));
+      const head = await this.storage.head(attachment.objectKey);
+      if (!head.exists) {
+        throw new ConflictException('Objet absent du stockage. Upload non effectue.');
+      }
 
-    return { attachment_id: attachment.id, status: 'uploaded', uploaded_at: uploadedAt };
+      const uploadedAt = Date.now();
+      await tx
+        .update(schema.attachments)
+        .set({ status: 'uploaded', uploadedAt })
+        .where(and(
+          eq(schema.attachments.id, attachment.id),
+          eq(schema.attachments.tenantId, dto.tenantId),
+        ));
+
+      return { attachment_id: attachment.id, status: 'uploaded', uploaded_at: uploadedAt };
+    });
   }
 
   async listForCheckIn(dto: ListAttachmentsDto): Promise<AttachmentItem[]> {
     if (!UUID_RE.test(dto.checkInId)) throw new BadRequestException('checkInId UUID requis.');
 
     return withTenant(this.db, dto.tenantId, async (tx) => {
-    const rows = await tx
-      .select()
-      .from(schema.attachments)
-      .where(and(
-        eq(schema.attachments.tenantId, dto.tenantId),
-        eq(schema.attachments.agentId, dto.agentId),
-        eq(schema.attachments.checkInId, dto.checkInId),
-        eq(schema.attachments.status, 'uploaded'),
-      ))
-      .orderBy(desc(schema.attachments.uploadedAt));
+      const rows = await tx
+        .select()
+        .from(schema.attachments)
+        .where(and(
+          eq(schema.attachments.tenantId, dto.tenantId),
+          eq(schema.attachments.agentId, dto.agentId),
+          eq(schema.attachments.checkInId, dto.checkInId),
+          eq(schema.attachments.status, 'uploaded'),
+        ))
+        .orderBy(desc(schema.attachments.uploadedAt));
 
-    const items: AttachmentItem[] = [];
-    for (const r of rows) {
-      const signed = await this.storage.presignGet(r.objectKey, GET_TTL_SECONDS);
-      items.push({
-        id: r.id,
-        check_in_id: r.checkInId,
-        content_type: r.contentType,
-        size_bytes: Number(r.sizeBytes),
-        checksum_sha256: r.checksumSha256,
-        uploaded_at: r.uploadedAt === null ? null : Number(r.uploadedAt),
-        download_url: signed.url,
-        expires_in: signed.expiresIn,
-      });
-    }
-    return items;
+      const items: AttachmentItem[] = [];
+      for (const r of rows) {
+        const signed = await this.storage.presignGet(r.objectKey, GET_TTL_SECONDS);
+        items.push({
+          id: r.id,
+          check_in_id: r.checkInId,
+          content_type: r.contentType,
+          size_bytes: Number(r.sizeBytes),
+          checksum_sha256: r.checksumSha256,
+          uploaded_at: r.uploadedAt === null ? null : Number(r.uploadedAt),
+          download_url: signed.url,
+          expires_in: signed.expiresIn,
+        });
+      }
+      return items;
     });
   }
 }
