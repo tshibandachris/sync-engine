@@ -337,3 +337,21 @@ ask. Two brains on a stuck problem beats one brain frustrated.
 
 A PR that doesn't tick all these boxes will be asked to fix them before
 review.
+
+## Production: enabling the application role
+
+Migration 011 declares the `sync_app` role but migration 012 sets it to
+`NOLOGIN`. The repository never ships a usable password. On a real
+environment, the operator grants LOGIN once, after the migrations have
+run, with a generated password:
+
+    -- as the database owner:
+    ALTER ROLE sync_app LOGIN PASSWORD '<generated-strong-password>';
+
+Store that password in the deployment's secret manager. Do not put it in
+`.env.example`, do not put it in a migration, do not put it in the repo.
+The application reads it from `SYNC_APP_PASSWORD` (or whatever your
+deployment uses) at boot.
+
+If the password is ever rotated, the same ALTER ROLE is enough — no code
+change, no migration.

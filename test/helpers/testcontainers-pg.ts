@@ -192,6 +192,11 @@ export class TestPostgres {
     'utf8',
   );
 
+  const migration12 = fs.readFileSync(
+    path.join(migrationsDir, '012_sync_app_nologin.sql'),
+    'utf8',
+  );
+
     console.log(
       `[TestPostgres] Migration 001: ${migration1File}`,
     );
@@ -213,6 +218,8 @@ export class TestPostgres {
   await pool.query(migration10);
   await pool.query(migration11);
 
+  await pool.query(migration12);
+
     /*
      * ========================================================
      * DRIZZLE
@@ -223,6 +230,12 @@ export class TestPostgres {
       schema,
     });
 
+    // Migration 012 sets sync_app to NOLOGIN so no password ships in
+    // the repo. The test container is ephemeral and isolated, so we
+    // re-enable LOGIN with a throwaway password here, purely for the
+    // duration of this test process.
+    await pool.query("ALTER ROLE sync_app LOGIN PASSWORD 'sync_app_pw_test'");
+
     // Second pool connected as the non-superuser application role.
     // RLS applies fully: no bypass, no ownership exception.
     const appPool = new Pool({
@@ -230,7 +243,7 @@ export class TestPostgres {
       port: container.getPort(),
       database: container.getDatabase(),
       user: 'sync_app',
-      password: 'sync_app_pw',
+      password: 'sync_app_pw_test',
     });
 
     const appDb = drizzle(appPool, {
