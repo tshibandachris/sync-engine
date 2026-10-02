@@ -21,6 +21,15 @@ describe('Sync Engine / sync_seq integration', () => {
   let conflict: SyncConflictService;
   let maintenance: SyncMaintenanceService;
 
+  // The JWT guard sets req.tenantId on every HTTP call. Integration
+  // tests call the service directly, so they must provide the tenant
+  // explicitly. Fail-closed: no silent default tenant.
+  const pushFor = (
+    agentId: string,
+    dto: SyncPushDto,
+    idempotencyKey?: string,
+  ) => push.pushChanges(agentId, dto, idempotencyKey, TEST_TENANT_ID);
+
   const agentA = randomUUID();
   const agentB = randomUUID();
   const missionA = randomUUID();
@@ -90,6 +99,8 @@ afterAll(async () => {
 
     do {
       const result = await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: cursor,
         limit: 500,
@@ -119,7 +130,7 @@ afterAll(async () => {
   it('performs an UPSERT create followed by a real update', async () => {
     const id = randomUUID();
 
-    await push.pushChanges(agentA, {
+    await pushFor(agentA, {
       changes: {
         check_ins: {
           created: [
@@ -139,7 +150,7 @@ afterAll(async () => {
     const vr1 = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
     const v1 = Number(vr1.rows[0].sync_seq);
 
-    await push.pushChanges(agentA, {
+    await pushFor(agentA, {
       changes: {
         check_ins: {
           updated: [
@@ -163,7 +174,7 @@ afterAll(async () => {
 
   it('rejects an update for an unknown ID', async () => {
     await expect(
-      push.pushChanges(agentA, {
+      pushFor(agentA, {
         changes: {
           check_ins: {
             updated: [
@@ -198,7 +209,7 @@ afterAll(async () => {
     });
 
     await expect(
-      push.pushChanges(agentB, {
+      pushFor(agentB, {
         changes: {
           check_ins: {
             deleted: [id],
@@ -226,7 +237,7 @@ afterAll(async () => {
       syncSeq: 0,
     });
 
-    await push.pushChanges(agentA, {
+    await pushFor(agentA, {
       changes: {
         check_ins: {
           deleted: [id],
@@ -235,7 +246,7 @@ afterAll(async () => {
     });
 
     await expect(
-      push.pushChanges(agentA, {
+      pushFor(agentA, {
         changes: {
           check_ins: {
             updated: [
@@ -271,8 +282,8 @@ afterAll(async () => {
       },
     };
 
-    await push.pushChanges(agentA, dto, 'test-idempotency-1');
-    await push.pushChanges(agentA, dto, 'test-idempotency-1');
+    await pushFor(agentA, dto, 'test-idempotency-1');
+    await pushFor(agentA, dto, 'test-idempotency-1');
 
     const result = await pool.query(
       'SELECT count(*)::int AS count FROM check_ins WHERE id = $1',
@@ -283,7 +294,7 @@ afterAll(async () => {
   });  it('does not return already-pulled changes on a subsequent call', async () => {
     const id = randomUUID();
 
-    await push.pushChanges(agentA, {
+    await pushFor(agentA, {
       changes: {
         check_ins: {
           created: [
@@ -306,6 +317,8 @@ afterAll(async () => {
 
     while (true) {
       const result = await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: cursor,
         limit: 500,
@@ -325,6 +338,8 @@ afterAll(async () => {
     expect(found).toBe(true);
 
     const empty = await pull.pullChanges({
+      tenantId: TEST_TENANT_ID,
+
       agentId: agentA,
       lastPulledAt: finalCursor,
       limit: 500,
@@ -340,6 +355,8 @@ afterAll(async () => {
 
     while (true) {
       const result = await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: cursor,
         limit: 500,
@@ -363,7 +380,7 @@ afterAll(async () => {
   it('routes a soft-deleted check-in to the deleted bucket', async () => {
     const id = randomUUID();
 
-    await push.pushChanges(agentA, {
+    await pushFor(agentA, {
       changes: {
         check_ins: {
           created: [
@@ -380,7 +397,7 @@ afterAll(async () => {
       },
     });
 
-    await push.pushChanges(agentA, {
+    await pushFor(agentA, {
       changes: {
         check_ins: {
           deleted: [id],
@@ -393,6 +410,8 @@ afterAll(async () => {
 
     while (true) {
       const result = await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: cursor,
         limit: 500,
@@ -419,6 +438,8 @@ afterAll(async () => {
 
   it('returns updated missions on a subsequent pull after modification', async () => {
     const initial = await pull.pullChanges({
+      tenantId: TEST_TENANT_ID,
+
       agentId: agentA,
       lastPulledAt: null,
       limit: 500,
@@ -438,6 +459,8 @@ afterAll(async () => {
     );
 
     const second = await pull.pullChanges({
+      tenantId: TEST_TENANT_ID,
+
       agentId: agentA,
       lastPulledAt: cursor,
       limit: 500,
@@ -461,6 +484,8 @@ afterAll(async () => {
 
   it('returns updated sites when only the site changes', async () => {
     const initial = await pull.pullChanges({
+      tenantId: TEST_TENANT_ID,
+
       agentId: agentA,
       lastPulledAt: null,
       limit: 500,
@@ -487,6 +512,8 @@ afterAll(async () => {
 
     const second =
       await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: cursor,
         limit: 500,
@@ -511,6 +538,8 @@ afterAll(async () => {
   it('returns a new mission created after the initial pull', async () => {
     const initial =
       await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: null,
         limit: 500,
@@ -534,6 +563,8 @@ afterAll(async () => {
 
     const second =
       await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: cursor,
         limit: 500,
@@ -555,6 +586,8 @@ afterAll(async () => {
   it('returns a soft-deleted mission in deleted', async () => {
     const initial =
       await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: null,
         limit: 500,
@@ -570,6 +603,8 @@ afterAll(async () => {
 
     const second =
       await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: cursor,
         limit: 500,
@@ -591,6 +626,8 @@ afterAll(async () => {
   it('paginates a mixed global sync stream without skipping events', async () => {
     const initial =
       await pull.pullChanges({
+        tenantId: TEST_TENANT_ID,
+
         agentId: agentA,
         lastPulledAt: null,
         limit: 500,
@@ -635,6 +672,8 @@ afterAll(async () => {
 
       const page =
         await pull.pullChanges({
+          tenantId: TEST_TENANT_ID,
+
           agentId: agentA,
           lastPulledAt: cursor,
           limit: 2,
@@ -689,19 +728,19 @@ afterAll(async () => {
   });
   it('applies an update when client version matches server version', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     const vr = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
     const version = Number(vr.rows[0].sync_seq);
-    const response = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version, check_out_time: Date.now() }] } } });
+    const response = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version, check_out_time: Date.now() }] } } });
     expect(response.applied.updated).toBe(1);
     expect(response.conflicts).toHaveLength(0);
   });
 
   it('records a conflict when client version is stale', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    const response = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+    const response = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
     expect(response.applied.updated).toBe(0);
     expect(response.conflicts).toHaveLength(1);
     expect(response.conflicts[0].entity_id).toBe(id);
@@ -709,11 +748,11 @@ afterAll(async () => {
 
   it('applies valid updates and records conflicts in the same batch', async () => {
     const ids = [randomUUID(), randomUUID(), randomUUID()];
-    await push.pushChanges(agentA, { changes: { check_ins: { created: ids.map((id) => ({ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' })) } } });
+    await pushFor(agentA, { changes: { check_ins: { created: ids.map((id) => ({ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' })) } } });
     const versions = await pool.query('SELECT id, sync_seq FROM check_ins WHERE id = ANY($1::uuid[])', [ids]);
     const vmap = new Map(versions.rows.map((r) => [r.id, Number(r.sync_seq)]));
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [ids[1]]);
-    const response = await push.pushChanges(agentA, { changes: { check_ins: { updated: [
+    const response = await pushFor(agentA, { changes: { check_ins: { updated: [
       { id: ids[0], version: vmap.get(ids[0])!, check_out_time: Date.now() },
       { id: ids[1], version: vmap.get(ids[1])!, check_out_time: Date.now() },
       { id: ids[2], version: vmap.get(ids[2])!, check_out_time: Date.now() },
@@ -725,11 +764,11 @@ afterAll(async () => {
 
   it('rolls back the whole batch on a technical error', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     const vr = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
     const version = Number(vr.rows[0].sync_seq);
     const ghost = randomUUID();
-    await expect(push.pushChanges(agentA, { changes: { check_ins: { updated: [
+    await expect(pushFor(agentA, { changes: { check_ins: { updated: [
       { id, version, check_out_time: Date.now() },
       { id: ghost, version: 1, check_out_time: Date.now() },
     ] } } })).rejects.toBeInstanceOf(ForbiddenException);
@@ -739,11 +778,11 @@ afterAll(async () => {
 
   it('does not duplicate conflict on idempotent replay', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     const dto = { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } };
-    const r1 = await push.pushChanges(agentA, dto, 'conflict-key');
-    const r2 = await push.pushChanges(agentA, dto, 'conflict-key');
+    const r1 = await pushFor(agentA, dto, 'conflict-key');
+    const r2 = await pushFor(agentA, dto, 'conflict-key');
     expect(r1.conflicts).toHaveLength(1);
     expect(r2.conflicts).toHaveLength(0);
     const count = await pool.query('SELECT COUNT(*)::int AS n FROM sync_conflicts WHERE entity_id = $1', [id]);
@@ -752,12 +791,12 @@ afterAll(async () => {
 
   it('detects conflict between two concurrent clients', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     const vr = await pool.query('SELECT sync_seq FROM check_ins WHERE id = $1', [id]);
     const v = Number(vr.rows[0].sync_seq);
-    const rA = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: v, check_out_time: Date.now() }] } } });
+    const rA = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: v, check_out_time: Date.now() }] } } });
     expect(rA.applied.updated).toBe(1);
-    const rB = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: v, check_out_time: Date.now() + 1000 }] } } });
+    const rB = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: v, check_out_time: Date.now() + 1000 }] } } });
     expect(rB.applied.updated).toBe(0);
     expect(rB.conflicts).toHaveLength(1);
   });
@@ -854,7 +893,7 @@ afterAll(async () => {
     const originalSyncSeq = currentVersion;
 
     await expect(
-      push.pushChanges(agentA, {
+      pushFor(agentA, {
         changes: {
           check_ins: {
             updated: [
@@ -893,17 +932,19 @@ afterAll(async () => {
   });
 
   it('lists no conflicts when there are none', async () => {
-    const result = await conflict.listConflicts({ agentId: agentA });
+    const result = await conflict.listConflicts({ tenantId: TEST_TENANT_ID,
+ agentId: agentA });
     expect(result).toHaveLength(0);
   });
 
   it('lists pending conflicts for the agent', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+    await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
-    const result = await conflict.listConflicts({ agentId: agentA, status: 'pending' });
+    const result = await conflict.listConflicts({ tenantId: TEST_TENANT_ID,
+ agentId: agentA, status: 'pending' });
     expect(result).toHaveLength(1);
     expect(result[0].entityId).toBe(id);
     expect(result[0].status).toBe('pending');
@@ -911,22 +952,24 @@ afterAll(async () => {
 
   it('does not leak conflicts to another agent', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+    await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
-    const leaked = await conflict.listConflicts({ agentId: agentB });
+    const leaked = await conflict.listConflicts({ tenantId: TEST_TENANT_ID,
+ agentId: agentB });
     expect(leaked).toHaveLength(0);
   });
 
   it('applies client payload when resolving as client', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
+    const r = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
     const conflictId = r.conflicts[0].conflict_id;
 
-    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'client', resolvedBy: agentA });
+    await conflict.resolveConflict({ tenantId: TEST_TENANT_ID,
+ conflictId, agentId: agentA, resolution: 'client', resolvedBy: agentA });
 
     const after = await pool.query('SELECT check_out_time FROM check_ins WHERE id = $1', [id]);
     expect(Number(after.rows[0].check_out_time)).toBe(9999);
@@ -938,12 +981,13 @@ afterAll(async () => {
 
   it('leaves data untouched when resolving as server', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
+    const r = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
     const conflictId = r.conflicts[0].conflict_id;
 
-    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'server', resolvedBy: agentA });
+    await conflict.resolveConflict({ tenantId: TEST_TENANT_ID,
+ conflictId, agentId: agentA, resolution: 'server', resolvedBy: agentA });
 
     const after = await pool.query('SELECT check_out_time FROM check_ins WHERE id = $1', [id]);
     expect(after.rows[0].check_out_time).toBeNull();
@@ -954,12 +998,13 @@ afterAll(async () => {
 
   it('marks resolved without applying on dismiss', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
+    const r = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: 9999 }] } } });
     const conflictId = r.conflicts[0].conflict_id;
 
-    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'dismiss', resolvedBy: agentA });
+    await conflict.resolveConflict({ tenantId: TEST_TENANT_ID,
+ conflictId, agentId: agentA, resolution: 'dismiss', resolvedBy: agentA });
 
     const after = await pool.query('SELECT check_out_time FROM check_ins WHERE id = $1', [id]);
     expect(after.rows[0].check_out_time).toBeNull();
@@ -971,15 +1016,17 @@ afterAll(async () => {
 
   it('rejects resolving an already resolved conflict', async () => {
     const id = randomUUID();
-    await push.pushChanges(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
+    await pushFor(agentA, { changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
     await pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
-    const r = await push.pushChanges(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
+    const r = await pushFor(agentA, { changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
     const conflictId = r.conflicts[0].conflict_id;
 
-    await conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'server', resolvedBy: agentA });
+    await conflict.resolveConflict({ tenantId: TEST_TENANT_ID,
+ conflictId, agentId: agentA, resolution: 'server', resolvedBy: agentA });
 
     await expect(
-      conflict.resolveConflict({ conflictId, agentId: agentA, resolution: 'client', resolvedBy: agentA }),
+      conflict.resolveConflict({ tenantId: TEST_TENANT_ID,
+ conflictId, agentId: agentA, resolution: 'client', resolvedBy: agentA }),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 

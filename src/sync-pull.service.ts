@@ -3,8 +3,7 @@ import { withTenant } from './with-tenant.js';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
-
-const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
+import { requireTenantId } from './tenant-id.js';
 
 export interface SyncPullDto {
   agentId: string;
@@ -92,7 +91,7 @@ export class SyncPullService {
     const agentId = dto.agentId;
 
     const sinceSeq = Number(dto.lastPulledAt ?? 0);
-    const tenantId = dto.tenantId ?? DEFAULT_TENANT_ID;
+    const tenantId = requireTenantId(dto.tenantId);
 
     const requestedLimit = Number(dto.limit ?? 500);
 

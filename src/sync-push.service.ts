@@ -4,6 +4,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import * as schema from './schema.js';
 import { lockTenantWrites } from './tenant-write-lock.js';
+import { requireTenantId } from './tenant-id.js';
 
 export type CheckInMethod = 'GPS' | 'QR_CODE' | 'MANUAL';
 
@@ -52,8 +53,6 @@ export interface PushResponse {
   conflicts: PushConflict[];
 }
 
-const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
-
 const EMPTY_RESPONSE: PushResponse = {
   applied: { created: 0, updated: 0, deleted: 0 },
   conflicts: [],
@@ -70,9 +69,10 @@ export class SyncPushService {
     agentId: string,
     dto: SyncPushDto,
     idempotencyKey?: string,
-    tenantId: string = DEFAULT_TENANT_ID,
+    tenantIdRaw?: string,
   ): Promise<PushResponse> {
     if (!agentId) throw new BadRequestException('agentId requis.');
+    const tenantId = requireTenantId(tenantIdRaw, 'tenantId (push)');
 
     const checkIns = dto.changes.check_ins;
     if (!checkIns) return { ...EMPTY_RESPONSE };

@@ -4,10 +4,9 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import { lockTenantWrites } from './tenant-write-lock.js';
+import { requireTenantId } from './tenant-id.js';
 
 export type Resolution = 'client' | 'server' | 'dismiss';
-
-const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000000';
 
 export interface ListConflictsDto {
   agentId: string;
@@ -51,7 +50,7 @@ export class SyncConflictService {
   async listConflicts(dto: ListConflictsDto): Promise<ConflictRow[]> {
     const limit = Math.min(Math.max(dto.limit ?? 100, 1), 500);
     const offset = Math.max(dto.offset ?? 0, 0);
-    const tenantId = dto.tenantId ?? DEFAULT_TENANT_ID;
+    const tenantId = requireTenantId(dto.tenantId);
 
     const whereClause = dto.status
       ? and(eq(schema.syncConflicts.tenantId, tenantId), eq(schema.syncConflicts.agentId, dto.agentId), eq(schema.syncConflicts.status, dto.status))
@@ -91,7 +90,7 @@ export class SyncConflictService {
     if (dto.resolution !== 'client' && dto.resolution !== 'server' && dto.resolution !== 'dismiss') {
       throw new BadRequestException('resolution invalide.');
     }
-    const tenantId = dto.tenantId ?? DEFAULT_TENANT_ID;
+    const tenantId = requireTenantId(dto.tenantId);
 
     await this.db.transaction(async (tx) => {
       await lockTenantWrites(tx, tenantId);
