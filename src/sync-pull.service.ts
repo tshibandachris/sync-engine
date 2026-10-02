@@ -181,12 +181,21 @@ export class SyncPullService {
         FROM sites s
         WHERE s.tenant_id = ${tenantId}::uuid
           AND s.sync_seq > ${sinceSeq}
-          AND EXISTS (
-            SELECT 1
-            FROM missions m
-            WHERE m.agent_id = ${agentId}
-              AND m.tenant_id = ${tenantId}::uuid
-              AND m.site_id = s.id
+          AND (
+            EXISTS (
+              SELECT 1
+              FROM missions m
+              WHERE m.agent_id = ${agentId}
+                AND m.tenant_id = ${tenantId}::uuid
+                AND m.site_id = s.id
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM check_ins ci
+              WHERE ci.agent_id = ${agentId}
+                AND ci.tenant_id = ${tenantId}::uuid
+                AND ci.site_id = s.id
+            )
           )
       )
 

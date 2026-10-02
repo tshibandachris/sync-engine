@@ -164,7 +164,7 @@ describe('Bug 1 : site orphelin après réaffectation de mission', () => {
   });
 
   // LE TEST ROUGE
-  it.fails('après réaffectation de M vers B, le pull contient encore le site A', async () => {
+  it('après réaffectation de M vers B, le pull contient encore le site A', async () => {
     const { agentId, siteA, missionId, siteB } = await setupScenario();
     await reassign(missionId, siteB);
     expect(await pullSiteIds(tokenFor(agentId))).toContain(siteA); // échoue tant que le bug existe

@@ -103,13 +103,15 @@ export class SyncPushService {
       if (created.length > 0) {
         const missionIds = Array.from(new Set(created.map((item) => item.mission_id)));
         const validMissions = await tx
-          .select({ id: schema.missions.id })
+          .select({ id: schema.missions.id, siteId: schema.missions.siteId })
           .from(schema.missions)
           .where(and(inArray(schema.missions.id, missionIds), eq(schema.missions.agentId, agentId), eq(schema.missions.tenantId, tenantId)));
 
         if (validMissions.length !== missionIds.length) {
           throw new ForbiddenException('Creation refusee : mission non autorisee.');
         }
+
+        const siteByMission = new Map(validMissions.map((m) => [m.id, m.siteId]));
 
         for (const item of created) {
           const now = Date.now();
@@ -120,6 +122,7 @@ export class SyncPushService {
               id: item.id,
               tenantId,
               missionId: item.mission_id,
+              siteId: siteByMission.get(item.mission_id) ?? null,
               agentId,
               checkInTime: item.check_in_time,
               checkOutTime: item.check_out_time ?? null,

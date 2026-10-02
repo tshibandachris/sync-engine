@@ -41,6 +41,7 @@ export const checkIns = pgTable('check_ins', {
   id: uuid('id').primaryKey(),
   tenantId: uuid('tenant_id'),
   missionId: uuid('mission_id').notNull(),
+  siteId: uuid('site_id'),
   agentId: uuid('agent_id').notNull(),
   checkInTime: bigint('check_in_time', { mode: 'number' }).notNull(),
   checkOutTime: bigint('check_out_time', { mode: 'number' }),
