@@ -3,7 +3,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import * as schema from './schema.js';
-import { lockTenantWrites } from './tenant-write-lock.js';
+import { withTenant } from './with-tenant.js';
 import { requireTenantId } from './tenant-id.js';
 
 export type CheckInMethod = 'GPS' | 'QR_CODE' | 'MANUAL';
@@ -87,8 +87,7 @@ export class SyncPushService {
       }
     }
 
-    return await this.db.transaction(async (tx) => {
-      await lockTenantWrites(tx, tenantId);
+    return await withTenant(this.db, tenantId, async (tx) => {
 
       if (idempotencyKey) {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${agentId} || ':' || ${idempotencyKey}))`);
@@ -328,6 +327,6 @@ export class SyncPushService {
       }
 
       return response;
-    });
+    }, { write: true });
   }
 }

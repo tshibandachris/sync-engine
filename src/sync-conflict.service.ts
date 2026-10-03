@@ -3,7 +3,6 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
-import { lockTenantWrites } from './tenant-write-lock.js';
 import { requireTenantId } from './tenant-id.js';
 
 export type Resolution = 'client' | 'server' | 'dismiss';
@@ -92,9 +91,7 @@ export class SyncConflictService {
     }
     const tenantId = requireTenantId(dto.tenantId);
 
-    await this.db.transaction(async (tx) => {
-      await lockTenantWrites(tx, tenantId);
-
+    await withTenant(this.db, tenantId, async (tx) => {
       const locked = await tx.execute(sql`
         SELECT id, tenant_id, agent_id, entity_type, entity_id, status, client_payload
         FROM sync_conflicts
@@ -128,7 +125,7 @@ export class SyncConflictService {
           resolvedAt: Date.now(),
         })
         .where(and(eq(schema.syncConflicts.id, dto.conflictId), eq(schema.syncConflicts.tenantId, tenantId)));
-    });
+    }, { write: true });
   }
 
   private async applyClientPayload(
