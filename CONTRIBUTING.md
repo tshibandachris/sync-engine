@@ -247,18 +247,35 @@ imports, DI tokens in `app.module.ts`, and any reference in docs. The
 
 ### 5.5 Rotate a secret
 
-- `JWT_SECRET` — set in the deployment environment. Boot guards reject
-  values shorter than 32 chars or equal to the `.env.example` placeholder.
-  Rotating means invalidating all live tokens. Do it during a maintenance
-  window. **This becomes obsolete at v0.6**: once the app validates a real
-  identity provider's JWTs against its JWKS, tokens are signed by the
-  provider, not by this service, and `JWT_SECRET` disappears.
+- `JWT_SECRET` — only used in **dev-secret mode** (`JWKS_URL` empty).
+  Boot guards reject values shorter than 32 chars or equal to the
+  `.env.example` placeholder. In production the app runs in **JWKS mode**
+  and never uses this secret; tokens are signed by the provider. Rotating
+  in production means rotating the provider's signing keys, which is
+  transparent to this service (the JWKS endpoint is polled and cached).
 - `S3_SECRET_ACCESS_KEY` — set in the deployment environment. Rotation
   is transparent to the app (the SDK reads it at boot).
 
 ---
 
-## 6. Git conventions
+## 6. Auth strategies
+
+The app runs in one of two modes, chosen at boot by `readIdpConfig`:
+
+| Env | Mode | Signing |
+|---|---|---|
+| `JWKS_URL` set | `jwks` | Provider signs; app verifies via JWKS |
+| `JWKS_URL` empty, non-prod | `dev-secret` | App signs with `JWT_SECRET` |
+
+Production **requires** `JWKS_URL` and `JWT_AUDIENCE`. The boot guard
+refuses to start otherwise. `/auth/token` is disabled in production
+regardless, gated by `AUTH_ALLOW_DEV_TOKEN`.
+
+To use a provider whose tenant is not in a plain `tenantId` claim, set
+`JWT_TENANT_CLAIM` to the claim name (a URI, typically). The guard reads
+the claim by that exact name.
+
+## 7. Git conventions
 
 ### Commit messages
 
@@ -289,7 +306,7 @@ mapping.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 ### "Could not find a working container runtime strategy"
 
@@ -333,7 +350,7 @@ which is Vitest 2 syntax. On Vitest 4+, rewrite the pool options.
 
 ---
 
-## 8. Where to ask
+## 9. Where to ask
 
 - **Architecture or protocol questions**: read `HANDOFF.md` first, then
   the source file named in the roadmap.
@@ -349,7 +366,7 @@ ask. Two brains on a stuck problem beats one brain frustrated.
 
 ---
 
-## 9. Checklist before opening a PR
+## 10. Checklist before opening a PR
 
 - [ ] `npx tsc --noEmit` is silent.
 - [ ] `npx vitest run` reports no failure, no skip, no `it.only` left
@@ -359,7 +376,7 @@ ask. Two brains on a stuck problem beats one brain frustrated.
       `{ write: true }` for any path that INSERTs or UPDATEs a
       `sync_seq`-producing table.
 - [ ] Every schema change has a matching migration.
-- [ ] The commit messages follow the convention in §6.
+- [ ] The commit messages follow the convention in §7.
 - [ ] The branch is rebased on `main`.
 - [ ] The CI is green.
 
