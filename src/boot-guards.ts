@@ -55,11 +55,49 @@ export function assertNotDevAuthInProd(env: NodeJS.ProcessEnv): void {
 }
 
 /**
+ * Chooses between the two auth strategies and enforces the one the
+ * environment asked for.
+ *
+ *   Production:  JWKS_URL and JWT_AUDIENCE are required. JWT_SECRET is not
+ *                used (the app never signs tokens in production).
+ *   Elsewhere:   if JWKS_URL is absent, fall back to a strong local
+ *                JWT_SECRET so the dev mint at /auth/token works.
+ */
+export function assertAuthStrategy(env: NodeJS.ProcessEnv): void {
+  const isProd = env.NODE_ENV === 'production';
+  const jwksUrl = env.JWKS_URL?.trim();
+  const audience = env.JWT_AUDIENCE?.trim();
+
+  if (isProd) {
+    if (!jwksUrl) {
+      throw new Error(
+        'Boot guard: JWKS_URL is required when NODE_ENV=production. ' +
+          'The app must not sign its own tokens in production; configure an IdP.',
+      );
+    }
+    if (!audience) {
+      throw new Error(
+        'Boot guard: JWT_AUDIENCE is required when NODE_ENV=production.',
+      );
+    }
+    return;
+  }
+
+  if (!jwksUrl) {
+    // Non-production without an IdP: the local secret is the only way to mint.
+    assertStrongJwtSecret(env);
+  }
+}
+
+/**
  * Runs every guard. Called by bootstrap() before the app listens.
  * Throws on the first violation.
  */
 export function runBootGuards(env: NodeJS.ProcessEnv = process.env): void {
   assertDatabaseUrlPresent(env);
-  assertStrongJwtSecret(env);
+  // Order matters: the dev-token-in-production check gives the most specific
+  // message. It runs before assertAuthStrategy, which would otherwise raise
+  // a generic JWKS_URL error for the same misconfigured environment.
   assertNotDevAuthInProd(env);
+  assertAuthStrategy(env);
 }

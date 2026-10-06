@@ -191,16 +191,22 @@ Composite FKs: `(site_id, tenant_id)`, `(mission_id, tenant_id)`,
 structurally impossible, not just filtered at query time.
 
 Every query filters `WHERE tenant_id = ?` at the application level.
-**RLS is not enabled yet** — see Roadmap v0.5.3.
+**RLS is enabled and forced** on every tenant-scoped table (v0.5.4).
 
 ### Auth
 
-JWT Bearer with payload `{ sub: agentId, tenantId }`. `/auth/token`
-issues tokens, gated behind `AUTH_ALLOW_DEV_TOKEN=true`.
+Bearer token in `Authorization: Bearer <jwt>`. Two strategies, chosen
+at boot by `readIdpConfig`:
 
-**Not production-ready:** no real IdP. Replace `/auth/token` with
-OAuth2 / Azure AD B2C / real credential store before any external
-exposure.
+- **JWKS** (`JWKS_URL` set): the token is signed by an external identity
+  provider. The guard fetches their JWKS, validates signature, `aud`,
+  `iss`, and the tenant claim. `sub` maps to the agent id.
+- **dev-secret** (`JWKS_URL` empty, non-production): the token is signed
+  locally with `JWT_SECRET`, minted at `POST /auth/token`. The boot
+  guards refuse to start in production without `JWKS_URL`.
+
+Either way, `request.agentId` and `request.tenantId` are set to
+validated UUIDs. Services never see a request without both.
 
 ## API contract
 
@@ -372,21 +378,32 @@ Four items from the 2026-10-01 review, all shipped:
   denormalized at push time; the pull filter keeps a site as long as
   a mission OR a check-in links the agent to it. Migration 013.
 
-### v0.6 — Real IdP (blocker for external exposure)
+### v0.6 — Real IdP (done)
 
-Replace `/auth/token` with a real identity provider. Design:
+External identity provider verified via JWKS (`jose`). Files:
 
-- Validate provider JWTs against their JWKS endpoint (via `jose`).
-- Convert provider claims to `{ sub, tenantId }` in a local guard.
-- `/auth/token` reachable only when `AUTH_ALLOW_DEV_TOKEN=true` and
-  `NODE_ENV !== 'production'`. The boot guard already enforces the
-  pair; add a route-level check as defense in depth.
-- Boot guards: `JWKS_URL` and `JWT_AUDIENCE` required, refuse to start
-  if missing or unreachable.
-- Tests with a locally signed JWKS: expired token, wrong issuer,
-  wrong audience, missing tenant claim.
+- `src/idp.config.ts` — reads `JWKS_URL`, `JWT_AUDIENCE`, `JWT_ISSUER`,
+  `JWT_TENANT_CLAIM`. Picks the strategy: `jwks` if `JWKS_URL` is set,
+  `dev-secret` otherwise.
+- `src/idp-token.ts` — `verifyToken(token, jwks, options)`. Pure: no I/O,
+  no global state. Throws on any signature, expiry, audience, issuer, or
+  claim failure.
+- `src/jwt.guard.ts` — picks the strategy once at construction. In JWKS
+  mode, uses `createRemoteJWKSet` and validates signature, `aud`, `iss`,
+  and the tenant claim. In dev-secret mode, falls back to the local
+  `JwtService` (used by `/auth/token` and the test suite).
+- `src/boot-guards.ts` — `assertAuthStrategy`: in production, requires
+  `JWKS_URL` and `JWT_AUDIENCE`. Elsewhere, if `JWKS_URL` is absent,
+  requires a strong `JWT_SECRET`.
+- `.env.example` — documents every variable.
 
-This is the last item that blocks a first external deployment.
+Tests: `test/idp-token.spec.ts` (9 tests with a locally signed JWKS:
+expiry, wrong audience, wrong issuer, wrong key, missing/non-UUID claims,
+custom claim name). `test/boot-guards.spec.ts` gains 2 tests for the
+new production requirements.
+
+The provider is not hard-coded. Any OIDC-compliant endpoint works. If the
+provider puts the tenant in a namespaced claim, set `JWT_TENANT_CLAIM`.
 
 ### v0.7 — Observability (blocker for operating in production)
 
