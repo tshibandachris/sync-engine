@@ -91,7 +91,9 @@ tenant-level advisory lock for the whole transaction:
 
 - Constant namespace `7301` — disjoint from the idempotency locks and
   from the test gate key in `test/cursor-gaps.spec.ts` (424242).
-- Helper: `src/tenant-write-lock.ts` → `lockTenantWrites(tx, tenantId)`.
+- Helper: `withTenant(db, tenantId, fn, { write?: boolean })`. Reads omit
+  `write`; writes pass `{ write: true }` and take the tenant advisory
+  lock.
 - Must be the **first statement** of the transaction, before the
   per-(agent, key) idempotency lock and before any INSERT/UPDATE that
   fires the `sync_seq` trigger.
@@ -134,7 +136,7 @@ RLS by PostgreSQL rule and is used only by the test setup to seed data.
 
 - `withTenant(db, tenantId, fn)` - read paths. Opens a transaction,
   calls `set_config('app.current_tenant_id', $1, true)`, runs `fn`.
-- `lockTenantWrites(tx, tenantId)` - write paths. Same `set_config`,
+- `withTenant(db, tenantId, fn, { write: true })` - write paths. Same `set_config`,
   plus the tenant-level advisory lock.
 
 **Paths that use them:**
@@ -145,8 +147,8 @@ RLS by PostgreSQL rule and is used only by the test setup to seed data.
 | SyncConflictService | listConflicts | withTenant |
 | SyncAttachmentService | listForCheckIn | withTenant |
 | SyncMaintenanceService | purgeTenantTombstones | withTenant |
-| SyncPushService | pushChanges | lockTenantWrites |
-| SyncConflictService | resolveConflict | lockTenantWrites |
+| SyncPushService | pushChanges | withTenant({ write: true }) |
+| SyncConflictService | resolveConflict | withTenant({ write: true }) |
 
 **Proof.** `test/rls-isolation.spec.ts` runs 6 tests through the
 `sync_app` pool:
@@ -286,7 +288,7 @@ represent a legitimate race the client must resolve.
       sync-attachment.service.ts
       s3-attachment-storage.ts
       attachment-storage.ts
-      tenant-write-lock.ts
+      (removed in c3bb9a7 — see v0.5.6 notes)
       sync.controller.ts
       sync-attachment.controller.ts
       auth.controller.ts
@@ -322,66 +324,119 @@ represent a legitimate race the client must resolve.
 
 ## Roadmap
 
-Version numbers below were chosen to be linear — prior drafts had
-"v0.4.2" appearing after "v0.5" in the tag list, which was confusing.
+Version numbers are linear. Priorities reflect the review of 2026-10-01:
+correctness first, then the items that block external exposure, then
+observability, then comfort features.
 
 ### v0.5.1 — Tenant lock + cursor gaps fix (done)
 
-Implemented. See the "Write serialisation" block above.
+Per-tenant advisory lock taken at the start of every sync_seq-producing
+transaction. Regression test in `test/cursor-gaps.spec.ts`.
 
-- `src/tenant-write-lock.ts` — `lockTenantWrites(tx, tenantId)`.
-- Applied in `SyncPushService.pushChanges` and
-  `SyncConflictService.resolveConflict`.
-- Regression test: `test/cursor-gaps.spec.ts`. Red before the fix,
-  green after. Log line `B finished while A was still open` flips
-  from `true` to `false`.
+Note: the lock was originally isolated in `src/tenant-write-lock.ts`.
+As of v0.5.6 it is folded into `withTenant(db, tenantId, fn, { write: true })`,
+and the separate file is gone.
 
-### v0.5.2 — 410 GONE for stale cursors
+### v0.5.2 — 410 GONE for stale cursors (done)
 
-The purge function (v0.3.3) deletes rows older than retention. A
-client offline longer than retention never learns those rows were
-deleted.
-
-Design:
-
-- The purge records a `purged_up_to_seq` per tenant. Table:
-  `sync_purge_state(tenant_id UUID PRIMARY KEY, purged_up_to_seq BIGINT, updated_at BIGINT)`.
-- `/sync/pull` returns `410 GONE` when
-  `last_pulled_at < purged_up_to_seq` for the requesting tenant.
-- Client must resync from scratch (full pull, no cursor).
-- Retention policy documented in the API contract.
-
-Regression test: a client pulls with a cursor below
-`purged_up_to_seq` and receives 410.
+`sync_purge_state` per tenant, `purged_up_to_seq` raised in the same
+transaction as the purge. `/sync/pull` returns 410 when
+`last_pulled_at < purged_up_to_seq`. Tests in
+`test/stale-cursor-410.spec.ts`.
 
 ### v0.5.4 — Row-Level Security (done)
 
-Implemented across a/b/c. See the "Row-Level Security" architecture
-block above and `test/rls-isolation.spec.ts` for the proof.
+RLS enabled and forced on every tenant-scoped table. `sync_app` is a
+non-superuser role, subject to the policies, and every HTTP path runs
+under it. Tests in `test/rls-isolation.spec.ts` and the harness canary
+`test/app-role-canary.spec.ts`.
 
-### v0.5.5 — S3 purge + orphan cleanup
+### v0.5.6 — Correctness fixes (done)
 
-- Purge attachments whose check-in has been soft-deleted > 30 days.
+Four items from the 2026-10-01 review, all shipped:
+
+- RLS proven on the HTTP paths. The specs used to inject a superuser
+  connection; they now inject `pg.appDb` and fail if the role can
+  bypass RLS. This surfaced a real bug in
+  `AttachmentService.requestUpload` and `.confirmUpload`, fixed in the
+  same commit.
+- `sync_app` password removed from the repository. Migration 012 sets
+  the role to `NOLOGIN`; the operator grants `LOGIN` with a generated
+  password; the test helper re-enables it with a throwaway password
+  inside the ephemeral container only.
+- `requireTenantId` at every service entry point. The four
+  `?? DEFAULT_TENANT_ID` fallbacks are gone. A caller that omits the
+  tenant now gets a `BadRequestException` instead of writing to the
+  zero tenant.
+- Site orphan after mission reassignment. `check_ins.site_id` is
+  denormalized at push time; the pull filter keeps a site as long as
+  a mission OR a check-in links the agent to it. Migration 013.
+
+### v0.6 — Real IdP (blocker for external exposure)
+
+Replace `/auth/token` with a real identity provider. Design:
+
+- Validate provider JWTs against their JWKS endpoint (via `jose`).
+- Convert provider claims to `{ sub, tenantId }` in a local guard.
+- `/auth/token` reachable only when `AUTH_ALLOW_DEV_TOKEN=true` and
+  `NODE_ENV !== 'production'`. The boot guard already enforces the
+  pair; add a route-level check as defense in depth.
+- Boot guards: `JWKS_URL` and `JWT_AUDIENCE` required, refuse to start
+  if missing or unreachable.
+- Tests with a locally signed JWKS: expired token, wrong issuer,
+  wrong audience, missing tenant claim.
+
+This is the last item that blocks a first external deployment.
+
+### v0.7 — Observability (blocker for operating in production)
+
+Without it, the first production incident is invisible.
+
+- `sync_logs` table: `sync_id`, `agent_id`, `tenant_id`, `started_at`,
+  `finished_at`, `duration_ms`, `records_pushed`, `records_pulled`,
+  `conflicts_count`, `errors_count`, `retry_count`, `schema_version`.
+- Metrics: push latency p50/p95, conflict rate, idempotency hit rate,
+  `410 GONE` count per tenant, average payload size.
+- Expose via Prometheus endpoint or a managed APM.
+
+### v0.8 — S3 purge and orphans
+
+Does not block production unless a contract requires deletion.
+
+- Purge attachments whose check-in is soft-deleted > 30 days.
 - Purge `pending` attachments never confirmed > 7 days.
 - Scan for S3 objects without a matching row.
-- Must run inside `withTenant` or with an explicit list of tenants.
+- Run inside `withTenant` per tenant, or with an explicit list.
 
-### v0.6 — API versioning
+### v0.9 — SSE
 
-Headers `X-Schema-Version`, `X-Client-Version`. Reject mismatches
-with `426 Upgrade Required`.
+Notification only. A periodic pull is sufficient for a first deployment.
 
-### v0.7 — SSE
+- `DATA_CHANGED` event per tenant.
+- Client re-pulls on receipt. Server sends no data.
 
-A `DATA_CHANGED` event per tenant. Client re-pulls on receipt.
-Server sends notification only, not data.
+### v1.0 — API versioning
 
-### v0.8 — Observability
+Nice to have when a second client version exists. Not a blocker for a
+single-app deployment.
 
-`sync_logs` table + metrics: push latency, conflict rate, idempotency
-hit rate, average payload size.
+- `X-Schema-Version` and `X-Client-Version` headers.
+- `426 Upgrade Required` on mismatch.
 
 ## Debt / Known issues
+
+- **Migration 013 backfill is approximate.** `UPDATE check_ins
+  SET site_id = m.site_id FROM missions m WHERE ...` attaches
+  historical check-ins to the *current* site of their mission. For a
+  check-in created before a reassignment, this writes the new site, not
+  the one the agent actually visited. Check-ins pushed after migration
+  013 are exact: `sync_push` stamps `site_id` at insert time from the
+  mission's site at that moment. Only the historical rows are wrong, and
+  only when a reassignment happened *before* 013 ran. There is no way to
+  recover the pre-013 site from the current schema; if it matters, the
+  information must be restored from backups or from the client's local
+  copy.
+
 
 | Item | Severity | Notes |
 |---|---|---|

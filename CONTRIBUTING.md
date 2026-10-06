@@ -29,7 +29,7 @@ common tasks (add a migration, add an endpoint), see §5.
     npx vitest run
 
 The first `vitest run` pulls `postgres:16-alpine` (~60s) and then
-executes 85 tests. **Expect ~2-6 minutes locally**, ~25s on GitHub
+executes the full test suite. **Expect ~2-6 minutes locally**, ~2-3 min on GitHub
 Actions.
 
 ### Verify you can reproduce the CI
@@ -61,7 +61,8 @@ attachments, roadmap).
 - **Timestamps in ms (BIGINT).** Never `TIMESTAMPTZ` for `sync_seq`-related
   fields. The WatermelonDB client on the other end expects numbers.
 - **Tenant context.** Every query that touches a `tenant_id`-bearing
-  table runs inside `withTenant` (read) or `lockTenantWrites` (write).
+  table runs inside `withTenant`. Pass `{ write: true }` on paths that
+INSERT or UPDATE a `sync_seq`-producing table.
   No exceptions.
 - **No schema change without a migration.** `src/schema.ts` and
   `migrations/*.sql` must stay in sync. See §5.1.
@@ -82,10 +83,27 @@ attachments, roadmap).
 
 For any bug fix:
 
-1. Write a failing test that reproduces the bug. Commit it as
-   `test(scope): failing test for <bug>`.
-2. Fix the bug. Commit as `fix(scope): <what>`.
-3. The two commits in one PR prove the fix works.
+1. Write the test that reproduces the bug, and wrap it in Vitest's
+   `it.fails`. The test asserts the correct behaviour; `it.fails`
+   makes the suite pass as long as the bug is present.
+
+       it.fails('pull returns site A after reassignment', async () => {
+         // ... the assertion that currently fails
+       });
+
+2. Commit the `it.fails` test alone as
+   `test(scope): prove <bug> (red)`. The suite is green because the
+   assertion is expected to fail.
+
+3. Fix the bug, flip `it.fails` to `it` in the same commit as the
+   fix: `fix(scope): <what>`. The suite is green for the right reason.
+
+4. Push both commits in one PR. The history proves the fix works, and
+   no commit in the branch was ever red.
+
+If you cannot use `it.fails` (the test also asserts that the setup is
+sound), add a guard test in `it` that proves the scenario is correct,
+and keep the bug-reproducing test in `it.fails`.
 
 For any feature, write the test at the same time as the code. See §5.3.
 
@@ -133,12 +151,16 @@ module wires them.
 
 For a write that touches a `sync_seq`-bearing table:
 
-    import { lockTenantWrites } from './tenant-write-lock.js';
+    import { withTenant } from './with-tenant.js';
 
-    await this.db.transaction(async (tx) => {
-      await lockTenantWrites(tx, tenantId);
-      // ... rest of the writes
-    });
+    return withTenant(this.db, tenantId, async (tx) => {
+      // ... the writes
+    }, { write: true });
+
+`{ write: true }` takes the per-tenant advisory lock before any
+INSERT/UPDATE. It serialises every sync_seq-producing write of the
+tenant until commit, so two transactions cannot commit out of order and
+leave a gap in the visible sequence. Omit it on read paths.
 
 For a read that touches a `tenant_id`-bearing table:
 
@@ -193,7 +215,8 @@ via VS Code, or via a Node script using
    Validate with explicit `if` checks — the project doesn't use
    `class-validator` pipes.
 3. Add a service method. If the endpoint reads or writes tenant data,
-   wrap with `withTenant` or `lockTenantWrites`.
+   wrap with `withTenant`. Pass `{ write: true }` if the callback
+   issues any INSERT or UPDATE that fires the `sync_seq` trigger.
 4. Add tests in the matching `*.http.spec.ts` file. Use `Test.createTestingModule`
    with `controllers: [YourController]` and explicit providers — see
    `test/sync.http.spec.ts` for the pattern.
@@ -206,7 +229,7 @@ file, and one `it` per scenario, named in plain English.
 
 If your test needs a database, extend `TestPostgres` (see
 `test/helpers/testcontainers-pg.ts`). It boots a real PostgreSQL 16,
-applies migrations 001 through 011 in order, and exposes:
+applies migrations 001 through 013 in order, and exposes:
 
 - `pg.pool` — superuser pool (bypasses RLS, used for seeds).
 - `pg.db` — Drizzle on `pg.pool`.
@@ -227,7 +250,9 @@ imports, DI tokens in `app.module.ts`, and any reference in docs. The
 - `JWT_SECRET` — set in the deployment environment. Boot guards reject
   values shorter than 32 chars or equal to the `.env.example` placeholder.
   Rotating means invalidating all live tokens. Do it during a maintenance
-  window.
+  window. **This becomes obsolete at v0.6**: once the app validates a real
+  identity provider's JWTs against its JWKS, tokens are signed by the
+  provider, not by this service, and `JWT_SECRET` disappears.
 - `S3_SECRET_ACCESS_KEY` — set in the deployment environment. Rotation
   is transparent to the app (the SDK reads it at boot).
 
@@ -327,9 +352,12 @@ ask. Two brains on a stuck problem beats one brain frustrated.
 ## 9. Checklist before opening a PR
 
 - [ ] `npx tsc --noEmit` is silent.
-- [ ] `npx vitest run` shows `85 passed` (or more).
+- [ ] `npx vitest run` reports no failure, no skip, no `it.only` left
+      in the diff. The exact count is not the criterion.
 - [ ] No `console.log` left in committed code.
-- [ ] Every new tenant-scoped query uses `withTenant` or `lockTenantWrites`.
+- [ ] Every new tenant-scoped query uses `withTenant`, with
+      `{ write: true }` for any path that INSERTs or UPDATEs a
+      `sync_seq`-producing table.
 - [ ] Every schema change has a matching migration.
 - [ ] The commit messages follow the convention in §6.
 - [ ] The branch is rebased on `main`.
