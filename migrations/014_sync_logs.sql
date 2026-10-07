@@ -40,4 +40,7 @@ CREATE POLICY tenant_isolation_sync_logs ON sync_logs
   USING  (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
+-- Append-only : les privilèges par défaut de la migration 011 accordent SELECT, INSERT,
+-- UPDATE, DELETE à sync_app dès la création de la table. On repart de zéro.
+REVOKE ALL ON sync_logs FROM PUBLIC, sync_app;
 GRANT SELECT, INSERT ON sync_logs TO sync_app;
