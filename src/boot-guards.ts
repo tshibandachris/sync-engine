@@ -101,3 +101,26 @@ export function runBootGuards(env: NodeJS.ProcessEnv = process.env): void {
   assertNotDevAuthInProd(env);
   assertAuthStrategy(env);
 }
+
+/**
+ * Config du serveur /metrics : port dédié (jamais celui de l'API) et token ops.
+ * Refuse de démarrer si l'une des deux valeurs manque ou est un placeholder.
+ */
+export function assertMetricsConfig(env: NodeJS.ProcessEnv = process.env): { port: number; token: string } {
+  const rawPort = env.METRICS_PORT;
+  const port = Number(rawPort);
+  if (!rawPort || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('METRICS_PORT est requis (entier entre 1 et 65535).');
+  }
+  if (env.PORT && port === Number(env.PORT)) {
+    throw new Error("METRICS_PORT doit différer du port de l'API : /metrics ne doit pas être exposé sur le port public.");
+  }
+  const token = env.OPS_METRICS_TOKEN ?? '';
+  if (token.length < 32) {
+    throw new Error('OPS_METRICS_TOKEN est requis (32 caractères minimum).');
+  }
+  if (token.startsWith('change-me')) {
+    throw new Error("OPS_METRICS_TOKEN a encore la valeur d'exemple de .env.example.");
+  }
+  return { port, token };
+}
