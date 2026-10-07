@@ -54,6 +54,28 @@ export const checkIns = pgTable('check_ins', {
   syncSeq: bigint('sync_seq', { mode: 'number' }),
 });
 
+// Append-only. Written by the observability interceptor, read via raw
+// SQL from ops tooling. Indexes are declared in migration 014, not here,
+// to avoid a mismatch on the DESC ordering (Drizzle does not express
+// DESC in pgTable index declarations).
+export const syncLogs = pgTable('sync_logs', {
+  id: uuid('id').primaryKey(),
+  requestId: uuid('request_id').notNull(),
+  tenantId: uuid('tenant_id').notNull(),
+  agentId: uuid('agent_id'),
+  operation: text('operation').notNull(),
+  statusCode: bigint('status_code', { mode: 'number' }).notNull(),
+  startedAt: bigint('started_at', { mode: 'number' }).notNull(),
+  durationMs: bigint('duration_ms', { mode: 'number' }).notNull(),
+  recordsIn: bigint('records_in', { mode: 'number' }).notNull(),
+  recordsOut: bigint('records_out', { mode: 'number' }).notNull(),
+  conflicts: bigint('conflicts', { mode: 'number' }).notNull(),
+  errors: bigint('errors', { mode: 'number' }).notNull(),
+  idempotency: text('idempotency'),
+  schemaVersion: text('schema_version'),
+  errorCode: text('error_code'),
+});
+
 export type Site = typeof sites.$inferSelect;
 export type NewSite = typeof sites.$inferInsert;
 export type Mission = typeof missions.$inferSelect;
