@@ -13,6 +13,10 @@ export interface PurgeOptions {
   ttlConflictsDays?: number;
 }
 
+export interface PurgeSyncLogsResult {
+  logsDeleted: number;
+}
+
 export interface PurgeTombstonesResult {
   checkInsDeleted: number;
   missionsDeleted: number;
@@ -80,6 +84,36 @@ export class SyncMaintenanceService {
       sitesDeleted: Number(payload.sites_deleted ?? 0),
       purgedUpToSeq: Number(payload.purged_up_to_seq ?? 0),
     };
+    });
+  }
+
+  /**
+   * Purges sync_logs older than ttlDays (default 30) for one tenant.
+   *
+   * Runs through a SECURITY DEFINER function because sync_app has no
+   * DELETE privilege on sync_logs (append-only since migration 014).
+   * See migrations/015_purge_sync_logs.sql.
+   */
+  async purgeSyncLogs(
+    tenantId: string,
+    ttlDays: number = 30,
+  ): Promise<PurgeSyncLogsResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
+    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+
+    return withTenant(this.db, tenantId, async (tx) => {
+      const result = await tx.execute(sql`
+        SELECT purge_tenant_sync_logs(${tenantId}::uuid, ${ttlDays}::int) AS result
+      `);
+
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      const payload = row?.result as Record<string, unknown> | undefined;
+
+      if (!payload) {
+        throw new Error('purge_tenant_sync_logs a retourne un resultat vide.');
+      }
+
+      return { logsDeleted: Number(payload.logs_deleted ?? 0) };
     });
   }
 }
