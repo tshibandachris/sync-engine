@@ -440,14 +440,45 @@ conflicts, idempotency, stale cursors, payload size.
 runs outside the app (systemd timer, k8s CronJob, or an equivalent
 scheduler) once the deployment strategy is known.
 
-### v0.8 — S3 purge and orphans
+### v0.8 — S3 purge and orphans (done)
 
-Does not block production unless a contract requires deletion.
+Three related pieces, each in its own PR.
 
-- Purge attachments whose check-in is soft-deleted > 30 days.
-- Purge `pending` attachments never confirmed > 7 days.
-- Scan for S3 objects without a matching row.
-- Run inside `withTenant` per tenant, or with an explicit list.
+**1. Capture orphans before the cascade.**
+`attachments.check_in_id` references `check_ins(id, tenant_id)` with
+`ON DELETE CASCADE` (migration 007). When `purge_tenant_tombstones`
+removes a soft-deleted check-in, its attachment rows go with it and the
+`object_key` values are lost. Migration 017 replaces the function: it
+collects the object keys that will be cascaded away, before the
+`DELETE`, and returns them as `orphaned_object_keys` (TEXT[]).
+`AttachmentStorage.delete()` added; `SyncMaintenanceService.purgeTenantStorage(storage, keys)`
+iterates and best-effort deletes.
+
+**2. Scan for orphans that predate step 1.**
+`SyncMaintenanceService.scanTenantOrphans(storage, tenantId, options)`
+lists the tenant's S3 prefix (via `listByPrefix`, `ListObjectsV2Command`
+paginated), cross-checks against `object_key` values still referenced
+by `attachments` rows, and reports the difference. Per tenant, because
+reading the DB through `withTenant` means RLS scopes the row set. Two
+safety features:
+
+- `dryRun` defaults to `true`. Nothing is deleted without
+  `dryRun: false`.
+- A ratio guard refuses to delete if more than 50% of the listed
+  objects would go. A suspiciously high orphan ratio usually means the
+  DB read returned zero rows for a reason other than an empty table
+  (RLS context lost, wrong tenant id). `allowHighOrphanRatio: true`
+  overrides after manual review.
+
+**3. Purge `pending` attachments never confirmed.**
+`purgeTenantPendingAttachments(tenantId, ttlDays = 7)` deletes rows
+with `status='pending'` older than the cutoff, inside `withTenant`. No
+S3 object to touch: either the client never PUT anything, or the object
+was written but never confirmed, and the scan from step 2 finds it.
+
+All three run per tenant. The cron that walks `tenants` and calls each
+of the maintenance methods is **still outside the repository** (see the
+note under v0.7.5).
 
 ### v0.9 — SSE
 

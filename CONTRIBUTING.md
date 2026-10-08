@@ -324,6 +324,33 @@ cross-tenant refusal, floor refusal, and a direct `DELETE` from
 `sync_app` that must fail. See `test/sync-logs-purge.spec.ts` for the
 10-test template.
 
+### Destructive jobs default to dry-run
+
+Any maintenance operation that deletes data the application still
+depends on — attachments, objects in a bucket, rows another tenant may
+reference — must take an option that defaults to a no-op. The caller
+has to ask for the delete explicitly.
+
+Precedents:
+
+- `scanTenantOrphans` takes `dryRun: true` by default. Deleting
+  requires `dryRun: false`.
+- It also refuses to delete when more than half of the listed objects
+  would go, unless `allowHighOrphanRatio: true`. A high ratio almost
+  always means the DB read failed silently (RLS context lost, wrong
+  tenant id), not that the bucket is really 90% orphaned.
+
+The same rule applies to any future `purge*` method. When in doubt,
+ship a dry-run, a counting return value, and a boolean that an operator
+has to flip by hand after reviewing the report.
+
+The purge functions that only remove rows the app has already
+soft-deleted (`purge_tenant_tombstones`, `purge_tenant_sync_logs`,
+`purgeTenantPendingAttachments`) do not need this: the data is not
+reachable through the normal API anymore. Only operations that touch
+external state (S3 objects, another service) or live rows carry the
+dry-run contract.
+
 ## 8. Git conventions
 
 ### Commit messages
