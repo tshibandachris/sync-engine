@@ -2,7 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
 import { AppModule, type AppModuleOptions } from './app.module.js';
-import { runBootGuards } from './boot-guards.js';
+import { runBootGuards, assertMetricsConfig } from './boot-guards.js';
+import { startMetricsServer, stopMetricsServer } from './observability/metrics-server.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 import { S3AttachmentStorage } from './s3-attachment-storage.js';
 
@@ -50,6 +51,28 @@ async function bootstrap(): Promise<void> {
   await app.listen(port);
 
   console.log('Sync engine listening on port ' + port);
+
+  // Metrics on a dedicated port so /metrics is not reachable from the
+  // public API. runBootGuards (above) already validated the config;
+  // assertMetricsConfig returns the parsed values.
+  const metricsConfig = assertMetricsConfig();
+  const metricsServer = await startMetricsServer({
+    port: metricsConfig.port,
+    token: metricsConfig.token,
+  });
+  console.log('Metrics listening on port ' + metricsConfig.port);
+
+  const shutdown = async (signal: string): Promise<void> => {
+    console.log('Received ' + signal + ', shutting down.');
+    try {
+      await stopMetricsServer(metricsServer);
+      await app.close();
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 }
 
 const isDirectRun = process.argv[1]?.endsWith('main.js') ||

@@ -1,4 +1,5 @@
 import { Module, type DynamicModule } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
@@ -14,6 +15,8 @@ import type { AttachmentStorage } from './attachment-storage.js';
 export const ATTACHMENT_STORAGE = 'ATTACHMENT_STORAGE';
 import { AuthController } from './auth.controller.js';
 import { JwtAuthGuard } from './jwt.guard.js';
+import { SyncLogService } from './observability/sync-log.service.js';
+import { SyncLogInterceptor } from './observability/sync-log.interceptor.js';
 
 export interface AppModuleOptions {
   db: NodePgDatabase<typeof schema>;
@@ -44,6 +47,8 @@ export class AppModule {
         { provide: ATTACHMENT_STORAGE, useValue: storage },
         { provide: AttachmentService, useFactory: (d: any, s: any) => new AttachmentService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
         JwtAuthGuard,
+        SyncLogService,
+        { provide: APP_INTERCEPTOR, useClass: SyncLogInterceptor },
       ],
       exports: [JwtAuthGuard],
     };
