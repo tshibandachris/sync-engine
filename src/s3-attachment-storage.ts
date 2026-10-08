@@ -1,4 +1,4 @@
-import { S3Client, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, HeadObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import type { AttachmentStorage, PresignedPut, PresignedGet, HeadResult } from './attachment-storage.js';
@@ -60,5 +60,16 @@ export class S3AttachmentStorage implements AttachmentStorage {
     } catch {
       return { exists: false };
     }
+  }
+
+  /**
+   * Deletes an object. Idempotent: S3 returns 204 for a missing key, so
+   * a retry after a partial failure is harmless.
+   */
+  async delete(objectKey: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({
+      Bucket: this.bucket,
+      Key: objectKey,
+    }));
   }
 }

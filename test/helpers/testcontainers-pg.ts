@@ -207,6 +207,11 @@ export class TestPostgres {
     'utf8',
   );
 
+  const migration17 = fs.readFileSync(
+    path.join(migrationsDir, '017_purge_tombstones_returns_orphans.sql'),
+    'utf8',
+  );
+
   const migration15 = fs.readFileSync(
     path.join(migrationsDir, '015_purge_sync_logs.sql'),
     'utf8',
@@ -245,6 +250,8 @@ export class TestPostgres {
   await pool.query(migration14);
 
   await pool.query(migration15);
+
+  await pool.query(migration17);
 
   await pool.query(migration16);
 

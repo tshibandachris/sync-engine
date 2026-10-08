@@ -2,6 +2,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
+import type { AttachmentStorage } from './attachment-storage.js';
 
 export interface PurgeResult {
   idempotencyDeleted: number;
@@ -22,6 +23,13 @@ export interface PurgeTombstonesResult {
   missionsDeleted: number;
   sitesDeleted: number;
   purgedUpToSeq: number;
+  /** Object keys of attachments cascaded away by the check_ins DELETE. */
+  orphanedObjectKeys: string[];
+}
+
+export interface PurgeTenantStorageResult {
+  deleted: number;
+  failed: number;
 }
 
 export class SyncMaintenanceService {
@@ -83,6 +91,9 @@ export class SyncMaintenanceService {
       missionsDeleted: Number(payload.missions_deleted ?? 0),
       sitesDeleted: Number(payload.sites_deleted ?? 0),
       purgedUpToSeq: Number(payload.purged_up_to_seq ?? 0),
+      orphanedObjectKeys: Array.isArray(payload.orphaned_object_keys)
+        ? (payload.orphaned_object_keys as string[])
+        : [],
     };
     });
   }
@@ -115,5 +126,33 @@ export class SyncMaintenanceService {
 
       return { logsDeleted: Number(payload.logs_deleted ?? 0) };
     });
+  }
+
+  /**
+   * Deletes the given object keys from the attachment storage, one by
+   * one. Never throws: a failed DELETE is counted and logged, the
+   * remaining keys are attempted, and the caller decides what to do
+   * (typically: nothing, the next scan will pick up the orphans).
+   *
+   * Pairs with purgeTenantTombstones: the tombstone purge returns the
+   * object keys cascaded away with the check-ins, and this method turns
+   * that list into actual S3 DELETEs.
+   */
+  async purgeTenantStorage(
+    storage: AttachmentStorage,
+    objectKeys: string[],
+  ): Promise<PurgeTenantStorageResult> {
+    let deleted = 0;
+    let failed = 0;
+    for (const key of objectKeys) {
+      try {
+        await storage.delete(key);
+        deleted += 1;
+      } catch (err) {
+        failed += 1;
+        console.error('[maintenance] storage delete failed for ' + key + ':', err);
+      }
+    }
+    return { deleted, failed };
   }
 }
