@@ -1,5 +1,5 @@
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import type { AttachmentStorage } from './attachment-storage.js';
@@ -30,6 +30,33 @@ export interface PurgeTombstonesResult {
 export interface PurgeTenantStorageResult {
   deleted: number;
   failed: number;
+}
+
+export interface ScanTenantOrphansOptions {
+  /**
+   * When true (the default), the scan only reports the orphans. Nothing
+   * is deleted from storage. Real deletion requires dryRun: false.
+   */
+  dryRun?: boolean;
+  /**
+   * Safety valve. A real scan refuses to proceed if more than half of
+   * the listed objects would be deleted: a suspiciously high orphan
+   * ratio usually means the DB read returned zero rows for a reason
+   * other than an empty table (RLS context lost, wrong tenant id). Set
+   * this to true only after manually verifying a specific case.
+   */
+  allowHighOrphanRatio?: boolean;
+}
+
+export interface ScanTenantOrphansResult {
+  tenantId: string;
+  scanned: number;
+  orphans: string[];
+  deleted: number;
+  failed: number;
+  dryRun: boolean;
+  aborted: boolean;
+  abortReason?: string;
 }
 
 export class SyncMaintenanceService {
@@ -154,5 +181,83 @@ export class SyncMaintenanceService {
       }
     }
     return { deleted, failed };
+  }
+
+  /**
+   * Lists every object under the tenant's S3 prefix, cross-checks
+   * against the object_key values that attachments rows still reference,
+   * and reports (or deletes) the difference.
+   *
+   * Per-tenant by design: reading the DB through withTenant means RLS
+   * sees only this tenant's rows, and the S3 prefix scopes the listing
+   * to this tenant's objects. A cross-tenant scan would have to bypass
+   * RLS and risks deleting the wrong objects.
+   *
+   * dryRun defaults to true. Passing dryRun: false is a deliberate step
+   * an operator takes after reviewing a dry-run output. A ratio guard
+   * refuses to delete if more than 50% of the listed objects would go,
+   * unless allowHighOrphanRatio is set.
+   */
+  async scanTenantOrphans(
+    storage: AttachmentStorage,
+    tenantId: string,
+    options: ScanTenantOrphansOptions = {},
+  ): Promise<ScanTenantOrphansResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
+    const dryRun = options.dryRun ?? true;
+    const allowHigh = options.allowHighOrphanRatio ?? false;
+
+    const prefix = 'tenants/' + tenantId + '/';
+    const objects = await storage.listByPrefix(prefix);
+    const scanned = objects.length;
+
+    const known = await withTenant(this.db, tenantId, async (tx) => {
+      const rows = await tx
+        .select({ objectKey: schema.attachments.objectKey })
+        .from(schema.attachments)
+        .where(eq(schema.attachments.tenantId, tenantId));
+      return new Set(rows.map((r) => r.objectKey));
+    });
+
+    const orphans = objects
+      .map((o) => o.key)
+      .filter((key) => !known.has(key));
+
+    if (dryRun) {
+      return {
+        tenantId, scanned, orphans,
+        deleted: 0, failed: 0,
+        dryRun: true, aborted: false,
+      };
+    }
+
+    const ratio = scanned === 0 ? 0 : orphans.length / scanned;
+    if (ratio > 0.5 && !allowHigh) {
+      return {
+        tenantId, scanned, orphans,
+        deleted: 0, failed: 0,
+        dryRun: false, aborted: true,
+        abortReason:
+          'orphan ratio ' + ratio.toFixed(2) + ' exceeds 0.5; ' +
+          'pass allowHighOrphanRatio: true after manual review',
+      };
+    }
+
+    let deleted = 0;
+    let failed = 0;
+    for (const key of orphans) {
+      try {
+        await storage.delete(key);
+        deleted += 1;
+      } catch (err) {
+        failed += 1;
+        console.error('[maintenance] orphan delete failed for ' + key + ':', err);
+      }
+    }
+    return {
+      tenantId, scanned, orphans,
+      deleted, failed,
+      dryRun: false, aborted: false,
+    };
   }
 }
