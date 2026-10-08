@@ -405,16 +405,40 @@ new production requirements.
 The provider is not hard-coded. Any OIDC-compliant endpoint works. If the
 provider puts the tenant in a namespaced claim, set `JWT_TENANT_CLAIM`.
 
-### v0.7 — Observability (blocker for operating in production)
+### v0.7 — Observability (done)
 
-Without it, the first production incident is invisible.
+`sync_logs` table (RLS, append-only for sync_app), Prometheus metrics
+on a dedicated authenticated port, per-call interceptor that writes
+one row per /sync/* request. Tests in `test/metrics.spec.ts`,
+`test/metrics-config.spec.ts`, `test/sync-logs-rls.spec.ts`,
+`test/sync-log.spec.ts`.
 
-- `sync_logs` table: `sync_id`, `agent_id`, `tenant_id`, `started_at`,
-  `finished_at`, `duration_ms`, `records_pushed`, `records_pulled`,
-  `conflicts_count`, `errors_count`, `retry_count`, `schema_version`.
-- Metrics: push latency p50/p95, conflict rate, idempotency hit rate,
-  `410 GONE` count per tenant, average payload size.
-- Expose via Prometheus endpoint or a managed APM.
+### v0.7.5 — Maintenance foundation (done)
+
+Two pieces that let maintenance jobs run:
+
+- **Tenants registry** (`migrations/016`, `src/tenant-registry.ts`).
+  `withTenant` registers every tenant it sees, so a cron can
+  `SELECT id FROM tenants` to know which tenants to walk. The registry
+  has no RLS by design: without a tenant context, every other table
+  exposes zero rows.
+- **`sync_logs` retention purge** (`migrations/015`). A
+  `SECURITY DEFINER` function with a 30-day floor, tenant check, and a
+  frozen `search_path`. `sync_app` has no `DELETE` on `sync_logs`
+  (append-only since 014); the function runs the DELETE with the
+  migration role's privileges.
+
+Original v0.7 plan, for reference:
+
+Shipped as a slightly different shape: one row per request with
+request_id, operation, status, timing, record counts, conflicts,
+idempotency, error code. Metrics cover requests, duration, records,
+conflicts, idempotency, stale cursors, payload size.
+
+**Remaining for a later pass:** the cron that calls
+`SyncMaintenanceService.purgeSyncLogs` for every row in `tenants`. It
+runs outside the app (systemd timer, k8s CronJob, or an equivalent
+scheduler) once the deployment strategy is known.
 
 ### v0.8 — S3 purge and orphans
 
@@ -441,6 +465,13 @@ single-app deployment.
 - `426 Upgrade Required` on mismatch.
 
 ## Debt / Known issues
+
+- **Tenants registry has no retention.** `tenants` grows by one row
+  per new tenant, forever. That is bounded by the number of distinct
+  tenants, which is small, so it is acceptable for now. If it ever
+  needs pruning, add a `last_seen_at` column updated on every request
+  and purge inactive tenants older than N months.
+
 
 - **Migration 013 backfill is approximate.** `UPDATE check_ins
   SET site_id = m.site_id FROM missions m WHERE ...` attaches

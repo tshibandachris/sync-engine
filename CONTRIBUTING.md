@@ -275,7 +275,56 @@ To use a provider whose tenant is not in a plain `tenantId` claim, set
 `JWT_TENANT_CLAIM` to the claim name (a URI, typically). The guard reads
 the claim by that exact name.
 
-## 7. Git conventions
+## 7. Privileged operations on append-only tables
+
+Some tables are append-only for `sync_app` on purpose: `sync_logs`
+(migration 014) revokes every privilege except `SELECT` and `INSERT`.
+A retention job still has to `DELETE` from them. The pattern is a
+`SECURITY DEFINER` function that runs the `DELETE` with the migration
+role's privileges, called by `sync_app` through `EXECUTE`.
+
+The template (see `migrations/015_purge_sync_logs.sql` for the full
+version):
+
+    CREATE OR REPLACE FUNCTION <name>(...)
+    RETURNS JSONB
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS $
+    BEGIN
+      -- guards first: retention floor, tenant check, anything else
+      -- that must hold before a privileged DELETE runs
+      ...
+      DELETE FROM <table> WHERE ...;
+      RETURN jsonb_build_object(...);
+    END;
+    $;
+
+    REVOKE ALL ON FUNCTION <name>(...) FROM PUBLIC, sync_app;
+    GRANT EXECUTE ON FUNCTION <name>(...) TO sync_app;
+
+Three rules:
+
+1. **`SET search_path = pg_catalog, public, pg_temp`** is mandatory.
+   Without `pg_catalog` first, a hostile schema earlier in the search
+   path could shadow `current_setting` or any other built-in the
+   function calls.
+2. **`REVOKE ALL ... FROM PUBLIC, sync_app` before the GRANT.** The
+   default grant on a new function is EXECUTE to PUBLIC. Without the
+   REVOKE, any role can call it.
+3. **Guard inside the function, not only at the call site.** A
+   SECURITY DEFINER function bypasses the caller's privileges; the
+   floor, the tenant check, and any other invariant must live in the
+   function body.
+
+Test the function like any other privileged path:
+`has_function_privilege`, `pg_proc.prosecdef`, `proconfig`,
+cross-tenant refusal, floor refusal, and a direct `DELETE` from
+`sync_app` that must fail. See `test/sync-logs-purge.spec.ts` for the
+10-test template.
+
+## 8. Git conventions
 
 ### Commit messages
 
@@ -306,7 +355,7 @@ mapping.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 ### "Could not find a working container runtime strategy"
 
