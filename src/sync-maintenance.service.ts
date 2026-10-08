@@ -1,5 +1,5 @@
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, lt, sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import type { AttachmentStorage } from './attachment-storage.js';
@@ -30,6 +30,10 @@ export interface PurgeTombstonesResult {
 export interface PurgeTenantStorageResult {
   deleted: number;
   failed: number;
+}
+
+export interface PurgePendingAttachmentsResult {
+  deleted: number;
 }
 
 export interface ScanTenantOrphansOptions {
@@ -259,5 +263,38 @@ export class SyncMaintenanceService {
       deleted, failed,
       dryRun: false, aborted: false,
     };
+  }
+
+  /**
+   * Deletes the attachments rows stuck in 'pending' longer than ttlDays
+   * (default 7). A pending row means a client asked for a presigned PUT
+   * URL and never confirmed the upload. There is no S3 object to clean:
+   * either the client never PUT anything, or the object was written but
+   * never confirmed, in which case scanTenantOrphans will find it later.
+   *
+   * Simple DELETE, no SECURITY DEFINER: sync_app holds the DELETE
+   * privilege on attachments (migration 011), and RLS scopes the row set
+   * to the tenant once withTenant has set the context.
+   */
+  async purgeTenantPendingAttachments(
+    tenantId: string,
+    ttlDays: number = 7,
+  ): Promise<PurgePendingAttachmentsResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
+    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+
+    const cutoffMs = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
+
+    return withTenant(this.db, tenantId, async (tx) => {
+      const removed = await tx
+        .delete(schema.attachments)
+        .where(and(
+          eq(schema.attachments.tenantId, tenantId),
+          eq(schema.attachments.status, 'pending'),
+          lt(schema.attachments.createdAt, cutoffMs),
+        ))
+        .returning({ id: schema.attachments.id });
+      return { deleted: removed.length };
+    });
   }
 }
