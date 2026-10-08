@@ -46,6 +46,12 @@ class FakeStorage implements AttachmentStorage {
   async delete(objectKey: string): Promise<void> {
     this.deletedKeys.push(objectKey);
   }
+
+  async listByPrefix(prefix: string): Promise<{ key: string; sizeBytes: number }[]> {
+    return Array.from(this.objects)
+      .filter((k) => k.startsWith(prefix))
+      .map((k) => ({ key: k, sizeBytes: 1024 }));
+  }
 }
 
 describe('Attachments / HTTP', () => {
