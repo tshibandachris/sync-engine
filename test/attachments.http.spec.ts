@@ -21,6 +21,7 @@ import {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 class FakeStorage implements AttachmentStorage {
+  readonly deletedKeys: string[] = [];
   public putCalls: { key: string; contentType: string }[] = [];
   public getCalls: { key: string }[] = [];
   public objects = new Set<string>();
@@ -40,6 +41,10 @@ class FakeStorage implements AttachmentStorage {
       return { exists: true, sizeBytes: 1024, contentType: 'image/jpeg' };
     }
     return { exists: false };
+  }
+
+  async delete(objectKey: string): Promise<void> {
+    this.deletedKeys.push(objectKey);
   }
 }
 

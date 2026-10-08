@@ -15,6 +15,12 @@ export interface HeadResult {
 }
 
 export interface AttachmentStorage {
+  /**
+   * Deletes one object. Must be idempotent: deleting an already-absent
+   * key is not an error, so a retry after a network blip is safe.
+   */
+  delete(objectKey: string): Promise<void>;
+
   presignPut(objectKey: string, contentType: string, expiresIn: number): Promise<PresignedPut>;
   presignGet(objectKey: string, expiresIn: number): Promise<PresignedGet>;
   head(objectKey: string): Promise<HeadResult>;
