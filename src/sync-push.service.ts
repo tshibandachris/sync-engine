@@ -48,6 +48,17 @@ export interface PushConflict {
   conflict_id: string;
 }
 
+/**
+ * Marqueur non serialisable pose sur la reponse quand le push est un
+ * replay idempotent (Idempotency-Key deja vu). Un Symbol, et non un
+ * booleen, pour que la reponse HTTP reste strictement identique entre
+ * un push frais et un replay : le client ne doit rien voir.
+ *
+ * Lu par SyncLogInterceptor pour poser idempotency='hit' en base et
+ * dans Prometheus.
+ */
+export const IDEMPOTENCY_REPLAY = Symbol('idempotencyReplay');
+
 export interface PushResponse {
   applied: { created: number; updated: number; deleted: number };
   conflicts: PushConflict[];
@@ -94,7 +105,7 @@ export class SyncPushService {
         const existing = await tx.execute(
           sql`SELECT 1 FROM sync_idempotency_keys WHERE agent_id = ${agentId}::uuid AND idempotency_key = ${idempotencyKey}`,
         );
-        if (existing.rows.length > 0) return { ...EMPTY_RESPONSE };
+        if (existing.rows.length > 0) return { ...EMPTY_RESPONSE, [IDEMPOTENCY_REPLAY]: true };
       }
 
       const response: PushResponse = { applied: { created: 0, updated: 0, deleted: 0 }, conflicts: [] };
