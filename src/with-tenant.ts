@@ -1,6 +1,7 @@
-﻿import { sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from './schema.js';
+import { ensureTenantRegistered, markTenantKnown } from './tenant-registry.js';
 
 export type TransactionClient = Parameters<
   Parameters<NodePgDatabase<typeof schema>['transaction']>[0]
@@ -31,12 +32,18 @@ export interface WithTenantOptions {
 }
 
 /**
- * Opens a transaction, sets the RLS tenant context, and (optionally)
- * takes the per-tenant advisory lock, then runs the callback.
+ * Opens a transaction, sets the RLS tenant context, registers the tenant
+ * in the registry (016) so maintenance can enumerate it later, and
+ * (optionally) takes the per-tenant advisory lock, then runs the callback.
  *
  * set_config(..., true) is local to the transaction: it resets on
  * COMMIT or ROLLBACK. If the tenant id is malformed, PostgreSQL raises
  * rather than silently returning cross-tenant data.
+ *
+ * The registration is best-effort: a failure is logged and dropped, and
+ * the tenant stays out of the local cache so the next call retries.
+ * markTenantKnown runs only after COMMIT, so a rolled-back transaction
+ * does not leave a phantom entry in the cache.
  */
 export async function withTenant<T>(
   db: NodePgDatabase<typeof schema>,
@@ -44,10 +51,17 @@ export async function withTenant<T>(
   fn: (tx: TransactionClient) => Promise<T>,
   options: WithTenantOptions = {},
 ): Promise<T> {
-  return db.transaction(async (tx) => {
+  const state = { registered: false };
+
+  const result = await db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`,
     );
+
+    // Tenant registry (migration 016), so maintenance knows which tenants
+    // to walk. Runs before the write lock: waiting on this INSERT must
+    // not hold the advisory lock.
+    state.registered = await ensureTenantRegistered(tx, tenantId);
 
     if (options.write) {
       // Must run before any INSERT/UPDATE that fires the sync_seq
@@ -59,4 +73,8 @@ export async function withTenant<T>(
 
     return fn(tx);
   });
+
+  // Only after COMMIT: a rollback also rolled back the registration.
+  if (state.registered) markTenantKnown(tenantId);
+  return result;
 }
