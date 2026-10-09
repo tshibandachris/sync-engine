@@ -28,7 +28,21 @@ export async function bootstrapMaintenance(): Promise<number> {
   const bucket = process.env.S3_BUCKET;
   if (!bucket) throw new Error('S3_BUCKET requis.');
 
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    connectionTimeoutMillis: 10_000,
+    // A statement stuck for good must fail loudly, not hold the lock forever.
+    statement_timeout: Number(process.env.MAINTENANCE_STATEMENT_TIMEOUT_MS ?? 300_000),
+  });
+  pool.on('error', (err) => console.error('[maintenance] idle client error:', err));
+
+  // Global deadline: a stuck run must end with exit code 1. Otherwise every later run
+  // reports "skipped" (exit code 0) and the purge silently stops.
+  const deadline = setTimeout(() => {
+    console.error('[maintenance] deadline exceeded, aborting');
+    process.exit(1);
+  }, Number(process.env.MAINTENANCE_DEADLINE_MS ?? 3_600_000));
+  deadline.unref();
   const db = drizzle(pool, { schema });
   const storage = new S3AttachmentStorage({
     bucket,
@@ -41,6 +55,10 @@ export async function bootstrapMaintenance(): Promise<number> {
   try {
     const report: MaintenanceReport = await runMaintenanceCycle({ pool, db, storage });
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+
+    if (!report.skipped && report.tenantsProcessed === 0) {
+      console.error('[maintenance] warning: the tenants registry is empty, nothing was purged');
+    }
 
     if (report.skipped) {
       // Not an error: the previous run is still going. The scheduler
