@@ -1,0 +1,38 @@
+# Source control
+.git
+.gitignore
+.gitattributes
+
+# Node
+node_modules
+npm-debug.log
+.pnpm-store
+
+# Build output (rebuilt inside the image)
+dist
+
+# Tests and test helpers: not part of the runtime image
+test
+vitest.config.ts
+coverage
+
+# Migrations are applied by the operator's migration step, not by
+# the API or the maintenance runner. Keep them out of the image.
+migrations
+
+# Documentation
+*.md
+
+# Local env, editor, OS
+.env
+.env.*
+!.env.example
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Scripts that are not part of the build
+*.cjs
+*.tmp
+*.log

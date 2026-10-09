@@ -1,0 +1,55 @@
+# Local and small-deployment Compose file for sync-engine.
+#
+# The maintenance cycle runs every day at 03:00 through ofelia, a
+# Docker-native cron. See HANDOFF.md, "Operations" section, for the
+# caveats: ofelia's cron has six fields, the docker socket grants
+# root-equivalent access, and exit code 1 is only logged unless an
+# alert is wired.
+
+services:
+  sync-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sync-engine:local
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+      - "9464:9464"
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      ofelia.enabled: "true"
+      # Six fields: ofelia's cron starts with seconds.
+      ofelia.job-exec.maintenance.schedule: "0 0 3 * * *"
+      ofelia.job-exec.maintenance.command: "node dist/maintenance-runner.js"
+
+  ofelia:
+    image: ghcr.io/netresearch/ofelia:1.0.1
+    restart: unless-stopped
+    depends_on:
+      - sync-engine
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sync_engine
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sync_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
