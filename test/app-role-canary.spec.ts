@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { pgErrorChain } from './helpers/pg-error.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 
 const TENANT_GUC = 'app.current_tenant_id';
@@ -66,6 +67,6 @@ describe('test harness canary: appDb is subject to RLS', () => {
               VALUES (${randomUUID()}, ${tenantB}::uuid, 'forged', 0, 0)`,
         );
       }),
-    ).rejects.toThrow(/row-level security|violates/i);
+    ).rejects.toSatisfy((e: unknown) => /row-level security/i.test(pgErrorChain(e)));
   });
 });
