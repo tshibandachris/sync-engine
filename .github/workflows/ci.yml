@@ -60,7 +60,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test: node runs in the image
+      - name: Smoke test - node runs in the image
         run: docker run --rm sync-engine:ci node -e "console.log('node ok')"
 
       # The container must refuse to start without DATABASE_URL: this
@@ -68,7 +68,7 @@ jobs:
       # boot guards. If the run exits 0, either the guard is gone or
       # the entrypoint was replaced by something that swallows the
       # error.
-      - name: Smoke test: the entrypoint reaches the boot guards
+      - name: Smoke test - the entrypoint reaches the boot guards
         run: |
           set +e
           output=$(docker run --rm sync-engine:ci node dist/main.js 2>&1)
