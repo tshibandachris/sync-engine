@@ -554,6 +554,84 @@ single-app deployment.
   edit different fields of the same check-in, LWW loses one. Future
   work may need field-level merge (JSON Patch or similar).
 
+## Operations
+
+### Scheduling the maintenance cycle
+
+`npm run maintenance:purge` runs one cycle over every tenant in the
+registry (migration 016): sync_logs purge, pending attachments purge,
+tombstone purge plus storage cleanup, and a dry-run orphan scan. It
+prints a JSON report on stdout and exits 0 on success, 1 if any tenant
+failed.
+
+The runner is a batch job, not part of the API. No HTTP endpoint:
+a long purge over many tenants would hold a request open, and a leaked
+ops token would let anyone issue DELETEs. A command line makes the
+surface a single binary that runs where the database runs.
+
+In a Docker Compose deployment, the simplest way to schedule it is
+`ofelia`, a Docker-native cron that reads job labels from the compose
+file.
+
+    services:
+      sync-engine:
+        # ... existing service ...
+        labels:
+          ofelia.enabled: "true"
+          ofelia.job-exec.maintenance.schedule: "0 0 3 * * *"
+          ofelia.job-exec.maintenance.command: "node /app/dist/maintenance-runner.js"
+
+      ofelia:
+        image: ghcr.io/netresearch/ofelia:1.0.1
+        depends_on: [sync-engine]
+        command: daemon --docker
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock:ro
+
+Every day at 03:00 the daemon runs `docker exec sync-engine node
+/app/dist/maintenance-runner.js`. Logs land in `docker logs sync-engine`.
+
+Two properties of the runner worth knowing before trusting it with a
+production database:
+
+- **Session-level advisory lock.** Two runners can overlap by accident
+  (a timer fires while an operator runs one by hand). The second one
+  returns `skipped: true` and does nothing. The scheduler treats that
+  as success.
+- **Scan always dry-run.** `scanTenantOrphans` runs with `dryRun:
+  true` from the scheduler, unconditionally. Real orphan deletion
+  requires an operator to review the report and run the scan again
+  with `dryRun: false` for a specific tenant. A cron that deletes S3
+  objects on its own is a data-loss incident waiting to happen.
+
+### Container image
+
+The compose example above runs `dist/maintenance-runner.js`, so the
+production image must ship compiled JS, not TypeScript. Add a build
+step (`tsc`) to the Dockerfile and point the API entrypoint and the
+runner at the `dist/` output. `tsx` is a dev dependency: the runner
+works under it locally, the image uses the compiled version.
+
+### Scheduler caveats
+
+- **Cron format.** ofelia's cron starts with a seconds field. Write six
+  fields (`0 0 3 * * *`) so the schedule parses the same on every
+  version, and run `ofelia validate` on the configuration before
+  deploying.
+- **Docker socket.** `docker.sock:ro` does not restrict what the Docker
+  API accepts: a process holding the socket can start privileged
+  containers. Treat the ofelia container as root on the host. If that is
+  not acceptable, run the cycle from a host timer instead:
+  `docker compose run --rm sync-engine node dist/maintenance-runner.js`.
+- **Alerting.** Exit code 1 is only logged by the scheduler. Wire a
+  notification (an ofelia middleware) or a success ping to a monitoring
+  service (dead-man's switch), otherwise a broken purge goes unnoticed
+  for months.
+- **Trusted host.** In label mode, a container can define jobs on itself.
+  Run ofelia on a host that only runs trusted containers, keep the
+  version pinned at 0.29.1 or later (security release for this case),
+  and check in the ofelia README that `ofelia.enabled` restricts which
+  containers are read.
 ## Environment variables
 
 | Var | Required in prod |
