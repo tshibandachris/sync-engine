@@ -64,6 +64,7 @@ export interface MaintenanceTenantReport {
   orphanedKeysDeleted: number;
   orphanedKeysFailed: number;
   orphansFound: number;
+  /** Failed steps, as "step: message", joined by "; ". Absent when every step succeeded. */
   error?: string;
 }
 
@@ -88,6 +89,78 @@ export interface MaintenanceDeps {
   service?: MaintenanceServiceLike;
 }
 
+interface Ttls {
+  syncLogsTtlDays: number;
+  pendingAttachmentsTtlDays: number;
+  tombstonesTtlDays: number;
+}
+
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * Runs the five purge steps of one tenant. Each step is isolated: a failure is
+ * recorded as "step: message" and the next steps still run, so one broken step
+ * neither erases the counters already collected nor starves the later steps.
+ * The storage purge depends on the keys returned by the tombstone purge, so it
+ * only runs when that step succeeded.
+ */
+async function processTenant(
+  svc: MaintenanceServiceLike,
+  storage: AttachmentStorage,
+  tenantId: string,
+  ttls: Ttls,
+): Promise<MaintenanceTenantReport> {
+  const row: MaintenanceTenantReport = {
+    tenantId,
+    syncLogsDeleted: 0,
+    pendingAttachmentsDeleted: 0,
+    checkInsDeleted: 0,
+    missionsDeleted: 0,
+    sitesDeleted: 0,
+    orphanedKeysDeleted: 0,
+    orphanedKeysFailed: 0,
+    orphansFound: 0,
+  };
+  const failures: string[] = [];
+
+  const step = async <T>(name: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    try {
+      return await fn();
+    } catch (err) {
+      failures.push(name + ': ' + errorMessage(err));
+      return undefined;
+    }
+  };
+
+  const syncLogs = await step('syncLogs', () => svc.purgeSyncLogs(tenantId, ttls.syncLogsTtlDays));
+  if (syncLogs) row.syncLogsDeleted = syncLogs.logsDeleted;
+
+  const pending = await step('pendingAttachments', () =>
+    svc.purgeTenantPendingAttachments(tenantId, ttls.pendingAttachmentsTtlDays),
+  );
+  if (pending) row.pendingAttachmentsDeleted = pending.deleted;
+
+  const tombstones = await step('tombstones', () => svc.purgeTenantTombstones(tenantId, ttls.tombstonesTtlDays));
+  if (tombstones) {
+    row.checkInsDeleted = tombstones.checkInsDeleted;
+    row.missionsDeleted = tombstones.missionsDeleted;
+    row.sitesDeleted = tombstones.sitesDeleted;
+    const storagePurge = await step('storage', () => svc.purgeTenantStorage(storage, tombstones.orphanedObjectKeys));
+    if (storagePurge) {
+      row.orphanedKeysDeleted = storagePurge.deleted;
+      row.orphanedKeysFailed = storagePurge.failed;
+    }
+  }
+
+  // Always dry-run from the cron: real orphan deletion is an
+  // operator decision, reviewed against the dry-run report.
+  const scan = await step('orphanScan', () => svc.scanTenantOrphans(storage, tenantId, { dryRun: true }));
+  if (scan) row.orphansFound = scan.orphans.length;
+
+  if (failures.length > 0) row.error = failures.join('; ');
+  return row;
+}
+
 /**
  * Runs every per-tenant maintenance purge once.
  *
@@ -97,21 +170,27 @@ export interface MaintenanceDeps {
  * signal: the actual work runs on the pool, so holding it does not
  * serialize anything else.
  *
- * Per-tenant errors are isolated: one failing tenant does not stop the
- * others, and its error is recorded in the report. The caller decides
- * what exit code to use.
+ * Errors are isolated per step and per tenant: one failing step or tenant
+ * does not stop the others, and is recorded in the report. The caller
+ * decides what exit code to use.
+ *
+ * If the unlock fails, the lock connection is destroyed instead of being
+ * returned to the pool: closing the session frees the session-level lock.
  */
 export async function runMaintenanceCycle(
   deps: MaintenanceDeps,
   options: MaintenanceOptions = {},
 ): Promise<MaintenanceReport> {
-  const syncLogsTtlDays = options.syncLogsTtlDays ?? 30;
-  const pendingAttachmentsTtlDays = options.pendingAttachmentsTtlDays ?? 7;
-  const tombstonesTtlDays = options.tombstonesTtlDays ?? 30;
+  const ttls: Ttls = {
+    syncLogsTtlDays: options.syncLogsTtlDays ?? 30,
+    pendingAttachmentsTtlDays: options.pendingAttachmentsTtlDays ?? 7,
+    tombstonesTtlDays: options.tombstonesTtlDays ?? 30,
+  };
 
   const startedAt = Date.now();
   const svc = deps.service ?? new SyncMaintenanceService(deps.db);
 
+  let locked = false;
   const lockClient = await deps.pool.connect();
   try {
     const lockRes = await lockClient.query<{ ok: boolean }>(
@@ -129,73 +208,39 @@ export async function runMaintenanceCycle(
         perTenant: [],
       };
     }
+    locked = true;
 
-    try {
-      const tenantRows = await deps.db.execute(sql`SELECT id FROM tenants ORDER BY id`);
-      let tenantIds = tenantRows.rows.map((r) => String((r as Record<string, unknown>).id));
-      if (options.tenantFilter) {
-        const set = new Set(options.tenantFilter);
-        tenantIds = tenantIds.filter((t) => set.has(t));
-      }
-
-      const perTenant: MaintenanceTenantReport[] = [];
-      let succeeded = 0;
-      let failed = 0;
-
-      for (const tenantId of tenantIds) {
-        try {
-          const syncLogs = await svc.purgeSyncLogs(tenantId, syncLogsTtlDays);
-          const pending = await svc.purgeTenantPendingAttachments(tenantId, pendingAttachmentsTtlDays);
-          const tombstones = await svc.purgeTenantTombstones(tenantId, tombstonesTtlDays);
-          const storagePurge = await svc.purgeTenantStorage(deps.storage, tombstones.orphanedObjectKeys);
-          // Always dry-run from the cron: real orphan deletion is an
-          // operator decision, reviewed against the dry-run report.
-          const scan = await svc.scanTenantOrphans(deps.storage, tenantId, { dryRun: true });
-
-          perTenant.push({
-            tenantId,
-            syncLogsDeleted: syncLogs.logsDeleted,
-            pendingAttachmentsDeleted: pending.deleted,
-            checkInsDeleted: tombstones.checkInsDeleted,
-            missionsDeleted: tombstones.missionsDeleted,
-            sitesDeleted: tombstones.sitesDeleted,
-            orphanedKeysDeleted: storagePurge.deleted,
-            orphanedKeysFailed: storagePurge.failed,
-            orphansFound: scan.orphans.length,
-          });
-          succeeded += 1;
-        } catch (err) {
-          failed += 1;
-          perTenant.push({
-            tenantId,
-            syncLogsDeleted: 0,
-            pendingAttachmentsDeleted: 0,
-            checkInsDeleted: 0,
-            missionsDeleted: 0,
-            sitesDeleted: 0,
-            orphanedKeysDeleted: 0,
-            orphanedKeysFailed: 0,
-            orphansFound: 0,
-            error: (err as Error).message,
-          });
-        }
-      }
-
-      return {
-        startedAt,
-        finishedAt: Date.now(),
-        tenantsProcessed: tenantIds.length,
-        tenantsSucceeded: succeeded,
-        tenantsFailed: failed,
-        skipped: false,
-        perTenant,
-      };
-    } finally {
-      await lockClient
-        .query('SELECT pg_advisory_unlock($1::bigint)', [MAINTENANCE_LOCK_KEY])
-        .catch(() => undefined);
+    const tenantRows = await deps.db.execute(sql`SELECT id FROM tenants ORDER BY id`);
+    let tenantIds = tenantRows.rows.map((r) => String((r as Record<string, unknown>).id));
+    if (options.tenantFilter) {
+      const set = new Set(options.tenantFilter);
+      tenantIds = tenantIds.filter((t) => set.has(t));
     }
+
+    const perTenant: MaintenanceTenantReport[] = [];
+    for (const tenantId of tenantIds) {
+      perTenant.push(await processTenant(svc, deps.storage, tenantId, ttls));
+    }
+
+    const failed = perTenant.filter((r) => r.error !== undefined).length;
+    return {
+      startedAt,
+      finishedAt: Date.now(),
+      tenantsProcessed: tenantIds.length,
+      tenantsSucceeded: tenantIds.length - failed,
+      tenantsFailed: failed,
+      skipped: false,
+      perTenant,
+    };
   } finally {
-    lockClient.release();
+    let unlocked = !locked;
+    if (locked) {
+      unlocked = await lockClient
+        .query<{ ok: boolean }>('SELECT pg_advisory_unlock($1::bigint) AS ok', [MAINTENANCE_LOCK_KEY])
+        .then((r) => r.rows[0]?.ok === true)
+        .catch(() => false);
+    }
+    // release(true) destroys the connection, which frees the session-level lock.
+    lockClient.release(!unlocked);
   }
 }

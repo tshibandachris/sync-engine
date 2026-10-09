@@ -351,7 +351,70 @@ reachable through the normal API anymore. Only operations that touch
 external state (S3 objects, another service) or live rows carry the
 dry-run contract.
 
-## 8. Git conventions
+## 8. Fault tests in a separate file
+
+When a service chains several steps or can fail in several independent
+ways, keep two test files:
+
+- `<service>.spec.ts` — the nominal contract. What must work.
+- `<service>-faults.spec.ts` — the failure scenarios. One test per
+  error branch, with the injected cause and the expected effect.
+
+Reason: a file that mixes both makes it hard to tell whether a failing
+test is a functional regression or an old error branch that is no longer
+reachable. The `-faults` file has a clear contract: each test breaks if
+the error isolation disappears.
+
+See `test/maintenance-orchestrator-faults.spec.ts` for the reference
+implementation.
+
+### The fakeService pattern
+
+The `-faults` file replaces the real service with a fake that:
+
+1. **Traces every step it is called for**, in a shared array:
+
+       const calls: string[] = [];
+       const svc = fakeService(calls, {
+         purgeSyncLogs: async () => { throw new Error('db down'); },
+       });
+       // ...
+       expect(calls).toEqual(['pending', 'tombstones', 'storage', 'scan']);
+
+   The order of `calls` is direct proof that a failing step did not
+   block the following ones.
+
+2. **Returns distinguishable counters per step** (2, 3, 4, 5, 6 rather
+   than zeros). A zero is ambiguous: a step that did not run looks the
+   same as a step that ran and found nothing. A distinct number removes
+   the doubt.
+
+3. **Overrides one step at a time** through an `over` parameter:
+
+       fakeService(calls, {
+         purgeTenantPendingAttachments: async () => { throw new Error('...'); },
+       })
+
+   The default fake succeeds everywhere. A test that overrides one
+   branch isolates exactly that branch; the rest of the cycle must
+   still complete.
+
+### Fake pool for release branches
+
+When the branch under test is a resource release (pool `release`,
+advisory-lock unlock), the test can replace the entire pool with a
+minimal object that records the arguments passed to `release`:
+
+    function poolWithUnlock(unlockSucceeds: boolean) { ... }
+
+    const { pool, released } = poolWithUnlock(false);
+    await runMaintenanceCycle({ pool, ... });
+    expect(released).toEqual([true]); // the connection was destroyed
+
+This avoids touching a real pool for a branch that depends on a network
+failure that cannot be provoked otherwise.
+
+## 9. Git conventions
 
 ### Commit messages
 
@@ -382,7 +445,7 @@ mapping.
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### "Could not find a working container runtime strategy"
 
@@ -426,7 +489,7 @@ which is Vitest 2 syntax. On Vitest 4+, rewrite the pool options.
 
 ---
 
-## 9. Where to ask
+## 11. Where to ask
 
 - **Architecture or protocol questions**: read `HANDOFF.md` first, then
   the source file named in the roadmap.
@@ -442,7 +505,7 @@ ask. Two brains on a stuck problem beats one brain frustrated.
 
 ---
 
-## 10. Checklist before opening a PR
+## 12. Checklist before opening a PR
 
 - [ ] `npx tsc --noEmit` is silent.
 - [ ] `npx vitest run` reports no failure, no skip, no `it.only` left
