@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -38,3 +38,48 @@ jobs:
           name: test-logs
           path: '*.txt'
           if-no-files-found: ignore
+
+  docker-build:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: sync-engine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test: node runs in the image
+        run: docker run --rm sync-engine:ci node -e "console.log('node ok')"
+
+      # The container must refuse to start without DATABASE_URL: this
+      # proves the entrypoint (dist/main.js) is wired and reaches the
+      # boot guards. If the run exits 0, either the guard is gone or
+      # the entrypoint was replaced by something that swallows the
+      # error.
+      - name: Smoke test: the entrypoint reaches the boot guards
+        run: |
+          set +e
+          output=$(docker run --rm sync-engine:ci node dist/main.js 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ $status -eq 0 ]; then
+            echo "::error::expected a non-zero exit without DATABASE_URL"
+            exit 1
+          fi
+          if ! echo "$output" | grep -q "DATABASE_URL"; then
+            echo "::error::entrypoint did not reach the boot guards"
+            exit 1
+          fi
