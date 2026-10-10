@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
+import { assertMaintenanceRole } from './maintenance-role.js';
 import { S3AttachmentStorage } from './s3-attachment-storage.js';
 import {
   runMaintenanceCycle,
@@ -35,6 +36,11 @@ export async function bootstrapMaintenance(): Promise<number> {
     statement_timeout: Number(process.env.MAINTENANCE_STATEMENT_TIMEOUT_MS ?? 300_000),
   });
   pool.on('error', (err) => console.error('[maintenance] idle client error:', err));
+
+  // Refuse to run as a role that bypasses RLS. A superuser or BYPASSRLS
+  // role would make the purges touch every tenant without an error and
+  // without a trace.
+  await assertMaintenanceRole(pool);
 
   // Global deadline: a stuck run must end with exit code 1. Otherwise every later run
   // reports "skipped" (exit code 0) and the purge silently stops.
