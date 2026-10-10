@@ -18,3 +18,4 @@ backup/
 fix-*.cjs
 patch-*.cjs
 .env.prod
+seaweedfs/s3.json
