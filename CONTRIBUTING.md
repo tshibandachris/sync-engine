@@ -355,6 +355,12 @@ dry-run contract.
 
 When a service chains several steps or can fail in several independent
 ways, keep two test files:
+
+- `<service>-silent.spec.ts` — errors that return a value instead of
+  throwing, and must not count as success. Example:
+  `maintenance-orchestrator-silent.spec.ts` covers a scan aborted by the
+  ratio guard and S3 keys that failed to delete. Both paths return
+  cleanly; both must be recorded as failures in the report.
 - `<service>-silent.spec.ts` — errors that return a value instead of
   throwing, and must not count as success. Example:
   `maintenance-orchestrator-silent.spec.ts` covers a scan aborted by the
