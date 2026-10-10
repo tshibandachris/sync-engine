@@ -67,24 +67,40 @@ export function assertAuthStrategy(env: NodeJS.ProcessEnv): void {
   const isProd = env.NODE_ENV === 'production';
   const jwksUrl = env.JWKS_URL?.trim();
   const audience = env.JWT_AUDIENCE?.trim();
+  const allowSharedSecret = env.AUTH_ALLOW_SHARED_SECRET === 'true';
 
   if (isProd) {
-    if (!jwksUrl) {
-      throw new Error(
-        'Boot guard: JWKS_URL is required when NODE_ENV=production. ' +
-          'The app must not sign its own tokens in production; configure an IdP.',
-      );
+    if (jwksUrl) {
+      // IdP mode. The app never signs its own tokens; JWT_SECRET is unused.
+      if (!audience) {
+        throw new Error(
+          'Boot guard: JWT_AUDIENCE is required when NODE_ENV=production ' +
+            'and JWKS_URL is set.',
+        );
+      }
+      return;
     }
-    if (!audience) {
-      throw new Error(
-        'Boot guard: JWT_AUDIENCE is required when NODE_ENV=production.',
-      );
+
+    if (allowSharedSecret) {
+      // Shared-secret mode, opted in explicitly. The operator accepts
+      // that anyone holding JWT_SECRET can mint a token for any tenant.
+      // /auth/token remains closed: tokens are minted offline with
+      // scripts/mint-token.mjs.
+      assertStrongJwtSecret(env);
+      return;
     }
-    return;
+
+    throw new Error(
+      'Boot guard: no auth strategy for NODE_ENV=production. ' +
+        'Either set JWKS_URL (and JWT_AUDIENCE) to use an external IdP, ' +
+        'or set AUTH_ALLOW_SHARED_SECRET=true to opt in to shared-secret ' +
+        'mode. Shared-secret mode means JWT_SECRET alone grants access to ' +
+        'every tenant; use it only on a trusted network.',
+    );
   }
 
+  // Non-production: unchanged.
   if (!jwksUrl) {
-    // Non-production without an IdP: the local secret is the only way to mint.
     assertStrongJwtSecret(env);
   }
 }

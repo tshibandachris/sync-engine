@@ -87,6 +87,38 @@ describe('boot guards', () => {
     ).toThrow(/JWKS_URL/);
   });
 
+    it('accepts AUTH_ALLOW_SHARED_SECRET=true with a strong secret in production', () => {
+      expect(() =>
+        assertAuthStrategy({
+          NODE_ENV: 'production',
+          DATABASE_URL: 'postgres://localhost/db',
+          JWT_SECRET: 'a'.repeat(48),
+          AUTH_ALLOW_SHARED_SECRET: 'true',
+        } as NodeJS.ProcessEnv),
+      ).not.toThrow();
+    });
+
+    it('refuses AUTH_ALLOW_SHARED_SECRET=true without a strong secret', () => {
+      expect(() =>
+        assertAuthStrategy({
+          NODE_ENV: 'production',
+          DATABASE_URL: 'postgres://localhost/db',
+          JWT_SECRET: 'short',
+          AUTH_ALLOW_SHARED_SECRET: 'true',
+        } as NodeJS.ProcessEnv),
+      ).toThrow(/JWT_SECRET/);
+    });
+
+    it('refuses production with neither JWKS_URL nor AUTH_ALLOW_SHARED_SECRET', () => {
+      expect(() =>
+        assertAuthStrategy({
+          NODE_ENV: 'production',
+          DATABASE_URL: 'postgres://localhost/db',
+          JWT_SECRET: 'a'.repeat(48),
+        } as NodeJS.ProcessEnv),
+      ).toThrow(/JWKS_URL/);
+    });
+
   it('requires JWT_AUDIENCE in production when JWKS_URL is set', () => {
     expect(() =>
       assertAuthStrategy({
