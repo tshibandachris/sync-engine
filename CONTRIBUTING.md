@@ -356,10 +356,24 @@ dry-run contract.
 When a service chains several steps or can fail in several independent
 ways, keep two test files:
 
+- `<service>-silent.spec.ts` — errors that return a value instead of
+  throwing, and must not count as success. Example:
+  `maintenance-orchestrator-silent.spec.ts` covers a scan aborted by the
+  ratio guard and S3 keys that failed to delete. Both paths return
+  cleanly; both must be recorded as failures in the report.
+- `<service>-silent.spec.ts` — errors that return a value instead of
+  throwing, and must not count as success. Example:
+  `maintenance-orchestrator-silent.spec.ts` covers a scan aborted by the
+  ratio guard and S3 keys that failed to delete. Both paths return
+  cleanly; both must be recorded as failures in the report.
 - `<service>.spec.ts` — the nominal contract. What must work.
 - `<service>-faults.spec.ts` — the failure scenarios. One test per
   error branch, with the injected cause and the expected effect.
-
+- `<service>-silent.spec.ts` — errors that return a value instead of
+  throwing, and must not count as success. Example:
+  `maintenance-orchestrator-silent.spec.ts` covers a scan aborted by the
+  ratio guard and S3 keys that failed to delete. Both paths return
+  cleanly; both must be recorded as failures in the report.
 Reason: a file that mixes both makes it hard to tell whether a failing
 test is a functional regression or an old error branch that is no longer
 reachable. The `-faults` file has a clear contract: each test breaks if
