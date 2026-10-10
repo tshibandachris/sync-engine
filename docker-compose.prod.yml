@@ -1,0 +1,94 @@
+# Production Compose file for sync-engine on Docker Desktop.
+#
+# Differences from docker-compose.yml (local):
+#   - No build context: the image comes from the registry or is
+#     pre-built locally.
+#   - A one-shot 'migrate' service applies migrations/ before the app
+#     starts, then sets sync_app LOGIN with a real password. It runs
+#     once: subsequent 'up' calls short-circuit on a marker table.
+#   - The app connects as sync_app (not postgres), so RLS applies.
+#   - The db port is not published. Only the app reaches it, over the
+#     compose network.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# See HANDOFF.md, "Deploying to production", for the full procedure.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sync_engine
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sync_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      SYNC_APP_PASSWORD: ${SYNC_APP_PASSWORD:?}
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+    restart: "no"
+
+  sync-engine:
+    image: ${SYNC_ENGINE_IMAGE:-sync-engine:prod}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://sync_app:${SYNC_APP_PASSWORD:?}@db:5432/sync_engine
+            # Shared-secret mode: no external IdP. Opt in explicitly and
+      # accept the tradeoff (see HANDOFF.md, "Auth modes").
+      AUTH_ALLOW_SHARED_SECRET: "true"
+      JWT_SECRET: ${JWT_SECRET:?}
+      METRICS_PORT: 9464
+      OPS_METRICS_TOKEN: ${OPS_METRICS_TOKEN:?}
+      S3_BUCKET: ${S3_BUCKET:?}
+      S3_REGION: ${S3_REGION:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?}
+    ports:
+      - "3000:3000"
+      - "9464:9464"
+    labels:
+      ofelia.enabled: "true"
+      # Six fields: ofelia's cron starts with seconds.
+      ofelia.job-exec.maintenance.schedule: "0 0 3 * * *"
+      ofelia.job-exec.maintenance.command: "node dist/maintenance-runner.js"
+
+  ofelia:
+    image: ghcr.io/netresearch/ofelia:1.0.1
+    restart: unless-stopped
+    depends_on:
+      - sync-engine
+    # ofelia v1.0.x: docker is the default provider, the --docker
+    # flag was removed. 'daemon' alone reads job labels from the
+    # containers on this host.
+    command: daemon
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  pgdata:

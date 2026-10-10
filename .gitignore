@@ -17,3 +17,4 @@ backup/
 *.cjs
 fix-*.cjs
 patch-*.cjs
+.env.prod
