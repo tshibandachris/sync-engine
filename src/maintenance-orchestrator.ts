@@ -141,7 +141,7 @@ async function processTenant(
   if (pending) row.pendingAttachmentsDeleted = pending.deleted;
 
   const tombstones = await step('tombstones', () => svc.purgeTenantTombstones(tenantId, ttls.tombstonesTtlDays));
-  if (tombstones) {
+   if (tombstones) {
     row.checkInsDeleted = tombstones.checkInsDeleted;
     row.missionsDeleted = tombstones.missionsDeleted;
     row.sitesDeleted = tombstones.sitesDeleted;
@@ -149,14 +149,23 @@ async function processTenant(
     if (storagePurge) {
       row.orphanedKeysDeleted = storagePurge.deleted;
       row.orphanedKeysFailed = storagePurge.failed;
+      if (storagePurge.failed > 0) {
+        failures.push('storage: ' + storagePurge.failed + ' key(s) not deleted');
+      }
     }
   }
 
   // Always dry-run from the cron: real orphan deletion is an
   // operator decision, reviewed against the dry-run report.
-  const scan = await step('orphanScan', () => svc.scanTenantOrphans(storage, tenantId, { dryRun: true }));
-  if (scan) row.orphansFound = scan.orphans.length;
-
+   const scan = await step('orphanScan', () => svc.scanTenantOrphans(storage, tenantId, { dryRun: true }));
+  if (scan) {
+    row.orphansFound = scan.orphans.length;
+    if (scan.aborted) {
+      failures.push(
+        'orphanScan: aborted (' + (scan.abortReason ?? 'no reason given') + ')',
+      );
+    }
+  }
   if (failures.length > 0) row.error = failures.join('; ');
   return row;
 }
