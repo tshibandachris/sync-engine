@@ -22,6 +22,11 @@ export class S3AttachmentStorage implements AttachmentStorage {
       region: options.region ?? 'us-east-1',
       endpoint: options.endpoint,
       forcePathStyle: !!options.endpoint,
+      // Presigned browser PUTs cannot calculate the SDK's default CRC32
+      // checksum while signing an empty body. Only calculate checksums when
+      // the S3 operation explicitly requires one; the API separately validates
+      // the uploaded file's SHA-256 checksum during confirmation.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
       credentials: options.accessKeyId && options.secretAccessKey
         ? { accessKeyId: options.accessKeyId, secretAccessKey: options.secretAccessKey }
         : undefined,
