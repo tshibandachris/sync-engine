@@ -7,31 +7,64 @@ import type { AttachmentStorage, PresignedPut, PresignedGet, HeadResult } from '
 export interface S3StorageOptions {
   bucket: string;
   region?: string;
+  /** Internal endpoint for backend calls (head, delete, list). */
   endpoint?: string;
+  /**
+   * Public endpoint used to sign presigned URLs. Must be reachable by
+   * the clients that will actually PUT or GET. When omitted, falls back
+   * to `endpoint` — fine for tests and in-compose dev, broken for any
+   * client outside the compose network, because the host is part of the
+   * V4 signature and cannot be rewritten after the fact.
+   */
+  publicEndpoint?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
 }
 
 export class S3AttachmentStorage implements AttachmentStorage {
   private readonly client: S3Client;
+  private readonly signingClient: S3Client;
   private readonly bucket: string;
 
   constructor(options: S3StorageOptions) {
     this.bucket = options.bucket;
+    const credentials = options.accessKeyId && options.secretAccessKey
+      ? { accessKeyId: options.accessKeyId, secretAccessKey: options.secretAccessKey }
+      : undefined;
+
+    // Internal client: backend calls only (head, delete, list). Stays on
+    // the private network, no TLS, no egress.
     this.client = new S3Client({
       region: options.region ?? 'us-east-1',
       endpoint: options.endpoint,
       forcePathStyle: !!options.endpoint,
-      // Presigned browser PUTs cannot calculate the SDK's default CRC32
-      // checksum while signing an empty body. Only calculate checksums when
-      // the S3 operation explicitly requires one; the API separately validates
-      // the uploaded file's SHA-256 checksum during confirmation.
       requestChecksumCalculation: 'WHEN_REQUIRED',
-      credentials: options.accessKeyId && options.secretAccessKey
-        ? { accessKeyId: options.accessKeyId, secretAccessKey: options.secretAccessKey }
-        : undefined,
       responseChecksumValidation: 'WHEN_REQUIRED',
+      credentials,
     });
+
+    // Signing client: presigned URLs only. Same credentials, same bucket,
+    // different endpoint. The Host header is part of the V4 signature, so
+    // a URL signed against the internal host cannot be rewritten to a
+    // public one afterwards. When no public endpoint is configured, we
+    // sign with the internal one — acceptable for tests, and for
+    // clients that reach SeaweedFS through the compose network (none, in
+    // production).
+    this.signingClient = options.publicEndpoint
+      ? new S3Client({
+          region: options.region ?? 'us-east-1',
+          endpoint: options.publicEndpoint,
+          forcePathStyle: true,
+          // Same checksum policy as the internal client. Without these,
+          // the SDK falls back to its default (compute a CRC32 for
+          // PutObject), signs the checksum headers, and SeaweedFS
+          // rejects the PUT with SignatureDoesNotMatch because the
+          // client does not send those headers.
+          requestChecksumCalculation: 'WHEN_REQUIRED',
+          responseChecksumValidation: 'WHEN_REQUIRED',
+          credentials,
+        })
+      : this.client;
   }
 
   async presignPut(objectKey: string, contentType: string, expiresIn: number): Promise<PresignedPut> {
@@ -55,7 +88,7 @@ export class S3AttachmentStorage implements AttachmentStorage {
     // param, not a header. unhoistableHeaders is the option that
     // actually prevents the SDK from moving the checksum header into
     // the query string.
-    const url = await getSignedUrl(this.client, command, {
+    const url = await getSignedUrl(this.signingClient, command, {
       expiresIn,
       unhoistableHeaders: new Set([
         'x-amz-checksum-crc32',
@@ -70,7 +103,7 @@ export class S3AttachmentStorage implements AttachmentStorage {
       Bucket: this.bucket,
       Key: objectKey,
     });
-    const url = await getSignedUrl(this.client, command, { expiresIn });
+    const url = await getSignedUrl(this.signingClient, command, { expiresIn });
     return { url, expiresIn };
   }
 

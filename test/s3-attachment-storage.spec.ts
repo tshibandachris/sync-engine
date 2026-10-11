@@ -25,3 +25,43 @@ describe('S3AttachmentStorage', () => {
     expect(signedHeaders.toLowerCase()).not.toContain('checksum');
   });
 });
+describe('S3AttachmentStorage public endpoint', () => {
+  it('signs presigned PUTs with publicEndpoint when provided', async () => {
+    const storage = new S3AttachmentStorage({
+      bucket: 'test-bucket',
+      region: 'us-east-1',
+      endpoint: 'http://internal.s3.test:8333',
+      publicEndpoint: 'https://s3.public.test',
+      accessKeyId: 'AKIAEXAMPLEEXAMPLE',
+      secretAccessKey: 'exampleexampleexampleexampleexample12',
+    });
+    const { url } = await storage.presignPut('k', 'image/jpeg', 300);
+    expect(new URL(url).host).toBe('s3.public.test');
+    expect(new URL(url).protocol).toBe('https:');
+  });
+
+  it('signs presigned GETs with publicEndpoint when provided', async () => {
+    const storage = new S3AttachmentStorage({
+      bucket: 'test-bucket',
+      region: 'us-east-1',
+      endpoint: 'http://internal.s3.test:8333',
+      publicEndpoint: 'https://s3.public.test',
+      accessKeyId: 'AKIAEXAMPLEEXAMPLE',
+      secretAccessKey: 'exampleexampleexampleexampleexample12',
+    });
+    const { url } = await storage.presignGet('k', 300);
+    expect(new URL(url).host).toBe('s3.public.test');
+  });
+
+  it('falls back to endpoint when publicEndpoint is omitted', async () => {
+    const storage = new S3AttachmentStorage({
+      bucket: 'test-bucket',
+      region: 'us-east-1',
+      endpoint: 'http://internal.s3.test:8333',
+      accessKeyId: 'AKIAEXAMPLEEXAMPLE',
+      secretAccessKey: 'exampleexampleexampleexampleexample12',
+    });
+    const { url } = await storage.presignPut('k', 'image/jpeg', 300);
+    expect(new URL(url).host).toBe('internal.s3.test:8333');
+  });
+});
