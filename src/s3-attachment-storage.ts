@@ -39,7 +39,25 @@ export class S3AttachmentStorage implements AttachmentStorage {
       Key: objectKey,
       ContentType: contentType,
     });
-    const url = await getSignedUrl(this.client, command, { expiresIn });
+
+    // AWS SDK v3 >= 3.729.0 attaches a flexible checksum (CRC32 by
+    // default) to PutObject. The presigner hoists it into the query
+    // string as x-amz-checksum-crc32=AAAAAA== — the CRC32 of an empty
+    // body, because there is no body at signing time. A client that
+    // then PUTs real bytes gets BadDigest from S3-compatible stores
+    // that enforce the checksum (SeaweedFS, Wasabi, Cloudflare R2).
+    //
+    // requestChecksumCalculation: 'WHEN_REQUIRED' on the client does
+    // not cover this path, and unsignableHeaders only affects headers,
+    // not query params. unhoistableHeaders is the option that actually
+    // prevents the SDK from moving the checksum header into the query.
+    const url = await getSignedUrl(this.client, command, {
+      expiresIn,
+      unhoistableHeaders: new Set([
+        'x-amz-checksum-crc32',
+        'x-amz-sdk-checksum-algorithm',
+      ]),
+    });
     return { url, expiresIn };
   }
 
@@ -63,8 +81,22 @@ export class S3AttachmentStorage implements AttachmentStorage {
         sizeBytes: res.ContentLength,
         contentType: res.ContentType,
       };
-    } catch {
-      return { exists: false };
+    } catch (error: unknown) {
+      const e = error as {
+        name?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+      if (
+        e.name === 'NotFound' ||
+        e.name === 'NoSuchKey' ||
+        e.$metadata?.httpStatusCode === 404
+      ) {
+        return { exists: false };
+      }
+      // Any other failure (auth, network, 5xx, throttling) is a real
+      // outage, not an absence. Rethrow so the purge does not silently
+      // treat a live object as missing and skip its cleanup.
+      throw error;
     }
   }
 
