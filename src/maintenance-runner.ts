@@ -50,6 +50,10 @@ export async function bootstrapMaintenance(): Promise<number> {
     bucket,
     region: process.env.S3_REGION,
     endpoint: process.env.S3_ENDPOINT,
+    // Public host used to sign presigned URLs. Must be reachable by the
+    // client that will PUT or GET. When unset, falls back to S3_ENDPOINT
+    // (only useful inside the compose network). See HANDOFF.md.
+    publicEndpoint: process.env.S3_PUBLIC_ENDPOINT,
     accessKeyId: process.env.S3_ACCESS_KEY_ID,
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
   });
