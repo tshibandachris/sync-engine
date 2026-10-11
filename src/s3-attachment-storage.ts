@@ -25,6 +25,13 @@ export class S3AttachmentStorage implements AttachmentStorage {
       credentials: options.accessKeyId && options.secretAccessKey
         ? { accessKeyId: options.accessKeyId, secretAccessKey: options.secretAccessKey }
         : undefined,
+      // AWS SDK v3 >= 3.729.0 attaches a CRC32 checksum to PutObject by
+      // default. For direct operations (head, delete, list) this option
+      // stops the SDK from computing one. It does NOT cover the
+      // presigner: that path has its own middleware. The fix for
+      // presigned URLs lives in presignPut, using unhoistableHeaders.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
 
@@ -34,7 +41,28 @@ export class S3AttachmentStorage implements AttachmentStorage {
       Key: objectKey,
       ContentType: contentType,
     });
-    const url = await getSignedUrl(this.client, command, { expiresIn });
+
+    // AWS SDK v3 >= 3.729.0 attaches a flexible checksum (CRC32 by
+    // default) to PutObject. The presigner hoists the checksum into the
+    // query string as x-amz-checksum-crc32=AAAAAA== — the CRC32 of an
+    // empty body, because there is no body at signing time. A client
+    // that then PUTs real bytes gets BadDigest from S3-compatible
+    // stores that enforce the checksum (SeaweedFS, Wasabi, Cloudflare
+    // R2).
+    //
+    // Neither requestChecksumCalculation: 'WHEN_REQUIRED' on the client
+    // nor unsignableHeaders on getSignedUrl covers this path. The
+    // presigner has its own middleware, and the checksum is a query
+    // param, not a header. unhoistableHeaders is the option that
+    // actually prevents the SDK from moving the checksum header into
+    // the query string.
+    const url = await getSignedUrl(this.client, command, {
+      expiresIn,
+      unhoistableHeaders: new Set([
+        'x-amz-checksum-crc32',
+        'x-amz-sdk-checksum-algorithm',
+      ]),
+    });
     return { url, expiresIn };
   }
 
@@ -49,17 +77,36 @@ export class S3AttachmentStorage implements AttachmentStorage {
 
   async head(objectKey: string): Promise<HeadResult> {
     try {
-      const res = await this.client.send(new HeadObjectCommand({
-        Bucket: this.bucket,
-        Key: objectKey,
-      }));
+      const res = await this.client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: objectKey,
+        }),
+      );
+
       return {
         exists: true,
         sizeBytes: res.ContentLength,
         contentType: res.ContentType,
       };
-    } catch {
-      return { exists: false };
+    } catch (error: unknown) {
+      const e = error as {
+        name?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+
+      if (
+        e.name === 'NotFound' ||
+        e.name === 'NoSuchKey' ||
+        e.$metadata?.httpStatusCode === 404
+      ) {
+        return { exists: false };
+      }
+
+      // Any other failure (auth, network, 5xx, throttling) is a real
+      // outage, not an absence. Rethrow so the caller does not silently
+      // treat a live object as missing and skip its cleanup.
+      throw error;
     }
   }
 
