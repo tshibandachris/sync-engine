@@ -30,12 +30,6 @@ export class S3AttachmentStorage implements AttachmentStorage {
       credentials: options.accessKeyId && options.secretAccessKey
         ? { accessKeyId: options.accessKeyId, secretAccessKey: options.secretAccessKey }
         : undefined,
-      // AWS SDK v3 >= 3.729.0 attaches a CRC32 checksum to PutObject by
-      // default. For direct operations (head, delete, list) this option
-      // stops the SDK from computing one. It does NOT cover the
-      // presigner: that path has its own middleware. The fix for
-      // presigned URLs lives in presignPut, using unhoistableHeaders.
-      requestChecksumCalculation: 'WHEN_REQUIRED',
       responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
