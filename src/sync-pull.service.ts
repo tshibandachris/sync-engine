@@ -41,7 +41,7 @@ export interface SyncSitePayload {
 }
 
 interface SyncEventRow {
-  entity_type: 'check_in' | 'mission' | 'site' | 'product';
+  entity_type: 'check_in' | 'mission' | 'site' | 'product' | 'staff';
 
   id: string;
 
@@ -80,6 +80,7 @@ interface SyncEventRow {
   sync_seq: number;
   sku: string | null; barcode: string | null; category: string | null;
   price: number | null; cost: number | null; stock_alert: number | null; is_active: boolean | null;
+  staff_role: string | null;
 }
 
 export class SyncPullService {
@@ -209,6 +210,26 @@ export class SyncPullService {
         FROM products p
         WHERE p.tenant_id = ${tenantId}::uuid
           AND p.sync_seq > ${sinceSeq}
+
+        UNION ALL
+
+        -- Safe staff projection: credential/authentication columns are deliberately excluded.
+        SELECT
+          'staff'::text AS entity_type,
+          st.id,
+          st.created_at,
+          st.updated_at,
+          st.deleted_at,
+          st.first_sync_seq,
+          st.sync_seq,
+          jsonb_build_object(
+            'name', st.display_name,
+            'staff_role', st.role,
+            'is_active', st.is_active
+          ) AS payload
+        FROM staff st
+        WHERE st.tenant_id = ${tenantId}::uuid
+          AND st.sync_seq > ${sinceSeq}
       )
 
       SELECT
@@ -308,6 +329,7 @@ export class SyncPullService {
           const v = value('is_active');
           return v === null ? null : Boolean(v);
         })(),
+        staff_role: nullableString('staff_role'),
       };
     });
 
@@ -336,6 +358,7 @@ export class SyncPullService {
         deleted: [] as string[],
       },
       products: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
+      staff: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
     };
 
     for (const row of consumedRows) {
@@ -348,11 +371,22 @@ export class SyncPullService {
         }
         else if (row.entity_type === 'site') {
           changes.sites.deleted.push(row.id);
-        } else {
+        } else if (row.entity_type === 'product') {
           changes.products.deleted.push({
             id: row.id, name: row.name!, sku: row.sku, barcode: row.barcode, category: row.category,
             price: row.price!, cost: row.cost, stockAlert: row.stock_alert!, isActive: row.is_active!,
             createdAt: row.created_at!, updatedAt: row.updated_at!, deletedAt: row.deleted_at,
+            lastKnownSyncSeq: row.sync_seq,
+          });
+        } else {
+          changes.staff.deleted.push({
+            id: row.id,
+            displayName: row.name!,
+            role: row.staff_role!,
+            isActive: row.is_active!,
+            createdAt: row.created_at!,
+            updatedAt: row.updated_at!,
+            deletedAt: row.deleted_at,
             lastKnownSyncSeq: row.sync_seq,
           });
         }
@@ -413,6 +447,25 @@ export class SyncPullService {
         };
         if (row.first_sync_seq !== null && row.first_sync_seq > sinceSeq) changes.products.created.push(payload);
         else changes.products.updated.push(payload);
+        continue;
+      }
+
+      if (row.entity_type === 'staff') {
+        const payload = {
+          id: row.id,
+          displayName: row.name!,
+          role: row.staff_role!,
+          isActive: row.is_active!,
+          createdAt: row.created_at!,
+          updatedAt: row.updated_at!,
+          deletedAt: row.deleted_at,
+          lastKnownSyncSeq: row.sync_seq,
+        };
+        if (row.first_sync_seq !== null && row.first_sync_seq > sinceSeq) {
+          changes.staff.created.push(payload);
+        } else {
+          changes.staff.updated.push(payload);
+        }
         continue;
       }
 
