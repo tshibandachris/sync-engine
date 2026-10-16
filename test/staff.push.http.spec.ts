@@ -206,6 +206,6 @@ describe('Staff push / PIN boundary and owner invariant', () => {
       .send({ changes: { staff: [payload({ unexpectedField: 'nope' })] } });
 
     expect(response.status).toBe(400);
-    expect(response.text).toContain('Unknown staff field "unexpectedField" is not allowed through sync');
+    expect(response.body.message).toContain('Unknown staff field "unexpectedField" is not allowed through sync');
   });
 });
