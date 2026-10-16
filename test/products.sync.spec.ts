@@ -100,6 +100,55 @@ describe('Products sync / integration', () => {
     expect(afterTwo.changes.products.created.map((p: any) => p.id)).toEqual([p3.id]);
   });
 
+  it('rejects server-owned and unknown fields instead of silently stripping them', async () => {
+    for (const forbidden of ['tenant_id', 'sync_seq', 'first_sync_seq', 'updatedAt', 'updated_at']) {
+      const p = product({ [forbidden]: forbidden === 'tenant_id' ? tenantB : 123 });
+      const res = await sendProduct(p);
+      expect(res.products?.[0].status, forbidden).toBe('invalid');
+      const row = await pg.pool.query('SELECT id FROM products WHERE id = $1', [p.id]);
+      expect(row.rows).toHaveLength(0);
+    }
+  });
+
+  it('supports a two-device offline round trip through the shared cursor', async () => {
+    // Device A creates three products while offline, then pushes them.
+    const p1 = product({ name: 'Device A - 1' });
+    const p2 = product({ name: 'Device A - 2' });
+    const p3 = product({ name: 'Device A - 3' });
+    const a1 = await sendProduct(p1);
+    await sendProduct(p2);
+    await sendProduct(p3);
+    const deviceACursor = Number((await pull.pullChanges({
+      agentId, tenantId: tenantA, lastPulledAt: 0, limit: 100,
+    })).timestamp);
+
+    // Device B pulls the same stream and edits the second product at its known version.
+    const deviceBInitial = await pull.pullChanges({
+      agentId, tenantId: tenantA, lastPulledAt: 0, limit: 100,
+    });
+    const pulledP2 = deviceBInitial.changes.products.created.find((p: any) => p.id === p2.id);
+    expect(pulledP2).toBeDefined();
+    const bUpdate = await sendProduct({
+      ...p2,
+      name: 'Device B edited product',
+      price: 2750,
+      lastKnownSyncSeq: Number(pulledP2.lastKnownSyncSeq),
+    });
+    expect(bUpdate.products?.[0].status).toBe('applied');
+
+    // Device A resumes from its previous cursor and observes B's update.
+    const deviceAResume = await pull.pullChanges({
+      agentId, tenantId: tenantA, lastPulledAt: deviceACursor, limit: 100,
+    });
+    const updatedP2 = deviceAResume.changes.products.updated.find((p: any) => p.id === p2.id);
+    expect(updatedP2).toBeDefined();
+    expect(updatedP2.name).toBe('Device B edited product');
+    expect(updatedP2.price).toBe(2750);
+    expect(Number(deviceAResume.timestamp)).toBeGreaterThan(deviceACursor);
+    expect(a1.products?.[0].status).toBe('applied');
+    expect(deviceAResume.has_more).toBe(false);
+  });
+
   it('keeps a valid check-in when a product in the same push is invalid', async () => {
     const siteId = randomUUID(), missionId = randomUUID(), checkInId = randomUUID();
     await pg.pool.query(

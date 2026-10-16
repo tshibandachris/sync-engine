@@ -2,9 +2,11 @@
 -- POS domain: tenant-scoped product catalog.
 -- IDs may be supplied by offline clients; gen_random_uuid() is only a fallback.
 -- The shared sync sequence and trigger keep this table on the existing incremental-sync protocol.
--- updated_at is server-authored by set_sync_fields() on every INSERT/UPDATE;
--- client-supplied updated_at is intentionally ignored. created_at is retained
--- from the client on initial INSERT when supplied (offline creation time), while
+-- Clock contract: set_sync_fields() overwrites client updated_at on every
+-- INSERT/UPDATE with the server's millisecond timestamp (now_ms). Clients must
+-- not send updatedAt/updated_at in product pushes; the strict runtime schema
+-- rejects it. created_at is different: the client may provide createdAt on the
+-- initial INSERT to preserve offline creation time; NULL falls back to now_ms.
 -- sync_seq remains the authoritative change-order cursor. Store business event
 -- timestamps in dedicated columns instead of overloading updated_at.
 

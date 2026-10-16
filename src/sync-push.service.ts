@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import { requireTenantId } from './tenant-id.js';
+import { productUpsertSchema, type ProductUpsert } from './pos/schemas/product.schema.js';
 
 export type CheckInMethod = 'GPS' | 'QR_CODE' | 'MANUAL';
 
@@ -29,12 +30,6 @@ export interface UpdateCheckIn {
   check_in_method?: CheckInMethod;
 }
 
-export interface ProductUpsert {
-  id: string; name: string; sku?: string | null; barcode?: string | null;
-  category?: string | null; price: number; cost?: number | null;
-  stockAlert?: number; isActive?: boolean; createdAt?: number;
-  deletedAt?: number | null; lastKnownSyncSeq: number;
-}
 export interface ProductPushResult {
   entity_id: string; status: 'applied' | 'idempotent' | 'conflict' | 'invalid';
   sync_seq?: number; errors?: string[];
@@ -76,25 +71,6 @@ const EMPTY_RESPONSE: PushResponse = {
   applied: { created: 0, updated: 0, deleted: 0 },
   conflicts: [],
 };
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const optionalText = (value: unknown, max: number) => value === undefined || value === null || (typeof value === 'string' && value.length <= max);
-function validateProduct(p: ProductUpsert): string[] {
-  const errors: string[] = [];
-  if (!p || typeof p !== 'object') return ['payload doit être un objet'];
-  if (typeof p.id !== 'string' || !UUID_RE.test(p.id)) errors.push('id doit être un UUID valide');
-  if (typeof p.name !== 'string' || p.name.trim().length < 1 || p.name.length > 200) errors.push('name doit contenir entre 1 et 200 caractères');
-  if (!optionalText(p.sku, 64)) errors.push('sku doit contenir au plus 64 caractères');
-  if (!optionalText(p.barcode, 64)) errors.push('barcode doit contenir au plus 64 caractères');
-  if (!optionalText(p.category, 80)) errors.push('category doit contenir au plus 80 caractères');
-  if (!Number.isSafeInteger(p.price) || p.price < 0) errors.push('price doit être un entier positif ou nul');
-  if (!(p.cost === undefined || p.cost === null || (Number.isSafeInteger(p.cost) && p.cost >= 0))) errors.push('cost doit être un entier positif ou nul');
-  if (!(p.stockAlert === undefined || (Number.isSafeInteger(p.stockAlert) && p.stockAlert >= 0))) errors.push('stockAlert doit être un entier positif ou nul');
-  if (!(p.isActive === undefined || typeof p.isActive === 'boolean')) errors.push('isActive doit être booléen');
-  if (!(p.createdAt === undefined || (Number.isSafeInteger(p.createdAt) && p.createdAt >= 0))) errors.push('createdAt doit être un timestamp entier positif ou nul');
-  if (!(p.deletedAt === undefined || p.deletedAt === null || (Number.isSafeInteger(p.deletedAt) && p.deletedAt >= 0))) errors.push('deletedAt doit être null ou un timestamp entier positif ou nul');
-  if (!Number.isSafeInteger(p.lastKnownSyncSeq) || p.lastKnownSyncSeq < 0) errors.push('lastKnownSyncSeq doit être un entier positif ou nul');
-  return errors;
-}
 function productFields(p: ProductUpsert) {
   return { name: p.name.trim(), sku: p.sku ?? null, barcode: p.barcode ?? null,
     category: p.category ?? null, price: p.price, cost: p.cost ?? null,
@@ -120,13 +96,23 @@ export class SyncPushService {
     const checkIns = dto.changes.check_ins ?? {};
     const productResults: ProductPushResult[] = [];
     const rawProducts: unknown = dto.changes.products ?? [];
-    const incomingProducts: ProductUpsert[] = Array.isArray(rawProducts) ? rawProducts as ProductUpsert[] : [];
+    const incomingProducts: unknown[] = Array.isArray(rawProducts) ? rawProducts : [];
     if (!Array.isArray(rawProducts)) productResults.push({ entity_id: '', status: 'invalid', errors: ['changes.products doit être un tableau'] });
     const validProducts: ProductUpsert[] = [];
     for (const item of incomingProducts) {
-      const errors = validateProduct(item);
-      if (errors.length) productResults.push({ entity_id: typeof item?.id === 'string' ? item.id : '', status: 'invalid', errors });
-      else validProducts.push(item);
+      const parsed = productUpsertSchema.safeParse(item);
+      if (!parsed.success) {
+        const entityId = item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' ? item.id : '';
+        productResults.push({
+          entity_id: entityId,
+          status: 'invalid',
+          errors: parsed.error.issues.map((issue) =>
+            `${issue.path.length ? issue.path.join('.') : 'payload'}: ${issue.message}`,
+          ),
+        });
+      } else {
+        validProducts.push(parsed.data);
+      }
     }
 
     const created = checkIns.created ?? [];
