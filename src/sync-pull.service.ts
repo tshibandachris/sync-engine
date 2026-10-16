@@ -404,6 +404,7 @@ export class SyncPullService {
       },
       products: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
       staff: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
+      cash_sessions: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as string[] },
     };
 
     for (const row of consumedRows) {
