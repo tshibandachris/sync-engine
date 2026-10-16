@@ -655,20 +655,15 @@ export class SyncPushService {
           throw new ConflictException('La clôture doit passer par POST /cash-sessions/:id/close.');
         }
 
-        const onlyNotes = item.staffId === undefined && item.terminalLabel === undefined &&
-          item.openedAt === undefined && item.openingAmount === undefined;
-        if (row.status === 'closed' && !onlyNotes) {
-          throw new ConflictException('Une session closed ne peut être modifiée que pour ses notes.');
-        }
-        if (!onlyNotes) {
-          const fieldsMatch =
-            (item.staffId === undefined || String(row.staff_id) === item.staffId) &&
-            (item.terminalLabel === undefined || (row.terminal_label ?? null) === item.terminalLabel) &&
-            (item.openedAt === undefined || Number(row.opened_at) === item.openedAt) &&
-            (item.openingAmount === undefined || Number(row.opening_amount) === item.openingAmount);
-          if (!fieldsMatch) {
-            throw new ConflictException('Les champs structurels d’une session sont immuables après création.');
-          }
+        const fieldsMatch =
+          (item.staffId === undefined || String(row.staff_id) === item.staffId) &&
+          (item.terminalLabel === undefined || (row.terminal_label ?? null) === item.terminalLabel) &&
+          (item.openedAt === undefined || Number(row.opened_at) === item.openedAt) &&
+          (item.openingAmount === undefined || Number(row.opening_amount) === item.openingAmount);
+        if (!fieldsMatch) {
+          throw new ConflictException(row.status === 'closed'
+            ? 'Une session closed ne peut être modifiée que pour ses notes.'
+            : 'Les champs structurels d’une session sont immuables après création.');
         }
         const notes = item.notes === undefined ? (row.notes === null ? null : String(row.notes)) : item.notes;
         if (currentSeq !== item.lastKnownSyncSeq) {
