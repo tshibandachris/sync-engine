@@ -132,7 +132,7 @@ describe('Products sync / integration', () => {
       ...p2,
       name: 'Device B edited product',
       price: 2750,
-      lastKnownSyncSeq: Number(pulledP2.lastKnownSyncSeq),
+      lastKnownSyncSeq: Number(pulledP2!.lastKnownSyncSeq),
     });
     expect(bUpdate.products?.[0].status).toBe('applied');
 
@@ -142,8 +142,8 @@ describe('Products sync / integration', () => {
     });
     const updatedP2 = deviceAResume.changes.products.updated.find((p: any) => p.id === p2.id);
     expect(updatedP2).toBeDefined();
-    expect(updatedP2.name).toBe('Device B edited product');
-    expect(updatedP2.price).toBe(2750);
+    expect(updatedP2!.name).toBe('Device B edited product');
+    expect(updatedP2!.price).toBe(2750);
     expect(Number(deviceAResume.timestamp)).toBeGreaterThan(deviceACursor);
     expect(a1.products?.[0].status).toBe('applied');
     expect(deviceAResume.has_more).toBe(false);
