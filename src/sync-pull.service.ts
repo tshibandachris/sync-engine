@@ -41,7 +41,7 @@ export interface SyncSitePayload {
 }
 
 interface SyncEventRow {
-  entity_type: 'check_in' | 'mission' | 'site' | 'product' | 'staff';
+  entity_type: 'check_in' | 'mission' | 'site' | 'product' | 'staff' | 'cash_session';
 
   id: string;
 
@@ -81,6 +81,16 @@ interface SyncEventRow {
   sku: string | null; barcode: string | null; category: string | null;
   price: number | null; cost: number | null; stock_alert: number | null; is_active: boolean | null;
   staff_role: string | null;
+  cash_staff_id: string | null;
+  terminal_label: string | null;
+  opened_at: number | null;
+  closed_at: number | null;
+  opening_amount: number | null;
+  closing_amount: number | null;
+  expected_amount: number | null;
+  difference: number | null;
+  session_status: string | null;
+  notes: string | null;
 }
 
 export class SyncPullService {
