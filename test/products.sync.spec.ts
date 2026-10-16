@@ -170,4 +170,24 @@ describe('Products sync / integration', () => {
     const checkIn = await pg.pool.query('SELECT id FROM check_ins WHERE id = $1', [checkInId]);
     expect(checkIn.rows).toHaveLength(1);
   });
+
+
+  it('uses an exclusive sync_seq cursor at seq - 1, seq, and seq + 1', async () => {
+    const p = product({ name: 'Cursor boundary product' });
+    const created = await sendProduct(p);
+    const seq = Number(created.products?.[0].sync_seq);
+    expect(seq).toBeGreaterThan(0);
+
+    const contains = (result: Awaited<ReturnType<SyncPullService['pullChanges']>>) =>
+      [...result.changes.products.created, ...result.changes.products.updated, ...result.changes.products.deleted]
+        .some((item: any) => item.id === p.id);
+
+    const before = await pull.pullChanges({ agentId, tenantId: tenantA, lastPulledAt: seq - 1, limit: 100 });
+    const exact = await pull.pullChanges({ agentId, tenantId: tenantA, lastPulledAt: seq, limit: 100 });
+    const after = await pull.pullChanges({ agentId, tenantId: tenantA, lastPulledAt: seq + 1, limit: 100 });
+
+    expect(contains(before)).toBe(true);
+    expect(contains(exact)).toBe(false);
+    expect(contains(after)).toBe(false);
+  });
 });

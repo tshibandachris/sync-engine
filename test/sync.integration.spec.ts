@@ -1104,4 +1104,54 @@ afterAll(async () => {
     const result = await maintenance.purge({ ttlIdempotencyDays: 0, ttlConflictsDays: 0 });
     expect(result.conflictsDeleted).toBe(3);
   });
+
+
+  it('uses an exclusive sync_seq cursor for check-ins, missions, and sites', async () => {
+    const checkInId = randomUUID();
+    await pushFor(agentA, {
+      changes: {
+        check_ins: {
+          created: [{
+            id: checkInId,
+            mission_id: missionA,
+            check_in_time: Date.now(),
+            check_in_lat: 1,
+            check_in_lng: 2,
+            check_in_method: 'GPS',
+          }],
+        },
+      },
+    });
+
+    const sequenceRows = await pool.query(
+      "SELECT 'check_in' AS entity, id, sync_seq FROM check_ins WHERE id = $1 " +
+      "UNION ALL SELECT 'mission' AS entity, id, sync_seq FROM missions WHERE id = $2 " +
+      "UNION ALL SELECT 'site' AS entity, id, sync_seq FROM sites WHERE id = $3",
+      [checkInId, missionA, siteA],
+    );
+
+    const includes = (result: Awaited<ReturnType<SyncPullService['pullChanges']>>, entity: string, id: string) => {
+      if (entity === 'check_in') {
+        return [...result.changes.check_ins.created, ...result.changes.check_ins.updated]
+          .some((item) => item.id === id) || result.changes.check_ins.deleted.includes(id);
+      }
+      if (entity === 'mission') {
+        return [...result.changes.missions.created, ...result.changes.missions.updated]
+          .some((item) => item.id === id) || result.changes.missions.deleted.includes(id);
+      }
+      return [...result.changes.sites.created, ...result.changes.sites.updated]
+        .some((item) => item.id === id) || result.changes.sites.deleted.includes(id);
+    };
+
+    for (const row of sequenceRows.rows) {
+      const seq = Number(row.sync_seq);
+      const before = await pull.pullChanges({ tenantId: TEST_TENANT_ID, agentId: agentA, lastPulledAt: seq - 1, limit: 500 });
+      const exact = await pull.pullChanges({ tenantId: TEST_TENANT_ID, agentId: agentA, lastPulledAt: seq, limit: 500 });
+      const after = await pull.pullChanges({ tenantId: TEST_TENANT_ID, agentId: agentA, lastPulledAt: seq + 1, limit: 500 });
+
+      expect(includes(before, row.entity, row.id)).toBe(true);
+      expect(includes(exact, row.entity, row.id)).toBe(false);
+      expect(includes(after, row.entity, row.id)).toBe(false);
+    }
+  });
 });
