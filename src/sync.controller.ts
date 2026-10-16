@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt.guard.js';
 import { SyncPullService } from './sync-pull.service.js';
 import { SyncPushService, type SyncPushDto } from './sync-push.service.js';
@@ -34,11 +34,20 @@ export class SyncController {
   }
 
   @Post('push')
-  async pushEndpoint(@Req() req: any, @Body() body: SyncPushDto) {
+  async pushEndpoint(@Req() req: any, @Body() body: SyncPushDto, @Res({ passthrough: true }) res: any) {
     if (!body || !body.changes) throw new BadRequestException('changes requis.');
     const raw = req.headers['idempotency-key'];
     const idempotencyKey = Array.isArray(raw) ? raw[0] : raw;
-    return this.push.pushChanges(req.agentId, body, idempotencyKey, req.tenantId);
+    const result = await this.push.pushChanges(req.agentId, body, idempotencyKey, req.tenantId);
+    const onlyCashSessionReplay =
+      Array.isArray(body.changes.cash_sessions) &&
+      body.changes.cash_sessions.length > 0 &&
+      result.cash_sessions?.length === body.changes.cash_sessions.length &&
+      result.cash_sessions.every((item) => item.status === 'idempotent') &&
+      result.applied.created === 0 && result.applied.updated === 0 && result.applied.deleted === 0 &&
+      result.conflicts.length === 0 && !result.products && !result.staff;
+    if (onlyCashSessionReplay) res.status(200);
+    return result;
   }
 
   @Get('conflicts')
