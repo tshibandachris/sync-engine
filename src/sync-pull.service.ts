@@ -118,7 +118,6 @@ export class SyncPullService {
           ci.sync_seq,
           jsonb_build_object(
             'mission_id', ci.mission_id,
-            'site_id', ci.site_id,
             'agent_id', ci.agent_id,
             'check_in_time', ci.check_in_time,
             'check_out_time', ci.check_out_time,
