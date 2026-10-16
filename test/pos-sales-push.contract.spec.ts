@@ -105,7 +105,7 @@ describe('POS sales push contract', () => {
   it('returns conflict for the same sale UUID with changed total', async () => {
     const item = sale();
     expect((await push([item])).body.results[0].status).toBe('applied');
-    const changed = { ...item, total: 2000, cash_amount: 2000 };
+    const changed = { ...item, total: 2000, cash_amount: 2000, lines: item.lines.map(l => ({ ...l, quantity: 2, subtotal: 2000 })) };
     const res = await push([changed]);
     expect(res.body.results[0].status).toBe('conflict');
     expect(Number((await pg.pool.query('SELECT total FROM sales WHERE id=$1', [item.id])).rows[0].total)).toBe(1000);
