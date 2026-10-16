@@ -240,6 +240,31 @@ export class SyncPullService {
         FROM staff st
         WHERE st.tenant_id = ${tenantId}::uuid
           AND st.sync_seq > ${sinceSeq}
+        UNION ALL
+
+        SELECT
+          'cash_session'::text AS entity_type,
+          cs.id,
+          cs.created_at,
+          cs.updated_at,
+          NULL::bigint AS deleted_at,
+          cs.first_sync_seq,
+          cs.sync_seq,
+          jsonb_build_object(
+            'cash_staff_id', cs.staff_id,
+            'terminal_label', cs.terminal_label,
+            'opened_at', cs.opened_at,
+            'closed_at', cs.closed_at,
+            'opening_amount', cs.opening_amount,
+            'closing_amount', cs.closing_amount,
+            'expected_amount', cs.expected_amount,
+            'difference', cs.difference,
+            'session_status', cs.status,
+            'notes', cs.notes
+          ) AS payload
+        FROM cash_sessions cs
+        WHERE cs.tenant_id = ${tenantId}::uuid
+          AND cs.sync_seq > ${sinceSeq}
       )
 
       SELECT
