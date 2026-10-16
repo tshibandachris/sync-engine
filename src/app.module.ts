@@ -8,6 +8,8 @@ import { SyncPushService } from './sync-push.service.js';
 import { SyncConflictService } from './sync-conflict.service.js';
 import { SyncMaintenanceService } from './sync-maintenance.service.js';
 import { SyncController } from './sync.controller.js';
+import { CashSessionController } from './cash-session.controller.js';
+import { CashSessionService } from './cash-session.service.js';
 import { AttachmentController } from './sync-attachment.controller.js';
 import { AttachmentService } from './sync-attachment.service.js';
 import type { AttachmentStorage } from './attachment-storage.js';
@@ -37,11 +39,12 @@ export class AppModule {
           signOptions: { expiresIn: jwtExpiresIn as any },
         }),
       ],
-      controllers: [SyncController, AuthController, AttachmentController],
+      controllers: [SyncController, AuthController, AttachmentController, CashSessionController],
       providers: [
         { provide: 'DRIZZLE_DB', useValue: db },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
+        { provide: CashSessionService, useFactory: (d: any) => new CashSessionService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncMaintenanceService, useFactory: (d: any) => new SyncMaintenanceService(d), inject: ['DRIZZLE_DB'] },
         { provide: ATTACHMENT_STORAGE, useValue: storage },
