@@ -126,7 +126,7 @@ describe('POS sales push contract', () => {
     expect(second.body.results[0].status).toBe('conflict');
     const bad = sale({ total: -800, cash_amount: -800, quantity: -1, is_void: true,
       voided_sale_id: original.id, void_reason: 'Incorrect amount' });
-    bad.lines[0].quantity = -1; bad.lines[0].subtotal = -1000;
+    bad.lines[0].quantity = -1; bad.lines[0].unit_price = 800; bad.lines[0].subtotal = -800;
     bad.stock_movements[0].movement_type = 'void'; bad.stock_movements[0].quantity_delta = 1;
     expect((await push([bad])).body.results[0].status).toBe('invalid');
     expect((await push([bad])).body.results[0].reason).toContain('void amounts do not mirror original sale');
