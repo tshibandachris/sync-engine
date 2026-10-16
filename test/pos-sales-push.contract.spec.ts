@@ -76,9 +76,9 @@ describe('POS sales push contract', () => {
     };
   }
 
-  async function push(sales: unknown[]) {
+  async function push(sales: unknown[], authToken = token) {
     return request(app.getHttpServer()).post('/sync/push')
-      .set('Authorization', 'Bearer ' + token).send({ changes: { sales } });
+      .set('Authorization', 'Bearer ' + authToken).send({ changes: { sales } });
   }
 
   it('commits valid sale while rolling back invalid sale independently', async () => {
@@ -110,6 +110,41 @@ describe('POS sales push contract', () => {
     const res = await push([changed]);
     expect(res.body.results[0].status).toBe('conflict');
     expect(Number((await pg.pool.query('SELECT total FROM sales WHERE id=$1', [item.id])).rows[0].total)).toBe(1000);
+  });
+
+  it('returns conflict when the same UUID is retried with a different sale number', async () => {
+    const item = sale();
+    expect((await push([item])).body.results[0].status).toBe('applied');
+    const changed = { ...item, sale_number: 'different-number' };
+    const res = await push([changed]);
+    expect(res.body.results[0].status).toBe('conflict');
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(1);
+    expect((await pg.pool.query('SELECT sale_number FROM sales WHERE id=$1', [item.id])).rows[0].sale_number).toBe(item.sale_number);
+  });
+
+  it('rejects a void from another tenant and inserts no cross-tenant reference', async () => {
+    const original = sale();
+    expect((await push([original])).body.results[0].status).toBe('applied');
+
+    const tenantB = randomUUID(), staffB = randomUUID(), productB = randomUUID(), sessionB = randomUUID();
+    await pg.pool.query('INSERT INTO tenants (id, first_seen_at) VALUES ($1, $2)', [tenantB, Date.now()]);
+    const now = Date.now();
+    await pg.pool.query("INSERT INTO staff (id,tenant_id,display_name,role,is_active,created_at,updated_at,sync_seq,first_sync_seq) VALUES ($1,$2,'Cashier B','cashier',true,$3,$3,0,0)", [staffB, tenantB, now]);
+    await pg.pool.query("INSERT INTO products (id,tenant_id,name,price,stock_alert,is_active,created_at,updated_at,sync_seq,first_sync_seq) VALUES ($1,$2,'Coffee B',1000,5,true,$3,$3,0,0)", [productB, tenantB, now]);
+    await pg.pool.query("INSERT INTO cash_sessions (id,tenant_id,staff_id,opened_at,opening_amount,status,created_at,updated_at,sync_seq,first_sync_seq) VALUES ($1,$2,$3,$4,10000,'open',$4,$4,0,0)", [sessionB, tenantB, staffB, now]);
+    const tokenB = signAgentToken(randomUUID(), createTestJwtService(), tenantB);
+    const voided = sale({ cash_session_id: sessionB, staff_id: staffB, total: -1000, cash_amount: -1000,
+      quantity: -1, is_void: true, voided_sale_id: original.id, void_reason: 'Cross tenant attempt' });
+    voided.lines[0].product_id = original.lines[0].product_id;
+    voided.lines[0].quantity = -1;
+    voided.lines[0].subtotal = -1000;
+    voided.stock_movements[0].product_id = original.lines[0].product_id;
+    voided.stock_movements[0].movement_type = 'void';
+    voided.stock_movements[0].quantity_delta = 1;
+    const res = await push([voided], tokenB);
+    expect(res.body.results[0].status).toBe('invalid');
+    expect(res.body.results[0].reason).toContain('original sale not found');
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE tenant_id=$1', [tenantB])).rows[0].count)).toBe(0);
   });
 
   it('validates exact void mirror and rejects a second void', async () => {
