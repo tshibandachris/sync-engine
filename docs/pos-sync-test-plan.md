@@ -35,6 +35,17 @@ Prove that the POS schema and sync engine preserve offline-created records acros
 - When the UI needs PIN setup state, staff pull may expose only `has_pin: boolean`; never expose the hash, algorithm, or auth subject. This is follow-up work, not part of the first push iteration.
 - Staff soft-delete/deactivation must return HTTP 409 if it would leave the tenant without an active owner.
 
+
+## Cash-session lifecycle boundary
+
+- Cash-session sync may create only `open` sessions. Push never sets close fields; if a client echoes pulled close fields, they must exactly match the server values and are never written back.
+- A session can transition from `open` to `closed` only through authenticated `POST /cash-sessions/:id/close`; reopening is always rejected.
+- The close endpoint calculates `expected_amount = opening_amount + SUM(sales.cash_amount)` on the server and derives `difference = closing_amount - expected_amount`; client-supplied calculations are ignored.
+- Closed sessions permit notes-only updates; changing structural fields is a conflict.
+- A collision on `idx_cash_sessions_one_open_per_staff` is HTTP 409 with a specific open-session message, not an idempotent retry.
+- A duplicate primary-key retry is returned as HTTP 200 idempotent when it is the only operation in the request.
+- Pull includes cash-session lifecycle state and close totals, but sync push never writes close totals.
+
 ## Gate 2 — Push/pull contract
 
 - [ ] Validate all POS entity names and payload schemas; reject unknown entities and malformed fields.

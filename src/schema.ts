@@ -58,6 +58,28 @@ export const products = pgTable('products', {
   firstSyncSeq: bigint('first_sync_seq', { mode: 'number' }).notNull(),
 });
 
+export const cashSessions = pgTable('cash_sessions', {
+  id: uuid('id').primaryKey(),
+  tenantId: uuid('tenant_id').notNull(),
+  staffId: uuid('staff_id').notNull(),
+  terminalLabel: varchar('terminal_label', { length: 40 }),
+  openedAt: bigint('opened_at', { mode: 'number' }).notNull(),
+  closedAt: bigint('closed_at', { mode: 'number' }),
+  openingAmount: integer('opening_amount').notNull(),
+  closingAmount: integer('closing_amount'),
+  expectedAmount: integer('expected_amount'),
+  difference: integer('difference'),
+  status: varchar('status', { length: 20 }).notNull().default('open'),
+  notes: varchar('notes', { length: 500 }),
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  syncSeq: bigint('sync_seq', { mode: 'number' }).notNull(),
+  firstSyncSeq: bigint('first_sync_seq', { mode: 'number' }).notNull(),
+});
+
+export type CashSession = typeof cashSessions.$inferSelect;
+export type NewCashSession = typeof cashSessions.$inferInsert;
+
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
 

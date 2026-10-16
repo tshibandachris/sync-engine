@@ -41,7 +41,7 @@ export interface SyncSitePayload {
 }
 
 interface SyncEventRow {
-  entity_type: 'check_in' | 'mission' | 'site' | 'product' | 'staff';
+  entity_type: 'check_in' | 'mission' | 'site' | 'product' | 'staff' | 'cash_session';
 
   id: string;
 
@@ -81,6 +81,16 @@ interface SyncEventRow {
   sku: string | null; barcode: string | null; category: string | null;
   price: number | null; cost: number | null; stock_alert: number | null; is_active: boolean | null;
   staff_role: string | null;
+  cash_staff_id: string | null;
+  terminal_label: string | null;
+  opened_at: number | null;
+  closed_at: number | null;
+  opening_amount: number | null;
+  closing_amount: number | null;
+  expected_amount: number | null;
+  difference: number | null;
+  session_status: string | null;
+  notes: string | null;
 }
 
 export class SyncPullService {
@@ -230,6 +240,31 @@ export class SyncPullService {
         FROM staff st
         WHERE st.tenant_id = ${tenantId}::uuid
           AND st.sync_seq > ${sinceSeq}
+        UNION ALL
+
+        SELECT
+          'cash_session'::text AS entity_type,
+          cs.id,
+          cs.created_at,
+          cs.updated_at,
+          NULL::bigint AS deleted_at,
+          cs.first_sync_seq,
+          cs.sync_seq,
+          jsonb_build_object(
+            'cash_staff_id', cs.staff_id,
+            'terminal_label', cs.terminal_label,
+            'opened_at', cs.opened_at,
+            'closed_at', cs.closed_at,
+            'opening_amount', cs.opening_amount,
+            'closing_amount', cs.closing_amount,
+            'expected_amount', cs.expected_amount,
+            'difference', cs.difference,
+            'session_status', cs.status,
+            'notes', cs.notes
+          ) AS payload
+        FROM cash_sessions cs
+        WHERE cs.tenant_id = ${tenantId}::uuid
+          AND cs.sync_seq > ${sinceSeq}
       )
 
       SELECT
@@ -330,6 +365,16 @@ export class SyncPullService {
           return v === null ? null : Boolean(v);
         })(),
         staff_role: nullableString('staff_role'),
+        cash_staff_id: nullableString('cash_staff_id'),
+        terminal_label: nullableString('terminal_label'),
+        opened_at: nullableNumber('opened_at'),
+        closed_at: nullableNumber('closed_at'),
+        opening_amount: nullableNumber('opening_amount'),
+        closing_amount: nullableNumber('closing_amount'),
+        expected_amount: nullableNumber('expected_amount'),
+        difference: nullableNumber('difference'),
+        session_status: nullableString('session_status'),
+        notes: nullableString('notes'),
       };
     });
 
@@ -359,6 +404,7 @@ export class SyncPullService {
       },
       products: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
       staff: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
+      cash_sessions: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as string[] },
     };
 
     for (const row of consumedRows) {
@@ -469,6 +515,30 @@ export class SyncPullService {
         continue;
       }
 
+      if (row.entity_type === 'cash_session') {
+        const payload = {
+          id: row.id,
+          staffId: row.cash_staff_id!,
+          terminalLabel: row.terminal_label,
+          openedAt: row.opened_at!,
+          closedAt: row.closed_at,
+          openingAmount: row.opening_amount!,
+          closingAmount: row.closing_amount,
+          expectedAmount: row.expected_amount,
+          difference: row.difference,
+          status: row.session_status!,
+          notes: row.notes,
+          createdAt: row.created_at!,
+          updatedAt: row.updated_at!,
+          lastKnownSyncSeq: row.sync_seq,
+        };
+        if (row.first_sync_seq !== null && row.first_sync_seq > sinceSeq) {
+          changes.cash_sessions.created.push(payload);
+        } else {
+          changes.cash_sessions.updated.push(payload);
+        }
+        continue;
+      }
       if (row.entity_type === 'site') {
         const payload: SyncSitePayload = {
           id: row.id,
