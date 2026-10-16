@@ -301,7 +301,6 @@ export class SyncPullService {
           const v = value('is_active');
           return v === null ? null : Boolean(v);
         })(),
-        staff_role: null,
       };
     });
 
