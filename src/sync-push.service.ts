@@ -620,6 +620,16 @@ export class SyncPushService {
               item.closingAmount != null || item.expectedAmount != null || item.difference != null) {
             throw new ConflictException('Une session ne peut pas être créée directement en état closed ni recevoir des montants de clôture via sync.');
           }
+          const openSession = await tx.execute(sql`
+            SELECT id FROM cash_sessions
+            WHERE tenant_id = ${tenantId}::uuid
+              AND staff_id = ${item.staffId}::uuid
+              AND status = 'open'
+            LIMIT 1
+          `);
+          if (openSession.rows.length > 0) {
+            throw new ConflictException('Ce caissier possède déjà une session de caisse ouverte.');
+          }
           const inserted = await tx.execute(sql`
             INSERT INTO cash_sessions
               (id, tenant_id, staff_id, terminal_label, opened_at, opening_amount,
