@@ -365,6 +365,16 @@ export class SyncPullService {
           return v === null ? null : Boolean(v);
         })(),
         staff_role: nullableString('staff_role'),
+        cash_staff_id: nullableString('cash_staff_id'),
+        terminal_label: nullableString('terminal_label'),
+        opened_at: nullableNumber('opened_at'),
+        closed_at: nullableNumber('closed_at'),
+        opening_amount: nullableNumber('opening_amount'),
+        closing_amount: nullableNumber('closing_amount'),
+        expected_amount: nullableNumber('expected_amount'),
+        difference: nullableNumber('difference'),
+        session_status: nullableString('session_status'),
+        notes: nullableString('notes'),
       };
     });
 
