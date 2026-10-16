@@ -105,34 +105,27 @@ export class SyncPullService {
     return withTenant(this.db, tenantId, async (tx) => {
     const result = await tx.execute(sql`
       WITH events AS (
-
+        -- The cursor and sequence metadata stay relational; entity-specific
+        -- fields live in one JSONB payload per event. Each branch uses an
+        -- explicit allowlist, and deleted rows use this exact same projection.
         SELECT
           'check_in'::text AS entity_type,
           ci.id,
-          ci.mission_id,
-          NULL::uuid AS site_id,
-          ci.agent_id,
-          NULL::text AS title,
-          NULL::text AS name,
-          NULL::double precision AS latitude,
-          NULL::double precision AS longitude,
-          ci.check_in_time,
-          ci.check_out_time,
-          ci.check_in_lat,
-          ci.check_in_lng,
-          ci.check_in_method,
           ci.created_at,
           ci.updated_at,
           ci.deleted_at,
           NULL::bigint AS first_sync_seq,
           ci.sync_seq,
-          NULL::text AS sku,
-          NULL::text AS barcode,
-          NULL::text AS category,
-          NULL::integer AS price,
-          NULL::integer AS cost,
-          NULL::integer AS stock_alert,
-          NULL::boolean AS is_active
+          jsonb_build_object(
+            'mission_id', ci.mission_id,
+            'site_id', ci.site_id,
+            'agent_id', ci.agent_id,
+            'check_in_time', ci.check_in_time,
+            'check_out_time', ci.check_out_time,
+            'check_in_lat', ci.check_in_lat,
+            'check_in_lng', ci.check_in_lng,
+            'check_in_method', ci.check_in_method
+          ) AS payload
         FROM check_ins ci
         WHERE ci.agent_id = ${agentId}
           AND ci.tenant_id = ${tenantId}::uuid
@@ -143,30 +136,16 @@ export class SyncPullService {
         SELECT
           'mission'::text AS entity_type,
           m.id,
-          NULL::uuid AS mission_id,
-          m.site_id,
-          m.agent_id,
-          m.title,
-          NULL::text AS name,
-          NULL::double precision AS latitude,
-          NULL::double precision AS longitude,
-          NULL::bigint AS check_in_time,
-          NULL::bigint AS check_out_time,
-          NULL::double precision AS check_in_lat,
-          NULL::double precision AS check_in_lng,
-          NULL::text AS check_in_method,
           m.created_at,
           m.updated_at,
           m.deleted_at,
           m.first_sync_seq,
           m.sync_seq,
-          NULL::text AS sku,
-          NULL::text AS barcode,
-          NULL::text AS category,
-          NULL::integer AS price,
-          NULL::integer AS cost,
-          NULL::integer AS stock_alert,
-          NULL::boolean AS is_active
+          jsonb_build_object(
+            'site_id', m.site_id,
+            'agent_id', m.agent_id,
+            'title', m.title
+          ) AS payload
         FROM missions m
         WHERE m.agent_id = ${agentId}
           AND m.tenant_id = ${tenantId}::uuid
@@ -177,30 +156,17 @@ export class SyncPullService {
         SELECT
           'site'::text AS entity_type,
           s.id,
-          NULL::uuid AS mission_id,
-          s.id AS site_id,
-          NULL::uuid AS agent_id,
-          NULL::text AS title,
-          s.name,
-          s.latitude,
-          s.longitude,
-          NULL::bigint AS check_in_time,
-          NULL::bigint AS check_out_time,
-          NULL::double precision AS check_in_lat,
-          NULL::double precision AS check_in_lng,
-          NULL::text AS check_in_method,
           s.created_at,
           s.updated_at,
           s.deleted_at,
           s.first_sync_seq,
           s.sync_seq,
-          NULL::text AS sku,
-          NULL::text AS barcode,
-          NULL::text AS category,
-          NULL::integer AS price,
-          NULL::integer AS cost,
-          NULL::integer AS stock_alert,
-          NULL::boolean AS is_active
+          jsonb_build_object(
+            'site_id', s.id,
+            'name', s.name,
+            'latitude', s.latitude,
+            'longitude', s.longitude
+          ) AS payload
         FROM sites s
         WHERE s.tenant_id = ${tenantId}::uuid
           AND s.sync_seq > ${sinceSeq}
@@ -223,18 +189,27 @@ export class SyncPullService {
 
         UNION ALL
 
-        SELECT 'product'::text AS entity_type, p.id,
-          NULL::uuid AS mission_id, NULL::uuid AS site_id, NULL::uuid AS agent_id,
-          NULL::text AS title, p.name,
-          NULL::double precision AS latitude, NULL::double precision AS longitude,
-          NULL::bigint AS check_in_time, NULL::bigint AS check_out_time,
-          NULL::double precision AS check_in_lat, NULL::double precision AS check_in_lng,
-          NULL::text AS check_in_method, p.created_at, p.updated_at, p.deleted_at,
-          p.first_sync_seq, p.sync_seq, p.sku, p.barcode, p.category, p.price, p.cost,
-          p.stock_alert, p.is_active
+        SELECT
+          'product'::text AS entity_type,
+          p.id,
+          p.created_at,
+          p.updated_at,
+          p.deleted_at,
+          p.first_sync_seq,
+          p.sync_seq,
+          jsonb_build_object(
+            'name', p.name,
+            'sku', p.sku,
+            'barcode', p.barcode,
+            'category', p.category,
+            'price', p.price,
+            'cost', p.cost,
+            'stock_alert', p.stock_alert,
+            'is_active', p.is_active
+          ) AS payload
         FROM products p
-        WHERE p.tenant_id = ${tenantId}::uuid AND p.sync_seq > ${sinceSeq}
-
+        WHERE p.tenant_id = ${tenantId}::uuid
+          AND p.sync_seq > ${sinceSeq}
       )
 
       SELECT *
@@ -278,102 +253,55 @@ export class SyncPullService {
      */
     const rows: SyncEventRow[] = result.rows.map((raw) => {
       const row = raw as Record<string, unknown>;
+      const payload =
+        row.payload && typeof row.payload === 'object'
+          ? row.payload as Record<string, unknown>
+          : {};
+      const value = (key: string): unknown => payload[key] ?? null;
+      const nullableString = (key: string): string | null => {
+        const v = value(key);
+        return v === null ? null : String(v);
+      };
+      const nullableNumber = (key: string): number | null => {
+        const v = value(key);
+        return v === null ? null : Number(v);
+      };
 
       return {
         entity_type: row.entity_type as SyncEventRow['entity_type'],
-
         id: String(row.id),
-
-        mission_id:
-          row.mission_id === null || row.mission_id === undefined
-            ? null
-            : String(row.mission_id),
-
-        site_id:
-          row.site_id === null || row.site_id === undefined
-            ? null
-            : String(row.site_id),
-
-        agent_id:
-          row.agent_id === null || row.agent_id === undefined
-            ? null
-            : String(row.agent_id),
-
-        title:
-          row.title === null || row.title === undefined
-            ? null
-            : String(row.title),
-
-        name:
-          row.name === null || row.name === undefined
-            ? null
-            : String(row.name),
-
-        latitude:
-          row.latitude === null || row.latitude === undefined
-            ? null
-            : Number(row.latitude),
-
-        longitude:
-          row.longitude === null || row.longitude === undefined
-            ? null
-            : Number(row.longitude),
-
-        check_in_time:
-          row.check_in_time === null || row.check_in_time === undefined
-            ? null
-            : Number(row.check_in_time),
-
-        check_out_time:
-          row.check_out_time === null || row.check_out_time === undefined
-            ? null
-            : Number(row.check_out_time),
-
-        check_in_lat:
-          row.check_in_lat === null || row.check_in_lat === undefined
-            ? null
-            : Number(row.check_in_lat),
-
-        check_in_lng:
-          row.check_in_lng === null || row.check_in_lng === undefined
-            ? null
-            : Number(row.check_in_lng),
-
-        check_in_method:
-          row.check_in_method === null ||
-          row.check_in_method === undefined
-            ? null
-            : String(row.check_in_method),
-
-        created_at:
-          row.created_at === null || row.created_at === undefined
-            ? null
-            : Number(row.created_at),
-
-        updated_at:
-          row.updated_at === null || row.updated_at === undefined
-            ? null
-            : Number(row.updated_at),
-
-        deleted_at:
-          row.deleted_at === null || row.deleted_at === undefined
-            ? null
-            : Number(row.deleted_at),
-
-        first_sync_seq:
-          row.first_sync_seq === null ||
-          row.first_sync_seq === undefined
-            ? null
-            : Number(row.first_sync_seq),
-
+        mission_id: nullableString('mission_id'),
+        site_id: nullableString('site_id'),
+        agent_id: nullableString('agent_id'),
+        title: nullableString('title'),
+        name: nullableString('name'),
+        latitude: nullableNumber('latitude'),
+        longitude: nullableNumber('longitude'),
+        check_in_time: nullableNumber('check_in_time'),
+        check_out_time: nullableNumber('check_out_time'),
+        check_in_lat: nullableNumber('check_in_lat'),
+        check_in_lng: nullableNumber('check_in_lng'),
+        check_in_method: nullableString('check_in_method'),
+        created_at: row.created_at === null || row.created_at === undefined
+          ? null : Number(row.created_at),
+        updated_at: row.updated_at === null || row.updated_at === undefined
+          ? null : Number(row.updated_at),
+        deleted_at: row.deleted_at === null || row.deleted_at === undefined
+          ? null : Number(row.deleted_at),
+        first_sync_seq: row.first_sync_seq === null || row.first_sync_seq === undefined
+          ? null : Number(row.first_sync_seq),
         sync_seq: Number(row.sync_seq),
-        sku: row.sku == null ? null : String(row.sku),
-        barcode: row.barcode == null ? null : String(row.barcode),
-        category: row.category == null ? null : String(row.category),
-        price: row.price == null ? null : Number(row.price),
-        cost: row.cost == null ? null : Number(row.cost),
-        stock_alert: row.stock_alert == null ? null : Number(row.stock_alert),
-        is_active: row.is_active == null ? null : Boolean(row.is_active),
+        sku: nullableString('sku'),
+        barcode: nullableString('barcode'),
+        category: nullableString('category'),
+        price: nullableNumber('price'),
+        cost: nullableNumber('cost'),
+        stock_alert: nullableNumber('stock_alert'),
+        is_active: (() => {
+          const v = value('is_active');
+          return v === null ? null : Boolean(v);
+        })(),
+        staff_role: null,
       };
     });
 
