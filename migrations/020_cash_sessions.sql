@@ -23,6 +23,7 @@ CREATE TABLE cash_sessions (
   CONSTRAINT cash_sessions_staff_same_tenant
     FOREIGN KEY (tenant_id, staff_id)
     REFERENCES staff (tenant_id, id) ON DELETE RESTRICT,
+  CONSTRAINT cash_sessions_tenant_id_unique UNIQUE (tenant_id, id),
   CONSTRAINT cash_sessions_close_after_open
     CHECK (closed_at IS NULL OR closed_at >= opened_at),
   CONSTRAINT cash_sessions_closed_consistency
