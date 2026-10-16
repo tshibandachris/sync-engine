@@ -11,6 +11,7 @@ CREATE TABLE staff (
   display_name varchar(120) NOT NULL,
   role varchar(20) NOT NULL CHECK (role IN ('owner', 'manager', 'cashier')),
   pin_hash varchar(255),
+  pin_algo varchar(20) CHECK (pin_algo IS NULL OR pin_algo IN ('bcrypt', 'argon2id')),
   auth_subject uuid,
   is_active boolean NOT NULL DEFAULT true,
   created_at bigint NOT NULL,
@@ -18,7 +19,11 @@ CREATE TABLE staff (
   deleted_at bigint,
   sync_seq bigint NOT NULL,
   first_sync_seq bigint NOT NULL,
-  CONSTRAINT staff_tenant_id_unique UNIQUE (tenant_id, id)
+  CONSTRAINT staff_tenant_id_unique UNIQUE (tenant_id, id),
+  CONSTRAINT staff_pin_hash_algo_consistent CHECK (
+    (pin_hash IS NULL AND pin_algo IS NULL)
+    OR (pin_hash IS NOT NULL AND pin_algo IS NOT NULL)
+  )
 );
 
 CREATE INDEX idx_staff_tenant ON staff (tenant_id)
