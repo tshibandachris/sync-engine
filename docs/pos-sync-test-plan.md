@@ -26,6 +26,15 @@ Prove that the POS schema and sync engine preserve offline-created records acros
 - [ ] Reject duplicate products within one inventory count.
 - [ ] Ensure completing an inventory count creates adjustment movements exactly once.
 
+## Staff PIN boundary (required for staff push)
+
+- Staff created offline through sync starts without a PIN; it cannot authenticate until a PIN is configured separately.
+- The sync schema rejects every PIN-related input key with: `PIN cannot be set through sync. Use POST /staff/:id/pin`.
+- Staff push INSERT/UPDATE statements must never write `pin_hash`, `pin_algo`, or `auth_subject`.
+- A future authenticated `POST /staff/:id/pin` route must accept plaintext only over HTTPS, hash it server-side, and write credential columns outside sync.
+- When the UI needs PIN setup state, staff pull may expose only `has_pin: boolean`; never expose the hash, algorithm, or auth subject. This is follow-up work, not part of the first push iteration.
+- Staff soft-delete/deactivation must return HTTP 409 if it would leave the tenant without an active owner.
+
 ## Gate 2 — Push/pull contract
 
 - [ ] Validate all POS entity names and payload schemas; reject unknown entities and malformed fields.

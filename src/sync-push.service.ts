@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
@@ -6,6 +6,7 @@ import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import { requireTenantId } from './tenant-id.js';
 import { productUpsertSchema, type ProductUpsert } from './pos/schemas/product.schema.js';
+import { staffUpsertSchema, type StaffUpsert } from './pos/schemas/staff.schema.js';
 
 export type CheckInMethod = 'GPS' | 'QR_CODE' | 'MANUAL';
 
@@ -39,6 +40,7 @@ export interface SyncPushDto {
   changes: {
     check_ins?: { created?: CreateCheckIn[]; updated?: UpdateCheckIn[]; deleted?: string[] };
     products?: ProductUpsert[];
+    staff?: StaffUpsert[];
   };
 }
 
@@ -61,10 +63,18 @@ export interface PushConflict {
  */
 export const IDEMPOTENCY_REPLAY = Symbol('idempotencyReplay');
 
+export interface StaffPushResult {
+  entity_id: string;
+  status: 'applied' | 'idempotent' | 'conflict';
+  sync_seq?: number;
+  errors?: string[];
+}
+
 export interface PushResponse {
   applied: { created: number; updated: number; deleted: number };
   conflicts: PushConflict[];
   products?: ProductPushResult[];
+  staff?: StaffPushResult[];
 }
 
 const EMPTY_RESPONSE: PushResponse = {
@@ -114,6 +124,21 @@ export class SyncPushService {
         validProducts.push(parsed.data);
       }
     }
+
+    const rawStaff: unknown = dto.changes.staff ?? [];
+    if (!Array.isArray(rawStaff)) {
+      throw new BadRequestException('changes.staff doit être un tableau.');
+    }
+    const validStaff: StaffUpsert[] = rawStaff.map((item) => {
+      const parsed = staffUpsertSchema.safeParse(item);
+      if (!parsed.success) {
+        const errors = parsed.error.issues.map((issue) =>
+          `${issue.path.length ? issue.path.join('.') : 'payload'}: ${issue.message}`,
+        );
+        throw new BadRequestException(errors.join('; '));
+      }
+      return parsed.data;
+    });
 
     const created = checkIns.created ?? [];
     const updated = checkIns.updated ?? [];
@@ -419,6 +444,142 @@ export class SyncPushService {
             ? { entity_id: item.id, status: 'idempotent', sync_seq: Number(latestRow.sync_seq) }
             : { entity_id: item.id, status: 'conflict', sync_seq: Number(latestRow.sync_seq) });
         }
+      }
+
+      // Staff sync deliberately has no path to pin_hash, pin_algo, or auth_subject.
+      // Those fields can only be changed by dedicated authenticated server routes.
+      if (validStaff.length > 0) response.staff = [];
+      for (const item of validStaff) {
+        const displayName = item.displayName.trim();
+        const role = item.role;
+        const isActive = item.isActive ?? true;
+        const deletedAt = item.deletedAt ?? null;
+        const createdAt = item.createdAt ?? Date.now();
+
+        const found = await tx.execute(sql`
+          SELECT id, display_name, role, is_active, created_at, updated_at,
+                 deleted_at, sync_seq, first_sync_seq
+          FROM staff
+          WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+        `);
+        let row = found.rows[0] as Record<string, unknown> | undefined;
+
+        if (!row) {
+          const inserted = await tx.execute(sql`
+            INSERT INTO staff
+              (id, tenant_id, display_name, role, is_active, created_at,
+               updated_at, deleted_at, sync_seq, first_sync_seq)
+            VALUES (
+              ${item.id}::uuid, ${tenantId}::uuid, ${displayName}, ${role},
+              ${isActive}, ${createdAt}, ${Date.now()}, ${deletedAt}, 0, 0
+            )
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id, sync_seq
+          `);
+          const insertedRow = inserted.rows[0] as Record<string, unknown> | undefined;
+          if (insertedRow) {
+            const status = deletedAt === null ? 'created' : 'deleted';
+            if (status === 'created') response.applied.created += 1;
+            else response.applied.deleted += 1;
+            response.staff!.push({
+              entity_id: item.id,
+              status: 'applied',
+              sync_seq: Number(insertedRow.sync_seq),
+            });
+            continue;
+          }
+
+          const retry = await tx.execute(sql`
+            SELECT id, display_name, role, is_active, created_at, updated_at,
+                   deleted_at, sync_seq, first_sync_seq
+            FROM staff
+            WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+          `);
+          row = retry.rows[0] as Record<string, unknown> | undefined;
+          if (!row) {
+            response.staff!.push({
+              entity_id: item.id,
+              status: 'conflict',
+              errors: ['UUID déjà utilisé ou personnel inaccessible dans ce tenant'],
+            });
+            continue;
+          }
+        }
+
+        const sameFields = (current: Record<string, unknown>) =>
+          current.display_name === displayName &&
+          current.role === role &&
+          current.is_active === isActive &&
+          (current.deleted_at === null ? null : Number(current.deleted_at)) === deletedAt;
+        const currentSeq = Number(row.sync_seq);
+
+        if (currentSeq !== item.lastKnownSyncSeq) {
+          response.staff!.push(sameFields(row)
+            ? { entity_id: item.id, status: 'idempotent', sync_seq: currentSeq }
+            : { entity_id: item.id, status: 'conflict', sync_seq: currentSeq });
+          continue;
+        }
+
+        if (row.deleted_at !== null && deletedAt === null) {
+          response.staff!.push({
+            entity_id: item.id,
+            status: 'conflict',
+            sync_seq: currentSeq,
+            errors: ['Un membre du personnel supprimé ne peut pas être réactivé par sync'],
+          });
+          continue;
+        }
+
+        const removingActiveOwner =
+          row.role === 'owner' &&
+          row.is_active === true &&
+          row.deleted_at === null &&
+          (deletedAt !== null || !isActive || role !== 'owner');
+
+        if (removingActiveOwner) {
+          // Serialize owner-removal decisions per tenant to prevent two concurrent
+          // pushes from each deleting a different "last" owner.
+          await tx.execute(sql`
+            SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text || ':staff-owner-invariant'))
+          `);
+          const owners = await tx.execute(sql`
+            SELECT COUNT(*)::int AS active_owners
+            FROM staff
+            WHERE tenant_id = ${tenantId}::uuid
+              AND role = 'owner'
+              AND is_active = true
+              AND deleted_at IS NULL
+              AND id <> ${item.id}::uuid
+          `);
+          const activeOwners = Number((owners.rows[0] as Record<string, unknown> | undefined)?.active_owners ?? 0);
+          if (activeOwners < 1) {
+            throw new ConflictException('Impossible de supprimer ou désactiver le dernier owner actif du tenant.');
+          }
+        }
+
+        const updated = await tx.execute(sql`
+          UPDATE staff
+          SET display_name = ${displayName},
+              role = ${role},
+              is_active = ${isActive},
+              deleted_at = ${deletedAt}
+          WHERE id = ${item.id}::uuid
+            AND tenant_id = ${tenantId}::uuid
+            AND sync_seq = ${item.lastKnownSyncSeq}
+          RETURNING sync_seq
+        `);
+        const updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+        if (!updatedRow) {
+          response.staff!.push({ entity_id: item.id, status: 'conflict', sync_seq: currentSeq });
+          continue;
+        }
+        if (deletedAt !== null) response.applied.deleted += 1;
+        else response.applied.updated += 1;
+        response.staff!.push({
+          entity_id: item.id,
+          status: 'applied',
+          sync_seq: Number(updatedRow.sync_seq),
+        });
       }
 
       if (idempotencyKey) {
