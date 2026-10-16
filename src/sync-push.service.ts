@@ -129,7 +129,7 @@ export class SyncPushService {
     if (!Array.isArray(rawStaff)) {
       throw new BadRequestException('changes.staff doit être un tableau.');
     }
-    const validStaff: StaffUpsert[] = rawStaff.map((item, index) => {
+    const validStaff: StaffUpsert[] = rawStaff.map((item) => {
       const parsed = staffUpsertSchema.safeParse(item);
       if (!parsed.success) {
         const errors = parsed.error.issues.map((issue) =>
