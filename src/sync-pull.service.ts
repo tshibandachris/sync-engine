@@ -515,6 +515,30 @@ export class SyncPullService {
         continue;
       }
 
+      if (row.entity_type === 'cash_session') {
+        const payload = {
+          id: row.id,
+          staffId: row.cash_staff_id!,
+          terminalLabel: row.terminal_label,
+          openedAt: row.opened_at!,
+          closedAt: row.closed_at,
+          openingAmount: row.opening_amount!,
+          closingAmount: row.closing_amount,
+          expectedAmount: row.expected_amount,
+          difference: row.difference,
+          status: row.session_status!,
+          notes: row.notes,
+          createdAt: row.created_at!,
+          updatedAt: row.updated_at!,
+          lastKnownSyncSeq: row.sync_seq,
+        };
+        if (row.first_sync_seq !== null && row.first_sync_seq > sinceSeq) {
+          changes.cash_sessions.created.push(payload);
+        } else {
+          changes.cash_sessions.updated.push(payload);
+        }
+        continue;
+      }
       if (row.entity_type === 'site') {
         const payload: SyncSitePayload = {
           id: row.id,
