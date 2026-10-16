@@ -36,14 +36,27 @@ export class PosSalesPushService {
             const same = row.cash_session_id === s.cash_session_id && row.staff_id === s.staff_id &&
               row.sale_number === s.sale_number && Number(row.total) === s.total &&
               row.payment_method === s.payment_method && Number(row.cash_amount) === s.cash_amount &&
-              Number(row.mobile_amount) === s.mobile_amount && Boolean(row.is_void) === s.is_void &&
-              (row.voided_sale_id ?? null) === (s.voided_sale_id ?? null);
+              Number(row.mobile_amount) === s.mobile_amount && (row.mobile_msisdn ?? null) === (s.mobile_msisdn ?? null) &&
+              (row.mobile_reference ?? null) === (s.mobile_reference ?? null) && (row.customer_note ?? null) === (s.customer_note ?? null) &&
+              Boolean(row.is_void) === s.is_void && (row.voided_sale_id ?? null) === (s.voided_sale_id ?? null) &&
+              (row.void_reason ?? null) === (s.void_reason ?? null) &&
+              Number(row.created_at) === s.created_at && Number(row.updated_at) === s.updated_at;
             if (!same) throw new ConflictException('sale UUID already exists with different content');
-            const lines = await tx.execute(sql`SELECT id, product_id, quantity, unit_price, subtotal FROM sale_lines WHERE tenant_id=${tenantId}::uuid AND sale_id=${s.id}::uuid`);
+            const lines = await tx.execute(sql`SELECT id, product_id, product_name, product_sku, quantity, unit_price, subtotal, created_at, updated_at FROM sale_lines WHERE tenant_id=${tenantId}::uuid AND sale_id=${s.id}::uuid`);
             const lineMatch = lines.rows.length === s.lines.length && s.lines.every(l =>
               (lines.rows as any[]).some(r => r.id === l.id && r.product_id === l.product_id &&
-                Number(r.quantity) === l.quantity && Number(r.unit_price) === l.unit_price && Number(r.subtotal) === l.subtotal));
-            if (!lineMatch) throw new ConflictException('sale UUID already exists with different content');
+                r.product_name === l.product_name && (r.product_sku ?? null) === (l.product_sku ?? null) &&
+                Number(r.quantity) === l.quantity && Number(r.unit_price) === l.unit_price &&
+                Number(r.subtotal) === l.subtotal && Number(r.created_at) === l.created_at && Number(r.updated_at) === l.updated_at));
+            const movements = await tx.execute(sql`SELECT id, product_id, movement_type, quantity_delta, reference_id, reference_type, unit_cost, notes, created_at, updated_at, created_by FROM stock_movements WHERE tenant_id=${tenantId}::uuid AND reference_type='sale' AND reference_id=${s.id}::uuid`);
+            const movementMatch = movements.rows.length === s.stock_movements.length && s.stock_movements.every(m =>
+              (movements.rows as any[]).some(r => r.id === m.id && r.product_id === m.product_id &&
+                r.movement_type === m.movement_type && Number(r.quantity_delta) === m.quantity_delta &&
+                r.reference_id === m.reference_id && r.reference_type === m.reference_type &&
+                (r.unit_cost == null ? null : Number(r.unit_cost)) === (m.unit_cost ?? null) &&
+                (r.notes ?? null) === (m.notes ?? null) && Number(r.created_at) === m.created_at &&
+                Number(r.updated_at) === m.updated_at && (r.created_by ?? null) === (m.created_by ?? null)));
+            if (!lineMatch || !movementMatch) throw new ConflictException('sale UUID already exists with different content');
             return 'idempotent' as const;
           }
 
