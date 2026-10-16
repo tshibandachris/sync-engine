@@ -7,6 +7,7 @@ import { withTenant } from './with-tenant.js';
 import { requireTenantId } from './tenant-id.js';
 import { productUpsertSchema, type ProductUpsert } from './pos/schemas/product.schema.js';
 import { staffUpsertSchema, type StaffUpsert } from './pos/schemas/staff.schema.js';
+import { cashSessionPushSchema, type CashSessionPush } from './pos/schemas/cash-session.schema.js';
 
 export type CheckInMethod = 'GPS' | 'QR_CODE' | 'MANUAL';
 
@@ -41,6 +42,7 @@ export interface SyncPushDto {
     check_ins?: { created?: CreateCheckIn[]; updated?: UpdateCheckIn[]; deleted?: string[] };
     products?: ProductUpsert[];
     staff?: StaffUpsert[];
+    cash_sessions?: CashSessionPush[];
   };
 }
 
@@ -75,6 +77,7 @@ export interface PushResponse {
   conflicts: PushConflict[];
   products?: ProductPushResult[];
   staff?: StaffPushResult[];
+  cash_sessions?: StaffPushResult[];
 }
 
 const EMPTY_RESPONSE: PushResponse = {
@@ -131,6 +134,21 @@ export class SyncPushService {
     }
     const validStaff: StaffUpsert[] = rawStaff.map((item) => {
       const parsed = staffUpsertSchema.safeParse(item);
+      if (!parsed.success) {
+        const errors = parsed.error.issues.map((issue) =>
+          `${issue.path.length ? issue.path.join('.') : 'payload'}: ${issue.message}`,
+        );
+        throw new BadRequestException(errors.join('; '));
+      }
+      return parsed.data;
+    });
+
+    const rawCashSessions: unknown = dto.changes.cash_sessions ?? [];
+    if (!Array.isArray(rawCashSessions)) {
+      throw new BadRequestException('changes.cash_sessions doit être un tableau.');
+    }
+    const validCashSessions: CashSessionPush[] = rawCashSessions.map((item) => {
+      const parsed = cashSessionPushSchema.safeParse(item);
       if (!parsed.success) {
         const errors = parsed.error.issues.map((issue) =>
           `${issue.path.length ? issue.path.join('.') : 'payload'}: ${issue.message}`,
@@ -582,6 +600,102 @@ export class SyncPushService {
         });
       }
 
+      if (validCashSessions.length > 0) response.cash_sessions = [];
+      for (const item of validCashSessions) {
+        const found = await tx.execute(sql`
+          SELECT id, staff_id, terminal_label, opened_at, opening_amount, status, notes,
+                 created_at, closed_at, closing_amount, expected_amount, difference, sync_seq
+          FROM cash_sessions
+          WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+        `);
+        let row = found.rows[0] as Record<string, unknown> | undefined;
+
+        if (!row) {
+          if (item.lastKnownSyncSeq !== 0) {
+            response.cash_sessions!.push({ entity_id: item.id, status: 'conflict', errors: ['Session introuvable pour le sync_seq attendu'] });
+            continue;
+          }
+          if (item.status === 'closed') {
+            throw new ConflictException('Une session ne peut pas être créée directement en état closed.');
+          }
+          const inserted = await tx.execute(sql`
+            INSERT INTO cash_sessions
+              (id, tenant_id, staff_id, terminal_label, opened_at, opening_amount,
+               status, notes, created_at, updated_at, sync_seq, first_sync_seq)
+            VALUES
+              (${item.id}::uuid, ${tenantId}::uuid, ${item.staffId}::uuid,
+               ${item.terminalLabel ?? null}, ${item.openedAt}, ${item.openingAmount},
+               'open', ${item.notes ?? null}, ${item.createdAt ?? Date.now()}, ${Date.now()}, 0, 0)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id, sync_seq
+          `);
+          const insertedRow = inserted.rows[0] as Record<string, unknown> | undefined;
+          if (insertedRow) {
+            response.applied.created += 1;
+            response.cash_sessions!.push({ entity_id: item.id, status: 'applied', sync_seq: Number(insertedRow.sync_seq) });
+            continue;
+          }
+          const duplicate = await tx.execute(sql`
+            SELECT id FROM cash_sessions
+            WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+          `);
+          if (duplicate.rows.length) {
+            response.cash_sessions!.push({ entity_id: item.id, status: 'idempotent' });
+          } else {
+            response.cash_sessions!.push({ entity_id: item.id, status: 'conflict', errors: ['UUID déjà utilisé ou session inaccessible dans ce tenant'] });
+          }
+          continue;
+        }
+
+        const currentSeq = Number(row.sync_seq);
+        if (row.status === 'closed' && item.status === 'open') {
+          throw new ConflictException('Une session closed ne peut jamais être rouverte.');
+        }
+        if (row.status === 'open' && item.status === 'closed') {
+          throw new ConflictException('La clôture doit passer par POST /cash-sessions/:id/close.');
+        }
+
+        const onlyNotes = item.staffId === undefined && item.terminalLabel === undefined &&
+          item.openedAt === undefined && item.openingAmount === undefined;
+        if (row.status === 'closed' && !onlyNotes) {
+          throw new ConflictException('Une session closed ne peut être modifiée que pour ses notes.');
+        }
+        if (!onlyNotes) {
+          const fieldsMatch =
+            (item.staffId === undefined || String(row.staff_id) === item.staffId) &&
+            (item.terminalLabel === undefined || (row.terminal_label ?? null) === item.terminalLabel) &&
+            (item.openedAt === undefined || Number(row.opened_at) === item.openedAt) &&
+            (item.openingAmount === undefined || Number(row.opening_amount) === item.openingAmount);
+          if (!fieldsMatch) {
+            throw new ConflictException('Les champs structurels d’une session sont immuables après création.');
+          }
+        }
+        const notes = item.notes === undefined ? (row.notes === null ? null : String(row.notes)) : item.notes;
+        if (currentSeq !== item.lastKnownSyncSeq) {
+          response.cash_sessions!.push(notes === (row.notes === null ? null : String(row.notes))
+            ? { entity_id: item.id, status: 'idempotent', sync_seq: currentSeq }
+            : { entity_id: item.id, status: 'conflict', sync_seq: currentSeq });
+          continue;
+        }
+        if (notes !== (row.notes === null ? null : String(row.notes))) {
+          const updated = await tx.execute(sql`
+            UPDATE cash_sessions SET notes = ${notes}
+            WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+              AND sync_seq = ${item.lastKnownSyncSeq}
+            RETURNING sync_seq
+          `);
+          const updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+          if (!updatedRow) {
+            response.cash_sessions!.push({ entity_id: item.id, status: 'conflict', sync_seq: currentSeq });
+            continue;
+          }
+          response.applied.updated += 1;
+          response.cash_sessions!.push({ entity_id: item.id, status: 'applied', sync_seq: Number(updatedRow.sync_seq) });
+        } else {
+          response.cash_sessions!.push({ entity_id: item.id, status: 'idempotent', sync_seq: currentSeq });
+        }
+      }
+
       if (idempotencyKey) {
         await tx.execute(sql`
           INSERT INTO sync_idempotency_keys (tenant_id, agent_id, idempotency_key)
@@ -591,5 +705,12 @@ export class SyncPushService {
 
       return response;
     }, { write: true });
+    } catch (err) {
+      const pgError = err as { code?: string; constraint?: string };
+      if (pgError?.code === '23505' && pgError.constraint === 'idx_cash_sessions_one_open_per_staff') {
+        throw new ConflictException('Ce caissier possède déjà une session de caisse ouverte.');
+      }
+      throw err;
+    }
   }
 }
