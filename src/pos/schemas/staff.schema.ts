@@ -10,7 +10,7 @@ const staffFieldsSchema = z.object({
   createdAt: nonNegativeSafeInteger.optional(),
   deletedAt: nonNegativeSafeInteger.nullable().optional(),
   lastKnownSyncSeq: nonNegativeSafeInteger,
-}).strict();
+});
 
 /**
  * Only business fields may cross the sync channel. In particular, PIN material
