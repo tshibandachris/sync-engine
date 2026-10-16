@@ -41,7 +41,7 @@ export interface SyncSitePayload {
 }
 
 interface SyncEventRow {
-  entity_type: 'check_in' | 'mission' | 'site' | 'product' | 'staff' | 'cash_session';
+  entity_type: 'check_in' | 'mission' | 'site' | 'product' | 'staff' | 'cash_session' | 'sale' | 'sale_line' | 'stock_movement';
 
   id: string;
 
@@ -91,6 +91,12 @@ interface SyncEventRow {
   difference: number | null;
   session_status: string | null;
   notes: string | null;
+  payload: Record<string, unknown>;
+  reconciled_expected_amount: number | null;
+  reconciled_difference: number | null;
+  reconciled_at: number | null;
+  reconciliation_alert: boolean | null;
+  reconciliation_alert_reason: string | null;
 }
 
 export class SyncPullService {
@@ -260,11 +266,43 @@ export class SyncPullService {
             'expected_amount', cs.expected_amount,
             'difference', cs.difference,
             'session_status', cs.status,
-            'notes', cs.notes
+            'notes', cs.notes,
+            'reconciled_expected_amount', cs.reconciled_expected_amount,
+            'reconciled_difference', cs.reconciled_difference,
+            'reconciled_at', cs.reconciled_at,
+            'reconciliation_alert', cs.reconciliation_alert,
+            'reconciliation_alert_reason', cs.reconciliation_alert_reason
           ) AS payload
         FROM cash_sessions cs
         WHERE cs.tenant_id = ${tenantId}::uuid
           AND cs.sync_seq > ${sinceSeq}
+
+        UNION ALL
+
+        SELECT
+          'sale'::text AS entity_type, s.id, s.created_at, s.updated_at,
+          NULL::bigint AS deleted_at, s.first_sync_seq, s.sync_seq,
+          to_jsonb(s) - 'tenant_id' AS payload
+        FROM sales s
+        WHERE s.tenant_id = ${tenantId}::uuid AND s.sync_seq > ${sinceSeq}
+
+        UNION ALL
+
+        SELECT
+          'sale_line'::text AS entity_type, sl.id, sl.created_at, sl.updated_at,
+          NULL::bigint AS deleted_at, sl.first_sync_seq, sl.sync_seq,
+          to_jsonb(sl) - 'tenant_id' AS payload
+        FROM sale_lines sl
+        WHERE sl.tenant_id = ${tenantId}::uuid AND sl.sync_seq > ${sinceSeq}
+
+        UNION ALL
+
+        SELECT
+          'stock_movement'::text AS entity_type, sm.id, sm.created_at, sm.updated_at,
+          NULL::bigint AS deleted_at, sm.first_sync_seq, sm.sync_seq,
+          to_jsonb(sm) - 'tenant_id' AS payload
+        FROM stock_movements sm
+        WHERE sm.tenant_id = ${tenantId}::uuid AND sm.sync_seq > ${sinceSeq}
       )
 
       SELECT
@@ -375,6 +413,12 @@ export class SyncPullService {
         difference: nullableNumber('difference'),
         session_status: nullableString('session_status'),
         notes: nullableString('notes'),
+        payload,
+        reconciled_expected_amount: nullableNumber('reconciled_expected_amount'),
+        reconciled_difference: nullableNumber('reconciled_difference'),
+        reconciled_at: nullableNumber('reconciled_at'),
+        reconciliation_alert: (() => { const v = value('reconciliation_alert'); return v === null ? null : Boolean(v); })(),
+        reconciliation_alert_reason: nullableString('reconciliation_alert_reason'),
       };
     });
 
@@ -405,6 +449,9 @@ export class SyncPullService {
       products: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
       staff: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
       cash_sessions: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as string[] },
+      sales: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as string[] },
+      sale_lines: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as string[] },
+      stock_movements: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as string[] },
     };
 
     for (const row of consumedRows) {
@@ -437,6 +484,14 @@ export class SyncPullService {
           });
         }
 
+        continue;
+      }
+
+      if (row.entity_type === 'sale' || row.entity_type === 'sale_line' || row.entity_type === 'stock_movement') {
+        const payload = { ...row.payload, id: row.id, created_at: row.created_at, updated_at: row.updated_at, lastKnownSyncSeq: row.sync_seq };
+        const bucket = row.entity_type === 'sale' ? changes.sales : row.entity_type === 'sale_line' ? changes.sale_lines : changes.stock_movements;
+        if (row.first_sync_seq !== null && row.first_sync_seq > sinceSeq) bucket.created.push(payload);
+        else bucket.updated.push(payload);
         continue;
       }
 
@@ -528,6 +583,11 @@ export class SyncPullService {
           difference: row.difference,
           status: row.session_status!,
           notes: row.notes,
+          reconciledExpectedAmount: row.reconciled_expected_amount,
+          reconciledDifference: row.reconciled_difference,
+          reconciledAt: row.reconciled_at,
+          reconciliationAlert: row.reconciliation_alert,
+          reconciliationAlertReason: row.reconciliation_alert_reason,
           createdAt: row.created_at!,
           updatedAt: row.updated_at!,
           lastKnownSyncSeq: row.sync_seq,
