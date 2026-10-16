@@ -32,4 +32,22 @@ Sale lines carry negative quantities for voids. Stock movements use the inventor
 
 ## Reconciliation
 
-Sales are committed before derived reconciliation. After processing the batch, each distinct session represented by an `applied` or `idempotent` sale is considered once. Closed sessions are reconciled in separate transactions. Reconciliation sums **all signed** `cash_amount` values for the session, without filtering `is_void`, and writes only reconciliation-specific columns. Historical `closing_amount`, `expected_amount`, and `difference` are never rewritten. A reconciliation failure does not roll back sales.
+Sales are committed before derived reconciliation. After processing the batch, only sessions from sales with status `applied` are collected, and each distinct session is considered once. `idempotent` retries do not trigger reconciliation. Closed sessions are reconciled in separate transactions. Reconciliation sums **all signed** `cash_amount` values for the session, without filtering `is_void`, and writes only reconciliation-specific columns. Historical `closing_amount`, `expected_amount`, and `difference` are never rewritten. A reconciliation failure does not roll back sales.
+
+## Tenant isolation for voids
+
+Migration 021 enforces the composite foreign key `(tenant_id, voided_sale_id) REFERENCES sales(tenant_id, id)`, backed by the unique key `(tenant_id, id)`. The original-sale lookup is also scoped to the authenticated tenant. A cross-tenant void is rejected and cannot be inserted.
+
+## Follow-up reconciliation job contract (out of scope for this PR)
+
+The periodic reconciliation job belongs in its own branch and PR. Its candidate query is:
+
+```sql
+SELECT id
+FROM cash_sessions
+WHERE status = 'closed'
+  AND reconciled_at IS NULL
+  AND closed_at < (extract(epoch FROM now() - interval '24 hours') * 1000)::bigint;
+```
+
+For each candidate, the job calls the same reconciliation routine. It must distinguish a session with no sales rows from a session whose signed `SUM(cash_amount)` is zero because sales and voids cancel each other. If no sales rows have arrived after the 24-hour threshold, set `reconciliation_alert = true` and `reconciliation_alert_reason = 'no_sales_received'`. A zero signed sum alone is not sufficient evidence for that alert. The job must define retry cadence and repeated-failure behavior in its own reviewed contract; this PR does not add a scheduler or cron task.
