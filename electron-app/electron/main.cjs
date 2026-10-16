@@ -16,22 +16,33 @@ async function doPull() {
   status = { ...status, state: 'syncing', message: 'Synchronisation en cours…' };
   windowRef?.webContents.send('eden:status', readStatus());
   try {
-    // Important: this skeleton persists products only. The backend cursor is global
-    // across entity types, so advancing it before every entity is persisted would
-    // permanently skip staff/sessions/sales. Keep cursor 0 until full-feed persistence
-    // and pagination are implemented; product upserts are idempotent.
-    const response = await pullChanges({
-      baseUrl: process.env.EDEN_SYNC_URL,
-      token: process.env.EDEN_SYNC_TOKEN,
-      lastPulledAt: 0,
-    });
-    const count = applyPulledProducts(db, response.changes.products || {});
+    // The feed cursor is global across entity types. Walk every page to finish this
+    // initial product import, but do not persist/retain the cursor: this skeleton
+    // stores products only. Other entity types will be fetched again from cursor 0
+    // when full-feed persistence is implemented.
+    let pageCursor = 0;
+    let pages = 0;
+    let productsProcessed = 0;
+    while (true) {
+      if (++pages > 1000) throw new Error('Pull stopped after 1000 pages; check API pagination.');
+      const response = await pullChanges({
+        baseUrl: process.env.EDEN_SYNC_URL,
+        token: process.env.EDEN_SYNC_TOKEN,
+        lastPulledAt: pageCursor,
+      });
+      productsProcessed += applyPulledProducts(db, response.changes.products || {});
+      if (!response.has_more) break;
+      if (response.timestamp <= pageCursor) {
+        throw new Error('Pull cursor did not advance while has_more=true.');
+      }
+      pageCursor = response.timestamp;
+    }
     status = {
       ...status, state: 'synced',
-      message: `Pull réussi : ${count} produit(s) traités. Curseur global non avancé (squelette).`,
+      message: `Pull réussi : ${productsProcessed} changement(s) produit traité(s). Curseur global non conservé (squelette).`,
       lastCursor: 0,
     };
-    console.log(`[sync] pull OK; produits traités=${count}; has_more=${response.has_more}; cursor retained at 0 until all entity types are persisted`);
+    console.log(`[sync] pull OK pages=${pages}; product changes processed=${productsProcessed}; global cursor not persisted until all entity types are stored`);
   } catch (error) {
     status = { ...status, state: 'pending', message: `Synchronisation en attente : ${error.message}` };
     console.error('[sync] pull failed:', error);
