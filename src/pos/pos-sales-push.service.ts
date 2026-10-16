@@ -102,7 +102,7 @@ export class PosSalesPushService {
           return 'applied' as const;
         }, { write: true });
         results.push({ id: s.id, status, reason: null });
-        touched.add(s.cash_session_id);
+        if (status === 'applied') touched.add(s.cash_session_id);
       } catch (e: any) {
         const cause = e?.cause ?? e;
         const status = e instanceof ConflictException || cause?.code === '23505' ? 'conflict' : 'invalid';
