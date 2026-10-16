@@ -8,6 +8,7 @@ import { requireTenantId } from './tenant-id.js';
 import { productUpsertSchema, type ProductUpsert } from './pos/schemas/product.schema.js';
 import { staffUpsertSchema, type StaffUpsert } from './pos/schemas/staff.schema.js';
 import { cashSessionPushSchema, type CashSessionPush } from './pos/schemas/cash-session.schema.js';
+import { PosSalesPushService, type SalePushResult } from './pos/pos-sales-push.service.js';
 
 export type CheckInMethod = 'GPS' | 'QR_CODE' | 'MANUAL';
 
@@ -43,6 +44,7 @@ export interface SyncPushDto {
     products?: ProductUpsert[];
     staff?: StaffUpsert[];
     cash_sessions?: CashSessionPush[];
+    sales?: unknown[];
   };
 }
 
@@ -78,6 +80,7 @@ export interface PushResponse {
   products?: ProductPushResult[];
   staff?: StaffPushResult[];
   cash_sessions?: StaffPushResult[];
+  results?: SalePushResult[];
 }
 
 const EMPTY_RESPONSE: PushResponse = {
@@ -169,7 +172,7 @@ export class SyncPushService {
     }
 
     try {
-      return await withTenant(this.db, tenantId, async (tx) => {
+      const response = await withTenant(this.db, tenantId, async (tx) => {
 
       if (idempotencyKey) {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${agentId} || ':' || ${idempotencyKey}))`);
@@ -721,6 +724,10 @@ export class SyncPushService {
 
       return response;
     }, { write: true });
+      if (dto.changes.sales !== undefined) {
+        response.results = await new PosSalesPushService(this.db).push(tenantId, dto.changes.sales);
+      }
+      return response;
     } catch (err) {
       const pgError = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
       const rootError = pgError?.cause ?? pgError;

@@ -231,6 +231,7 @@ export class TestPostgres {
     '022_sale_lines.sql',
     '023_stock_movements.sql',
     '024_inventory_counts.sql',
+    '025_pos_reconciliation.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
