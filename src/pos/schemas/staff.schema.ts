@@ -50,7 +50,9 @@ export const staffUpsertSchema = z.unknown().transform((input, ctx) => {
 
   const parsed = staffFieldsSchema.safeParse(record);
   if (!parsed.success) {
-    for (const issue of parsed.error.issues) ctx.addIssue(issue);
+    for (const issue of parsed.error.issues) {
+      ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+    }
     invalid = true;
   }
 
