@@ -616,8 +616,9 @@ export class SyncPushService {
             response.cash_sessions!.push({ entity_id: item.id, status: 'conflict', errors: ['Session introuvable pour le sync_seq attendu'] });
             continue;
           }
-          if (item.status === 'closed') {
-            throw new ConflictException('Une session ne peut pas être créée directement en état closed.');
+          if (item.status === 'closed' || item.closedAt != null ||
+              item.closingAmount != null || item.expectedAmount != null || item.difference != null) {
+            throw new ConflictException('Une session ne peut pas être créée directement en état closed ni recevoir des montants de clôture via sync.');
           }
           const inserted = await tx.execute(sql`
             INSERT INTO cash_sessions
@@ -654,6 +655,15 @@ export class SyncPushService {
         }
         if (row.status === 'open' && item.status === 'closed') {
           throw new ConflictException('La clôture doit passer par POST /cash-sessions/:id/close.');
+        }
+        const nullableDbNumber = (value: unknown) => value === null || value === undefined ? null : Number(value);
+        const closeFieldsMatch =
+          (item.closedAt === undefined || nullableDbNumber(row.closed_at) === item.closedAt) &&
+          (item.closingAmount === undefined || nullableDbNumber(row.closing_amount) === item.closingAmount) &&
+          (item.expectedAmount === undefined || nullableDbNumber(row.expected_amount) === item.expectedAmount) &&
+          (item.difference === undefined || nullableDbNumber(row.difference) === item.difference);
+        if (!closeFieldsMatch) {
+          throw new ConflictException('Les données de clôture sont calculées et contrôlées par le serveur.');
         }
 
         const fieldsMatch =
