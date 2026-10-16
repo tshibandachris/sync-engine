@@ -57,14 +57,6 @@ export const cashSessionPushSchema = z.unknown().transform((input, ctx) => {
     invalid = true;
   }
   if (invalid || !parsed.success) return z.NEVER;
-  if (parsed.data.status === 'closed') {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['status'],
-      message: 'Une session ne peut pas être créée ou clôturée via la synchronisation.',
-    });
-    return z.NEVER;
-  }
   if (parsed.data.lastKnownSyncSeq === 0 &&
       (parsed.data.staffId === undefined || parsed.data.openedAt === undefined ||
        parsed.data.openingAmount === undefined)) {
