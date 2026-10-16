@@ -4,7 +4,7 @@ const nonNegativeSafeInteger = z.number().int().min(0).max(Number.MAX_SAFE_INTEG
 
 const allowed = new Set([
   'id', 'staffId', 'terminalLabel', 'openedAt', 'openingAmount',
-  'status', 'notes', 'createdAt', 'lastKnownSyncSeq',
+  'status', 'closedAt', 'closingAmount', 'expectedAmount', 'difference', 'notes', 'createdAt', 'lastKnownSyncSeq',
 ]);
 
 /**
@@ -20,15 +20,7 @@ export const cashSessionPushSchema = z.unknown().transform((input, ctx) => {
   const record = input as Record<string, unknown>;
   let invalid = false;
   for (const key of Object.keys(record)) {
-    if (['closedAt', 'closingAmount', 'expectedAmount', 'difference',
-      'closed_at', 'closing_amount', 'expected_amount'].includes(key)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: [key],
-        message: 'La clôture et les montants de clôture doivent passer par POST /cash-sessions/:id/close.',
-      });
-      invalid = true;
-    } else if (!allowed.has(key)) {
+    if (!allowed.has(key)) {
       ctx.addIssue({
         code: 'custom',
         path: [key],
@@ -45,6 +37,10 @@ export const cashSessionPushSchema = z.unknown().transform((input, ctx) => {
     openedAt: nonNegativeSafeInteger.optional(),
     openingAmount: nonNegativeSafeInteger.optional(),
     status: z.enum(['open', 'closed']).optional(),
+    closedAt: nonNegativeSafeInteger.nullable().optional(),
+    closingAmount: nonNegativeSafeInteger.nullable().optional(),
+    expectedAmount: nonNegativeSafeInteger.nullable().optional(),
+    difference: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
     notes: z.string().max(500).nullable().optional(),
     createdAt: nonNegativeSafeInteger.optional(),
     lastKnownSyncSeq: nonNegativeSafeInteger,
