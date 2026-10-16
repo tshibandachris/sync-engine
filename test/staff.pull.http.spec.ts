@@ -2,7 +2,6 @@ import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import request from 'supertest';
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import * as schema from '../src/schema.js';
@@ -21,7 +20,6 @@ import {
 
 describe('Staff pull / HTTP security', () => {
   let pg: TestPostgres;
-  let db: NodePgDatabase<typeof schema>;
   let app: INestApplication;
   let jwt: JwtService;
   let tokenA: string;
@@ -33,7 +31,6 @@ describe('Staff pull / HTTP security', () => {
 
   beforeAll(async () => {
     pg = await startTestPostgres();
-    db = drizzle(pg.appPool, { schema });
     jwt = createTestJwtService();
     tokenA = signAgentToken(agentA, jwt, tenantA);
     tokenB = signAgentToken(randomUUID(), jwt, tenantB);
