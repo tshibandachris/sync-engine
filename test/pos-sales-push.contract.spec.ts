@@ -61,6 +61,7 @@ describe('POS sales push contract', () => {
     const total = overrides.total ?? 1000;
     const quantity = overrides.quantity ?? 1;
     const isVoid = overrides.is_void ?? false;
+    const { quantity: _quantity, ...saleOverrides } = overrides;
     return {
       id, cash_session_id: sessionId, staff_id: staffId, sale_number: 'S-' + id.slice(0, 8),
       total, payment_method: 'cash', cash_amount: total, mobile_amount: 0,
@@ -71,7 +72,7 @@ describe('POS sales push contract', () => {
         movement_type: isVoid ? 'void' : 'sale', quantity_delta: isVoid ? 1 : -1,
         reference_id: id, reference_type: 'sale', unit_cost: null, notes: null,
         created_at: now, updated_at: now, created_by: staffId }],
-      ...overrides,
+      ...saleOverrides,
     };
   }
 
