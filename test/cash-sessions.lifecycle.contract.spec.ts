@@ -91,4 +91,27 @@ describe('Cash sessions lifecycle', () => {
     const reopen = await push({ id: item.id, status: 'open', lastKnownSyncSeq: closed.body.syncSeq });
     expect(reopen.status).toBe(409);
   });
+  it('rejects closed creation and permits only notes changes after closing', async () => {
+    const staff = await staffId();
+    const invalid = await push(payload(staff, { status: 'closed' }));
+    expect(invalid.status).toBe(409);
+
+    const item = payload(staff);
+    expect((await push(item)).status).toBe(201);
+    const closed = await request(app.getHttpServer()).post('/cash-sessions/' + item.id + '/close')
+      .set('Authorization', 'Bearer ' + token).send({ closingAmount: 10000 });
+    expect(closed.status).toBe(201);
+
+    const notes = await push({ id: item.id, status: 'closed', notes: 'Verified', lastKnownSyncSeq: closed.body.syncSeq });
+    expect(notes.status).toBe(201);
+    expect(notes.body.cash_sessions[0].status).toBe('applied');
+
+    const mutation = await push({
+      id: item.id, status: 'closed', openingAmount: 1,
+      lastKnownSyncSeq: notes.body.cash_sessions[0].sync_seq,
+    });
+    expect(mutation.status).toBe(409);
+    expect(mutation.body.message).toContain('notes');
+  });
+
 });
