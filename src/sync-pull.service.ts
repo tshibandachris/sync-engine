@@ -212,7 +212,15 @@ export class SyncPullService {
           AND p.sync_seq > ${sinceSeq}
       )
 
-      SELECT *
+      SELECT
+        entity_type,
+        id,
+        created_at,
+        updated_at,
+        deleted_at,
+        first_sync_seq,
+        sync_seq,
+        payload
       FROM events
       ORDER BY sync_seq ASC, entity_type ASC, id ASC
       LIMIT ${safeLimit + 1}
