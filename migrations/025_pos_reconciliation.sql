@@ -1,4 +1,4 @@
--- 024_pos_reconciliation.sql
+-- 025_pos_reconciliation.sql
 -- Reconciliation is a derived view; historical close fields remain immutable.
 
 BEGIN;
