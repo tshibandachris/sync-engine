@@ -67,9 +67,16 @@ export class PosSalesPushService {
             if (!orig.rows.length) throw new BadRequestException('original sale not found');
             const o = orig.rows[0] as any;
             const originalLines = await tx.execute(sql`SELECT product_id,quantity FROM sale_lines WHERE tenant_id=${tenantId}::uuid AND sale_id=${s.voided_sale_id}::uuid`);
+            const unmatchedOriginalLines = [...originalLines.rows] as any[];
+            const lineMirror = s.lines.length === unmatchedOriginalLines.length && s.lines.every(line => {
+              const index = unmatchedOriginalLines.findIndex(originalLine =>
+                originalLine.product_id === line.product_id && Number(originalLine.quantity) === -line.quantity);
+              if (index < 0) return false;
+              unmatchedOriginalLines.splice(index, 1);
+              return true;
+            });
             if (Boolean(o.is_void) || s.total !== -Number(o.total) || s.cash_amount !== -Number(o.cash_amount) ||
-              s.mobile_amount !== -Number(o.mobile_amount) || originalLines.rows.length !== s.lines.length ||
-              !s.lines.every(l => (originalLines.rows as any[]).some(r => r.product_id === l.product_id && Number(r.quantity) === -l.quantity))) {
+              s.mobile_amount !== -Number(o.mobile_amount) || !lineMirror) {
               throw new BadRequestException('void amounts do not mirror original sale');
             }
           }
