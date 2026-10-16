@@ -41,7 +41,7 @@ export interface SyncSitePayload {
 }
 
 interface SyncEventRow {
-  entity_type: 'check_in' | 'mission' | 'site';
+  entity_type: 'check_in' | 'mission' | 'site' | 'product';
 
   id: string;
 
@@ -78,6 +78,8 @@ interface SyncEventRow {
   first_sync_seq: number | null;
 
   sync_seq: number;
+  sku: string | null; barcode: string | null; category: string | null;
+  price: number | null; cost: number | null; stock_alert: number | null; is_active: boolean | null;
 }
 
 export class SyncPullService {
@@ -123,7 +125,14 @@ export class SyncPullService {
           ci.updated_at,
           ci.deleted_at,
           NULL::bigint AS first_sync_seq,
-          ci.sync_seq
+          ci.sync_seq,
+          NULL::text AS sku,
+          NULL::text AS barcode,
+          NULL::text AS category,
+          NULL::integer AS price,
+          NULL::integer AS cost,
+          NULL::integer AS stock_alert,
+          NULL::boolean AS is_active
         FROM check_ins ci
         WHERE ci.agent_id = ${agentId}
           AND ci.tenant_id = ${tenantId}::uuid
@@ -150,7 +159,14 @@ export class SyncPullService {
           m.updated_at,
           m.deleted_at,
           m.first_sync_seq,
-          m.sync_seq
+          m.sync_seq,
+          NULL::text AS sku,
+          NULL::text AS barcode,
+          NULL::text AS category,
+          NULL::integer AS price,
+          NULL::integer AS cost,
+          NULL::integer AS stock_alert,
+          NULL::boolean AS is_active
         FROM missions m
         WHERE m.agent_id = ${agentId}
           AND m.tenant_id = ${tenantId}::uuid
@@ -177,7 +193,14 @@ export class SyncPullService {
           s.updated_at,
           s.deleted_at,
           s.first_sync_seq,
-          s.sync_seq
+          s.sync_seq,
+          NULL::text AS sku,
+          NULL::text AS barcode,
+          NULL::text AS category,
+          NULL::integer AS price,
+          NULL::integer AS cost,
+          NULL::integer AS stock_alert,
+          NULL::boolean AS is_active
         FROM sites s
         WHERE s.tenant_id = ${tenantId}::uuid
           AND s.sync_seq > ${sinceSeq}
@@ -197,6 +220,21 @@ export class SyncPullService {
                 AND ci.site_id = s.id
             )
           )
+
+        UNION ALL
+
+        SELECT 'product'::text AS entity_type, p.id,
+          NULL::uuid AS mission_id, NULL::uuid AS site_id, NULL::uuid AS agent_id,
+          NULL::text AS title, p.name,
+          NULL::double precision AS latitude, NULL::double precision AS longitude,
+          NULL::bigint AS check_in_time, NULL::bigint AS check_out_time,
+          NULL::double precision AS check_in_lat, NULL::double precision AS check_in_lng,
+          NULL::text AS check_in_method, p.created_at, p.updated_at, p.deleted_at,
+          p.first_sync_seq, p.sync_seq, p.sku, p.barcode, p.category, p.price, p.cost,
+          p.stock_alert, p.is_active
+        FROM products p
+        WHERE p.tenant_id = ${tenantId}::uuid AND p.sync_seq > ${sinceSeq}
+
       )
 
       SELECT *
@@ -329,6 +367,13 @@ export class SyncPullService {
             : Number(row.first_sync_seq),
 
         sync_seq: Number(row.sync_seq),
+        sku: row.sku == null ? null : String(row.sku),
+        barcode: row.barcode == null ? null : String(row.barcode),
+        category: row.category == null ? null : String(row.category),
+        price: row.price == null ? null : Number(row.price),
+        cost: row.cost == null ? null : Number(row.cost),
+        stock_alert: row.stock_alert == null ? null : Number(row.stock_alert),
+        is_active: row.is_active == null ? null : Boolean(row.is_active),
       };
     });
 
@@ -356,6 +401,7 @@ export class SyncPullService {
         updated: [] as SyncSitePayload[],
         deleted: [] as string[],
       },
+      products: { created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], deleted: [] as Record<string, unknown>[] },
     };
 
     for (const row of consumedRows) {
@@ -366,8 +412,15 @@ export class SyncPullService {
         else if (row.entity_type === 'mission') {
           changes.missions.deleted.push(row.id);
         }
-        else {
+        else if (row.entity_type === 'site') {
           changes.sites.deleted.push(row.id);
+        } else {
+          changes.products.deleted.push({
+            id: row.id, name: row.name!, sku: row.sku, barcode: row.barcode, category: row.category,
+            price: row.price!, cost: row.cost, stockAlert: row.stock_alert!, isActive: row.is_active!,
+            createdAt: row.created_at!, updatedAt: row.updated_at!, deletedAt: row.deleted_at,
+            lastKnownSyncSeq: row.sync_seq,
+          });
         }
 
         continue;
@@ -414,6 +467,18 @@ export class SyncPullService {
           changes.missions.updated.push(payload);
         }
 
+        continue;
+      }
+
+      if (row.entity_type === 'product') {
+        const payload = {
+          id: row.id, name: row.name!, sku: row.sku, barcode: row.barcode, category: row.category,
+          price: row.price!, cost: row.cost, stockAlert: row.stock_alert!, isActive: row.is_active!,
+          createdAt: row.created_at!, updatedAt: row.updated_at!, deletedAt: row.deleted_at,
+          lastKnownSyncSeq: row.sync_seq,
+        };
+        if (row.first_sync_seq !== null && row.first_sync_seq > sinceSeq) changes.products.created.push(payload);
+        else changes.products.updated.push(payload);
         continue;
       }
 

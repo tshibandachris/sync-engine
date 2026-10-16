@@ -1,0 +1,66 @@
+name: POS migration smoke test
+
+on:
+  push:
+    branches: [feature/pos-domain-schema]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pos-migrations:
+    name: Apply migrations 001-024 and run POS integration checks on fresh PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sync_engine_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sync_engine_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+      - name: Apply every migration to the empty database
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: sync_engine_test
+        run: |
+          set -euo pipefail
+          for file in migrations/*.sql; do
+            echo "Applying $file"
+            psql -v ON_ERROR_STOP=1 -f "$file"
+          done
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: Run integration and regression tests
+        run: npm test -- --reporter=verbose
+      - name: Verify POS sync triggers and tenant RLS
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: sync_engine_test
+        run: psql -v ON_ERROR_STOP=1 -f test/sql/pos-migrations-smoke.sql

@@ -6,6 +6,9 @@ import {
   jsonb,
   pgTable,
   text,
+  varchar,
+  integer,
+  boolean,
   unique,
   uniqueIndex,
   uuid,
@@ -36,6 +39,27 @@ export const missions = pgTable('missions', {
   syncSeq: bigint('sync_seq', { mode: 'number' }),
   firstSyncSeq: bigint('first_sync_seq', { mode: 'number' }),
 });
+
+export const products = pgTable('products', {
+  id: uuid('id').primaryKey(),
+  tenantId: uuid('tenant_id').notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  sku: varchar('sku', { length: 64 }),
+  barcode: varchar('barcode', { length: 64 }),
+  category: varchar('category', { length: 80 }),
+  price: integer('price').notNull(),
+  cost: integer('cost'),
+  stockAlert: integer('stock_alert').notNull().default(5),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  deletedAt: bigint('deleted_at', { mode: 'number' }),
+  syncSeq: bigint('sync_seq', { mode: 'number' }).notNull(),
+  firstSyncSeq: bigint('first_sync_seq', { mode: 'number' }).notNull(),
+});
+
+export type Product = typeof products.$inferSelect;
+export type NewProduct = typeof products.$inferInsert;
 
 export const checkIns = pgTable('check_ins', {
   id: uuid('id').primaryKey(),

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import { requireTenantId } from './tenant-id.js';
+import { productUpsertSchema, type ProductUpsert } from './pos/schemas/product.schema.js';
 
 export type CheckInMethod = 'GPS' | 'QR_CODE' | 'MANUAL';
 
@@ -29,14 +30,15 @@ export interface UpdateCheckIn {
   check_in_method?: CheckInMethod;
 }
 
+export interface ProductPushResult {
+  entity_id: string; status: 'applied' | 'idempotent' | 'conflict' | 'invalid';
+  sync_seq?: number; errors?: string[];
+}
 export interface SyncPushDto {
   last_pulled_at?: number | null;
   changes: {
-    check_ins?: {
-      created?: CreateCheckIn[];
-      updated?: UpdateCheckIn[];
-      deleted?: string[];
-    };
+    check_ins?: { created?: CreateCheckIn[]; updated?: UpdateCheckIn[]; deleted?: string[] };
+    products?: ProductUpsert[];
   };
 }
 
@@ -62,12 +64,18 @@ export const IDEMPOTENCY_REPLAY = Symbol('idempotencyReplay');
 export interface PushResponse {
   applied: { created: number; updated: number; deleted: number };
   conflicts: PushConflict[];
+  products?: ProductPushResult[];
 }
 
 const EMPTY_RESPONSE: PushResponse = {
   applied: { created: 0, updated: 0, deleted: 0 },
   conflicts: [],
 };
+function productFields(p: ProductUpsert) {
+  return { name: p.name.trim(), sku: p.sku ?? null, barcode: p.barcode ?? null,
+    category: p.category ?? null, price: p.price, cost: p.cost ?? null,
+    stockAlert: p.stockAlert ?? 5, isActive: p.isActive ?? true, deletedAt: p.deletedAt ?? null };
+}
 
 export class SyncPushService {
   private readonly db: NodePgDatabase<typeof schema>;
@@ -85,8 +93,27 @@ export class SyncPushService {
     if (!agentId) throw new BadRequestException('agentId requis.');
     const tenantId = requireTenantId(tenantIdRaw, 'tenantId (push)');
 
-    const checkIns = dto.changes.check_ins;
-    if (!checkIns) return { ...EMPTY_RESPONSE };
+    const checkIns = dto.changes.check_ins ?? {};
+    const productResults: ProductPushResult[] = [];
+    const rawProducts: unknown = dto.changes.products ?? [];
+    const incomingProducts: unknown[] = Array.isArray(rawProducts) ? rawProducts : [];
+    if (!Array.isArray(rawProducts)) productResults.push({ entity_id: '', status: 'invalid', errors: ['changes.products doit être un tableau'] });
+    const validProducts: ProductUpsert[] = [];
+    for (const item of incomingProducts) {
+      const parsed = productUpsertSchema.safeParse(item);
+      if (!parsed.success) {
+        const entityId = item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' ? item.id : '';
+        productResults.push({
+          entity_id: entityId,
+          status: 'invalid',
+          errors: parsed.error.issues.map((issue) =>
+            `${issue.path.length ? issue.path.join('.') : 'payload'}: ${issue.message}`,
+          ),
+        });
+      } else {
+        validProducts.push(parsed.data);
+      }
+    }
 
     const created = checkIns.created ?? [];
     const updated = checkIns.updated ?? [];
@@ -109,6 +136,7 @@ export class SyncPushService {
       }
 
       const response: PushResponse = { applied: { created: 0, updated: 0, deleted: 0 }, conflicts: [] };
+      if ((Array.isArray(rawProducts) && rawProducts.length > 0) || productResults.length > 0) response.products = [...productResults];
 
       if (created.length > 0) {
         const missionIds = Array.from(new Set(created.map((item) => item.mission_id)));
@@ -328,6 +356,69 @@ export class SyncPushService {
           throw new ForbiddenException('Suppression refusee : certains enregistrements sont absents, non possedes ou deja supprimes.');
         }
         response.applied.deleted = deleted.length;
+      }
+
+      for (const item of validProducts) {
+        const b = productFields(item);
+        const found = await tx.execute(sql`
+          SELECT id, name, sku, barcode, category, price, cost, stock_alert, is_active, deleted_at, sync_seq
+          FROM products WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+        `);
+        let row = found.rows[0] as Record<string, unknown> | undefined;
+        if (!row) {
+          const inserted = await tx.execute(sql`
+            INSERT INTO products (id, tenant_id, name, sku, barcode, category, price, cost, stock_alert, is_active, created_at, updated_at, deleted_at, sync_seq, first_sync_seq)
+            VALUES (${item.id}::uuid, ${tenantId}::uuid, ${b.name}, ${b.sku}, ${b.barcode}, ${b.category}, ${b.price}, ${b.cost}, ${b.stockAlert}, ${b.isActive}, ${item.createdAt ?? Date.now()}, ${Date.now()}, ${b.deletedAt}, 0, 0)
+            ON CONFLICT (id) DO NOTHING RETURNING id, sync_seq
+          `);
+          const createdRow = inserted.rows[0] as Record<string, unknown> | undefined;
+          if (createdRow) {
+            response.products!.push({ entity_id: item.id, status: 'applied', sync_seq: Number(createdRow.sync_seq) });
+            continue;
+          }
+          const retry = await tx.execute(sql`
+            SELECT id, name, sku, barcode, category, price, cost, stock_alert, is_active, deleted_at, sync_seq
+            FROM products WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+          `);
+          row = retry.rows[0] as Record<string, unknown> | undefined;
+          if (!row) {
+            response.products!.push({ entity_id: item.id, status: 'conflict', errors: ['UUID déjà utilisé ou produit inaccessible dans ce tenant'] });
+            continue;
+          }
+        }
+        const sameFields = (r: Record<string, unknown>) =>
+          r.name === b.name && (r.sku ?? null) === b.sku && (r.barcode ?? null) === b.barcode &&
+          (r.category ?? null) === b.category && Number(r.price) === b.price &&
+          (r.cost === null ? null : Number(r.cost)) === b.cost &&
+          Number(r.stock_alert) === b.stockAlert && r.is_active === b.isActive &&
+          (r.deleted_at === null ? null : Number(r.deleted_at)) === b.deletedAt;
+        const currentSeq = Number(row.sync_seq);
+        if (currentSeq !== item.lastKnownSyncSeq) {
+          response.products!.push(sameFields(row)
+            ? { entity_id: item.id, status: 'idempotent', sync_seq: currentSeq }
+            : { entity_id: item.id, status: 'conflict', sync_seq: currentSeq });
+          continue;
+        }
+        const updatedProduct = await tx.execute(sql`
+          UPDATE products SET name = ${b.name}, sku = ${b.sku}, barcode = ${b.barcode},
+            category = ${b.category}, price = ${b.price}, cost = ${b.cost},
+            stock_alert = ${b.stockAlert}, is_active = ${b.isActive}, deleted_at = ${b.deletedAt}
+          WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid AND sync_seq = ${item.lastKnownSyncSeq}
+          RETURNING sync_seq
+        `);
+        if (updatedProduct.rows.length) {
+          response.products!.push({ entity_id: item.id, status: 'applied', sync_seq: Number((updatedProduct.rows[0] as Record<string, unknown>).sync_seq) });
+        } else {
+          const latest = await tx.execute(sql`
+            SELECT name, sku, barcode, category, price, cost, stock_alert, is_active, deleted_at, sync_seq
+            FROM products WHERE id = ${item.id}::uuid AND tenant_id = ${tenantId}::uuid
+          `);
+          const latestRow = latest.rows[0] as Record<string, unknown> | undefined;
+          if (!latestRow) response.products!.push({ entity_id: item.id, status: 'conflict', errors: ['Produit introuvable ou inaccessible'] });
+          else response.products!.push(sameFields(latestRow)
+            ? { entity_id: item.id, status: 'idempotent', sync_seq: Number(latestRow.sync_seq) }
+            : { entity_id: item.id, status: 'conflict', sync_seq: Number(latestRow.sync_seq) });
+        }
       }
 
       if (idempotencyKey) {
