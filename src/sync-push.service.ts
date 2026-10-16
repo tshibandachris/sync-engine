@@ -722,8 +722,10 @@ export class SyncPushService {
       return response;
     }, { write: true });
     } catch (err) {
-      const pgError = err as { code?: string; constraint?: string };
-      if (pgError?.code === '23505' && pgError.constraint === 'idx_cash_sessions_one_open_per_staff') {
+      const pgError = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
+      const rootError = pgError?.cause ?? pgError;
+      if ((pgError?.code === '23505' || rootError?.code === '23505') &&
+          (pgError?.constraint === 'idx_cash_sessions_one_open_per_staff' || rootError?.constraint === 'idx_cash_sessions_one_open_per_staff')) {
         throw new ConflictException('Ce caissier possède déjà une session de caisse ouverte.');
       }
       throw err;
