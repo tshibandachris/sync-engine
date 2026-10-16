@@ -222,6 +222,17 @@ export class TestPostgres {
     'utf8',
   );
 
+  // Apply POS migrations in production order before POS integration tests.
+  const posMigrations = [
+    '018_products.sql',
+    '019_staff.sql',
+    '020_cash_sessions.sql',
+    '021_sales.sql',
+    '022_sale_lines.sql',
+    '023_stock_movements.sql',
+    '024_inventory_counts.sql',
+  ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
+
     console.log(
       `[TestPostgres] Migration 001: ${migration1File}`,
     );
@@ -254,6 +265,7 @@ export class TestPostgres {
   await pool.query(migration17);
 
   await pool.query(migration16);
+  for (const migration of posMigrations) await pool.query(migration);
 
     /*
      * ========================================================

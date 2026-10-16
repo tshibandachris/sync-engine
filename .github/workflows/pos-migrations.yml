@@ -9,9 +9,9 @@ on:
 
 jobs:
   pos-migrations:
-    name: Apply migrations 001-020 on fresh PostgreSQL
+    name: Apply migrations 001-024 and run POS integration checks on fresh PostgreSQL
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -45,6 +45,17 @@ jobs:
             echo "Applying $file"
             psql -v ON_ERROR_STOP=1 -f "$file"
           done
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: Run integration and regression tests
+        run: npm test -- --reporter=verbose
       - name: Verify POS sync triggers and tenant RLS
         env:
           PGHOST: localhost
