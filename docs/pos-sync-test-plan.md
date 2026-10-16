@@ -38,7 +38,7 @@ Prove that the POS schema and sync engine preserve offline-created records acros
 
 ## Cash-session lifecycle boundary
 
-- Cash-session sync may create only `open` sessions; clients cannot supply `closed_at`, `closing_amount`, `expected_amount`, or `difference`.
+- Cash-session sync may create only `open` sessions. Push never sets close fields; if a client echoes pulled close fields, they must exactly match the server values and are never written back.
 - A session can transition from `open` to `closed` only through authenticated `POST /cash-sessions/:id/close`; reopening is always rejected.
 - The close endpoint calculates `expected_amount = opening_amount + SUM(sales.cash_amount)` on the server and derives `difference = closing_amount - expected_amount`; client-supplied calculations are ignored.
 - Closed sessions permit notes-only updates; changing structural fields is a conflict.
