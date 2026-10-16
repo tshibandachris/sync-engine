@@ -168,7 +168,8 @@ export class SyncPushService {
       }
     }
 
-    return await withTenant(this.db, tenantId, async (tx) => {
+    try {
+      return await withTenant(this.db, tenantId, async (tx) => {
 
       if (idempotencyKey) {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${agentId} || ':' || ${idempotencyKey}))`);
