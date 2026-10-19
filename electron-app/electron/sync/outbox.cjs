@@ -3,7 +3,7 @@ const { randomUUID } = require('node:crypto');
 const SUPPORTED_TYPES = new Set(['products', 'staff', 'cash_sessions', 'sales']);
 
 function ensureOutboxSchema(db) {
-  db.exec(\`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS outbox_batches (
       idempotency_key TEXT PRIMARY KEY,
       payload_json TEXT NOT NULL,
@@ -15,12 +15,12 @@ function ensureOutboxSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_outbox_batches_state_created
       ON outbox_batches(state, created_at);
-  \`);
+  `);
 }
 
 function enqueueOutbox(db, { entityType, entityId, operation, payload, now = Date.now() }) {
   ensureOutboxSchema(db);
-  if (!SUPPORTED_TYPES.has(entityType)) throw new Error(\`Unsupported outbox entity type: \${entityType}\`);
+  if (!SUPPORTED_TYPES.has(entityType)) throw new Error(`Unsupported outbox entity type: ${entityType}`);
   if (typeof entityId !== 'string' || !entityId.trim()) throw new Error('entityId must be a non-empty string');
   if (!['create', 'update', 'delete'].includes(operation)) throw new Error('Unsupported outbox operation');
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('payload must be an object');
@@ -28,12 +28,12 @@ function enqueueOutbox(db, { entityType, entityId, operation, payload, now = Dat
   const normalized = { ...payload, id: entityId };
   if (operation === 'delete') {
     if (entityType === 'cash_sessions' || entityType === 'sales') {
-      throw new Error(\`Delete is not supported for \${entityType}; use the dedicated business workflow.\`);
+      throw new Error(`Delete is not supported for ${entityType}; use the dedicated business workflow.`);
     }
     normalized.deletedAt = normalized.deletedAt ?? now;
   }
 
-  db.prepare(\`
+  db.prepare(`
     INSERT INTO outbox(entity_type, entity_id, operation, payload_json, created_at, attempts, last_error)
     VALUES (?, ?, ?, ?, ?, 0, NULL)
     ON CONFLICT(entity_type, entity_id, operation) DO UPDATE SET
@@ -41,20 +41,20 @@ function enqueueOutbox(db, { entityType, entityId, operation, payload, now = Dat
       created_at = excluded.created_at,
       attempts = 0,
       last_error = NULL
-  \`).run(entityType, entityId, operation, JSON.stringify(normalized), now);
+  `).run(entityType, entityId, operation, JSON.stringify(normalized), now);
 }
 
 function buildChanges(rows) {
   const changes = { products: [], staff: [], cash_sessions: [], sales: [] };
   for (const row of rows) {
     if (!SUPPORTED_TYPES.has(row.entity_type)) {
-      throw new Error(\`Unsupported queued entity type: \${row.entity_type}\`);
+      throw new Error(`Unsupported queued entity type: ${row.entity_type}`);
     }
     let payload;
     try { payload = JSON.parse(row.payload_json); }
-    catch { throw new Error(\`Invalid JSON in outbox row \${row.id}\`); }
+    catch { throw new Error(`Invalid JSON in outbox row ${row.id}`); }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.id !== row.entity_id) {
-      throw new Error(\`Invalid payload in outbox row \${row.id}\`);
+      throw new Error(`Invalid payload in outbox row ${row.id}`);
     }
     if (row.entity_type === 'products') {
       changes.products.push({
@@ -81,7 +81,7 @@ function buildChanges(rows) {
     } else {
       if (row.operation === 'delete') throw new Error('Sales cannot be deleted through sync push.');
       if (!Array.isArray(payload.lines) || payload.lines.length < 1 || !Array.isArray(payload.stock_movements)) {
-        throw new Error(\`Sale \${row.entity_id} must contain lines and stock_movements arrays.\`);
+        throw new Error(`Sale ${row.entity_id} must contain lines and stock_movements arrays.`);
       }
       changes.sales.push(payload);
     }
@@ -108,13 +108,17 @@ function preparePushBatch(db, { limit = 100, now = Date.now() } = {}) {
 
   const payload = { changes: buildChanges(rows) };
   const idempotencyKey = randomUUID();
-  const ids = rows.map((row) => row.id);
-  db.prepare(\`
+  // Persist row snapshots so acknowledging an old request never deletes a newer edit.
+  const snapshots = rows.map((row) => ({
+    id: row.id, entity_type: row.entity_type, entity_id: row.entity_id,
+    operation: row.operation, payload_json: row.payload_json,
+  }));
+  db.prepare(`
     INSERT INTO outbox_batches(idempotency_key, payload_json, outbox_ids_json, created_at, state)
     VALUES (?, ?, ?, ?, 'pending')
-  \`).run(idempotencyKey, JSON.stringify(payload), JSON.stringify(ids), now);
+  `).run(idempotencyKey, JSON.stringify(payload), JSON.stringify(snapshots), now);
 
-  return { idempotencyKey, payload, outboxIds: ids, createdAt: now, reused: false };
+  return { idempotencyKey, payload, outboxIds: snapshots, createdAt: now, reused: false };
 }
 
 function findResult(results, entityId) {
@@ -174,11 +178,11 @@ function applyPushResponse(db, batch, response, now = Date.now()) {
         retained++;
       }
     }
-    db.prepare(\`
+    db.prepare(`
       UPDATE outbox_batches
       SET state = 'completed', response_json = ?, completed_at = ?
       WHERE idempotency_key = ?
-    \`).run(JSON.stringify(response), now, batch.idempotencyKey);
+    `).run(JSON.stringify(response), now, batch.idempotencyKey);
   });
   tx();
   return { acknowledged, retained, replay: false };
