@@ -7,30 +7,63 @@ function normalizeBaseUrl(value) {
   return url.toString().replace(/\/$/, '');
 }
 
-async function pullChanges({ baseUrl, token, lastPulledAt = 0, fetchImpl = fetch }) {
+async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, timeoutMs = 15000, label }) {
   if (!token) throw new Error('EDEN_SYNC_TOKEN is required; no token is stored in source code.');
-  const base = normalizeBaseUrl(baseUrl);
-  const response = await fetchImpl(`${base}/sync/pull`, {
+  const response = await fetchImpl(url, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
       accept: 'application/json',
+      ...headers,
     },
-    body: JSON.stringify({ last_pulled_at: lastPulledAt, limit: 1000 }),
-    signal: AbortSignal.timeout(15000),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const raw = await response.text();
-  let body;
-  try { body = raw ? JSON.parse(raw) : {}; } catch { throw new Error(`Sync API returned invalid JSON (HTTP ${response.status}).`); }
+  let parsed;
+  try { parsed = raw ? JSON.parse(raw) : {}; }
+  catch { throw new Error(`Sync API returned invalid JSON (HTTP ${response.status}).`); }
   if (!response.ok) {
-    const code = body?.code || body?.error || `HTTP ${response.status}`;
-    throw new Error(`Pull failed: ${code}${body?.message ? ` — ${body.message}` : ''}`);
+    const code = parsed?.code || parsed?.error || `HTTP ${response.status}`;
+    const error = new Error(`${label} failed: ${code}${parsed?.message ? ` — ${parsed.message}` : ''}`);
+    error.status = response.status;
+    error.code = parsed?.code || parsed?.error || null;
+    error.responseBody = parsed;
+    throw error;
   }
+  return parsed;
+}
+
+async function pullChanges({ baseUrl, token, lastPulledAt = 0, fetchImpl = fetch }) {
+  const base = normalizeBaseUrl(baseUrl);
+  const body = await requestJson({
+    url: `${base}/sync/pull`, token, fetchImpl, label: 'Pull',
+    body: { last_pulled_at: lastPulledAt, limit: 1000 },
+  });
   if (!body || typeof body.timestamp !== 'number' || !body.changes || typeof body.changes !== 'object') {
     throw new Error('Sync API response does not match the expected pull contract.');
   }
   return body;
 }
 
-module.exports = { pullChanges };
+async function pushChanges({ baseUrl, token, idempotencyKey, payload, fetchImpl = fetch }) {
+  if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
+    throw new Error('A persisted Idempotency-Key is required for sync push.');
+  }
+  if (!payload || typeof payload !== 'object' || !payload.changes || typeof payload.changes !== 'object') {
+    throw new Error('Push payload does not match the expected sync contract.');
+  }
+  const base = normalizeBaseUrl(baseUrl);
+  const body = await requestJson({
+    url: `${base}/sync/push`, token, fetchImpl, label: 'Push',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: payload,
+  });
+  if (!body || typeof body !== 'object' || !body.applied || !Array.isArray(body.conflicts)) {
+    throw new Error('Sync API response does not match the expected push contract.');
+  }
+  return body;
+}
+
+module.exports = { pullChanges, pushChanges, normalizeBaseUrl };
