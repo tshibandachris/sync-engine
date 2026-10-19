@@ -221,11 +221,6 @@ function applyPulledPage(db, response) {
       last_known_sync_seq = excluded.last_known_sync_seq
     WHERE excluded.last_known_sync_seq >= synced_entities.last_known_sync_seq
   `);
-  const deleteEntity = db.prepare(`
-    UPDATE synced_entities SET deleted_at = ?, last_known_sync_seq = ?
-    WHERE entity_type = ? AND id = ?
-      AND ? >= last_known_sync_seq
-  `);
   const state = db.prepare(`
     INSERT INTO sync_state(key, value) VALUES ('pull_cursor', ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -258,10 +253,8 @@ function applyPulledPage(db, response) {
         const deletedAt = item && typeof item === 'object'
           ? (item.deletedAt ?? item.deleted_at ?? Date.now())
           : Date.now();
-        deleteEntity.run(deletedAt, safeSeq, entityType, id, safeSeq);
-        if (entityType === 'staff') {
-          upsertEntity.run(entityType, id, JSON.stringify(item), deletedAt, safeSeq);
-        }
+        const tombstone = item && typeof item === 'object' ? item : { id };
+        upsertEntity.run(entityType, id, JSON.stringify(tombstone), deletedAt, safeSeq);
       }
     }
 
