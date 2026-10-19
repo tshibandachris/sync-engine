@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "check": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/db/client.cjs && node --check electron/sync/api-client.cjs",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "test": "node --test test/*.test.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0"
