@@ -146,18 +146,28 @@ function applyPushResponse(db, batch, response, now = Date.now()) {
   let retained = 0;
 
   const tx = db.transaction(() => {
-    for (const id of batch.outboxIds) {
+    for (const snapshot of batch.outboxIds) {
+      const id = typeof snapshot === 'number' ? snapshot : snapshot.id;
       const row = getOutbox.get(id);
       if (!row) continue;
+      const current = db.prepare('SELECT entity_type, entity_id, operation, payload_json FROM outbox WHERE id = ?').get(id);
+      const sameSnapshot = !snapshot.payload_json || (
+        current.entity_type === snapshot.entity_type && current.entity_id === snapshot.entity_id &&
+        current.operation === snapshot.operation && current.payload_json === snapshot.payload_json
+      );
       let result = null;
       if (row.entity_type === 'products') result = findResult(response.products, row.entity_id);
       else if (row.entity_type === 'staff') result = findResult(response.staff, row.entity_id);
       else if (row.entity_type === 'cash_sessions') result = findResult(response.cash_sessions, row.entity_id);
       else if (row.entity_type === 'sales') result = findResult(response.results, row.entity_id);
 
-      if (isConfirmed(result)) {
+      if (isConfirmed(result) && sameSnapshot) {
         remove.run(id);
         acknowledged++;
+      } else if (!sameSnapshot) {
+        // The response concerns an older payload. Keep the newer edit queued.
+        db.prepare('UPDATE outbox SET attempts = 0, last_error = NULL WHERE id = ?').run(id);
+        retained++;
       } else {
         const detail = result?.errors?.join('; ') || result?.status || 'No per-entity success confirmation; retained for retry/review.';
         fail.run(String(detail).slice(0, 2000), id);
