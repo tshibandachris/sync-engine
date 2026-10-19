@@ -8,7 +8,7 @@ let windowRef;
 let status = { state: 'starting', message: 'Initialisation…', productCount: 0, lastCursor: 0 };
 
 function readStatus() {
-  return { ...status, productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL').get().n) : 0 };
+  return { ...status, lastCursor: db ? getCursor(db) : status.lastCursor, productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL').get().n) : 0 };
 }
 
 async function doPull() {
