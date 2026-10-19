@@ -126,6 +126,23 @@ function openDatabase(app) {
       UNIQUE(entity_type, entity_id, operation)
     );
 
+    CREATE TABLE IF NOT EXISTS sync_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS synced_entities (
+      entity_type TEXT NOT NULL,
+      id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      deleted_at INTEGER,
+      last_known_sync_seq INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (entity_type, id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_synced_entities_type_seq
+      ON synced_entities(entity_type, last_known_sync_seq);
+
     CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
     CREATE INDEX IF NOT EXISTS idx_sales_session ON sales(cash_session_id);
     CREATE INDEX IF NOT EXISTS idx_outbox_created ON outbox(created_at, id);
@@ -181,4 +198,84 @@ function applyPulledProducts(db, productChanges) {
   return apply(productChanges || {});
 }
 
-module.exports = { openDatabase, applyPulledProducts };
+
+function getCursor(db) {
+  const row = db.prepare("SELECT value FROM sync_state WHERE key = 'pull_cursor'").get();
+  const cursor = row ? Number(row.value) : 0;
+  return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
+}
+
+function applyPulledPage(db, response) {
+  if (!response || !response.changes || typeof response.timestamp !== 'number' ||
+      !Number.isSafeInteger(response.timestamp) || response.timestamp < 0) {
+    throw new Error('Invalid pull page; cursor was not saved.');
+  }
+
+  const changes = response.changes;
+  const upsertEntity = db.prepare(`
+    INSERT INTO synced_entities (entity_type, id, payload_json, deleted_at, last_known_sync_seq)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(entity_type, id) DO UPDATE SET
+      payload_json = excluded.payload_json,
+      deleted_at = excluded.deleted_at,
+      last_known_sync_seq = excluded.last_known_sync_seq
+    WHERE excluded.last_known_sync_seq >= synced_entities.last_known_sync_seq
+  `);
+  const deleteEntity = db.prepare(`
+    UPDATE synced_entities SET deleted_at = ?, last_known_sync_seq = ?
+    WHERE entity_type = ? AND id = ?
+      AND ? >= last_known_sync_seq
+  `);
+  const state = db.prepare(`
+    INSERT INTO sync_state(key, value) VALUES ('pull_cursor', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `);
+
+  const apply = db.transaction(() => {
+    let productsProcessed = applyPulledProducts(db, changes.products || {});
+    const buckets = [
+      'check_ins', 'missions', 'sites', 'staff', 'cash_sessions',
+      'sales', 'sale_lines', 'stock_movements',
+    ];
+
+    for (const entityType of buckets) {
+      const bucket = changes[entityType] || {};
+      for (const item of [...(bucket.created || []), ...(bucket.updated || [])]) {
+        if (!item || typeof item.id !== 'string') {
+          throw new Error(`Invalid ${entityType} record; cursor was not saved.`);
+        }
+        const seq = Number(item.lastKnownSyncSeq ?? item.sync_seq ?? 0);
+        upsertEntity.run(entityType, item.id, JSON.stringify(item), null,
+          Number.isSafeInteger(seq) && seq >= 0 ? seq : 0);
+      }
+      for (const item of (bucket.deleted || [])) {
+        const id = typeof item === 'string' ? item : item?.id;
+        if (typeof id !== 'string') throw new Error(`Invalid ${entityType} deletion; cursor was not saved.`);
+        const seq = Number(item && typeof item === 'object'
+          ? (item.lastKnownSyncSeq ?? item.sync_seq ?? response.timestamp)
+          : response.timestamp);
+        const safeSeq = Number.isSafeInteger(seq) && seq >= 0 ? seq : response.timestamp;
+        const deletedAt = item && typeof item === 'object'
+          ? (item.deletedAt ?? item.deleted_at ?? Date.now())
+          : Date.now();
+        deleteEntity.run(deletedAt, safeSeq, entityType, id, safeSeq);
+        if (entityType === 'staff') {
+          upsertEntity.run(entityType, id, JSON.stringify(item), deletedAt, safeSeq);
+        }
+      }
+    }
+
+    // Cursor and every entity in this page commit in one SQLite transaction.
+    // A crash or invalid record rolls the entire page back.
+    state.run(String(response.timestamp));
+    return productsProcessed;
+  });
+
+  return apply();
+}
+
+function resetCursor(db) {
+  db.prepare("DELETE FROM sync_state WHERE key = 'pull_cursor'").run();
+}
+
+module.exports = { openDatabase, applyPulledProducts, applyPulledPage, getCursor, resetCursor };
