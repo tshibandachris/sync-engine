@@ -48,7 +48,7 @@ async function pushPending() {
     payload: batch.payload,
   });
   const result = applyPushResponse(db, batch, response);
-  console.log(\`[sync] push batch=\${batch.idempotencyKey}; acknowledged=\${result.acknowledged}; retained=\${result.retained}; replay=\${result.replay}\`);
+  console.log(`[sync] push batch=${batch.idempotencyKey}; acknowledged=${result.acknowledged}; retained=${result.retained}; replay=${result.replay}`);
   return { sent: true, ...result };
 }
 
@@ -67,18 +67,18 @@ async function doSync() {
     status = {
       ...status,
       state: outbox.pending > 0 ? 'pending' : 'synced',
-      message: \`Sync terminée : pull \${finalPull.productsProcessed} produit(s), curseur \${finalPull.cursor}; outbox \${outbox.pending} en attente (\${outbox.failed} avec erreur).\`,
+      message: `Sync terminée : pull ${finalPull.productsProcessed} produit(s), curseur ${finalPull.cursor}; outbox ${outbox.pending} en attente (${outbox.failed} avec erreur).`,
       lastCursor: finalPull.cursor,
       outboxPending: outbox.pending,
       outboxFailed: outbox.failed,
     };
-    console.log(\`[sync] OK pullPages=\${initialPull.pages + (push.sent ? finalPull.pages : 0)}; products=\${initialPull.productsProcessed + (push.sent ? finalPull.productsProcessed : 0)}; cursor=\${finalPull.cursor}; outboxPending=\${outbox.pending}\`);
+    console.log(`[sync] OK pullPages=${initialPull.pages + (push.sent ? finalPull.pages : 0)}; products=${initialPull.productsProcessed + (push.sent ? finalPull.productsProcessed : 0)}; cursor=${finalPull.cursor}; outboxPending=${outbox.pending}`);
   } catch (error) {
     const outbox = getOutboxStatus(db);
     status = {
       ...status,
       state: 'pending',
-      message: \`Synchronisation en attente : \${error.message}. \${outbox.pending} opération(s) conservée(s) dans l’outbox.\`,
+      message: `Synchronisation en attente : ${error.message}. ${outbox.pending} opération(s) conservée(s) dans l’outbox.`,
       outboxPending: outbox.pending,
       outboxFailed: outbox.failed,
     };
