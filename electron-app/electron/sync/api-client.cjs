@@ -12,7 +12,7 @@ async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, 
   const response = await fetchImpl(url, {
     method: 'POST',
     headers: {
-      authorization: \`Bearer \${token}\`,
+      authorization: `Bearer ${token}`,
       'content-type': 'application/json',
       accept: 'application/json',
       ...headers,
@@ -23,10 +23,10 @@ async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, 
   const raw = await response.text();
   let parsed;
   try { parsed = raw ? JSON.parse(raw) : {}; }
-  catch { throw new Error(\`Sync API returned invalid JSON (HTTP \${response.status}).\`); }
+  catch { throw new Error(`Sync API returned invalid JSON (HTTP ${response.status}).`); }
   if (!response.ok) {
-    const code = parsed?.code || parsed?.error || \`HTTP \${response.status}\`;
-    const error = new Error(\`\${label} failed: \${code}\${parsed?.message ? \` — \${parsed.message}\` : ''}\`);
+    const code = parsed?.code || parsed?.error || `HTTP ${response.status}`;
+    const error = new Error(`${label} failed: ${code}${parsed?.message ? ` — ${parsed.message}` : ''}`);
     error.status = response.status;
     error.code = parsed?.code || parsed?.error || null;
     error.responseBody = parsed;
@@ -38,7 +38,7 @@ async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, 
 async function pullChanges({ baseUrl, token, lastPulledAt = 0, fetchImpl = fetch }) {
   const base = normalizeBaseUrl(baseUrl);
   const body = await requestJson({
-    url: \`\${base}/sync/pull\`, token, fetchImpl, label: 'Pull',
+    url: `${base}/sync/pull`, token, fetchImpl, label: 'Pull',
     body: { last_pulled_at: lastPulledAt, limit: 1000 },
   });
   if (!body || typeof body.timestamp !== 'number' || !body.changes || typeof body.changes !== 'object') {
@@ -56,7 +56,7 @@ async function pushChanges({ baseUrl, token, idempotencyKey, payload, fetchImpl 
   }
   const base = normalizeBaseUrl(baseUrl);
   const body = await requestJson({
-    url: \`\${base}/sync/push\`, token, fetchImpl, label: 'Push',
+    url: `${base}/sync/push`, token, fetchImpl, label: 'Push',
     headers: { 'Idempotency-Key': idempotencyKey },
     body: payload,
   });
