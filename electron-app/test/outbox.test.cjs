@@ -99,3 +99,23 @@ test('a completed batch cannot acknowledge rows a second time', () => {
     f.cleanup();
   }
 });
+
+test('does not drop a newer edit queued while an older batch is in flight', () => {
+  const f = fixture();
+  try {
+    enqueueOutbox(f.db, { entityType: 'products', entityId: 'p-1', operation: 'update', payload: product('p-1', 'Version A'), now: 10 });
+    const batch = preparePushBatch(f.db, { now: 11 });
+    enqueueOutbox(f.db, { entityType: 'products', entityId: 'p-1', operation: 'update', payload: product('p-1', 'Version B'), now: 12 });
+    const result = applyPushResponse(f.db, batch, {
+      applied: { created: 0, updated: 1, deleted: 0 }, conflicts: [],
+      products: [{ entity_id: 'p-1', status: 'applied', sync_seq: 7 }],
+    }, 13);
+    assert.deepEqual(result, { acknowledged: 0, retained: 1, replay: false });
+    const row = f.db.prepare('SELECT payload_json, attempts, last_error FROM outbox').get();
+    assert.equal(JSON.parse(row.payload_json).name, 'Version B');
+    assert.equal(row.attempts, 0);
+    assert.equal(row.last_error, null);
+  } finally {
+    f.cleanup();
+  }
+});
