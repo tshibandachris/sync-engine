@@ -63,7 +63,7 @@ function buildChanges(rows) {
         price: payload.price, cost: payload.cost ?? null,
         stockAlert: payload.stockAlert ?? payload.stock_alert ?? 5,
         isActive: payload.isActive ?? payload.is_active ?? true,
-        createdAt: payload.createdAt ?? payload.created_at,
+        ...((payload.createdAt ?? payload.created_at) === undefined ? {} : { createdAt: payload.createdAt ?? payload.created_at }),
         deletedAt: row.operation === 'delete' ? (payload.deletedAt ?? row.created_at) : (payload.deletedAt ?? null),
         lastKnownSyncSeq: payload.lastKnownSyncSeq ?? payload.last_known_sync_seq ?? payload.sync_seq ?? 0,
       });
@@ -71,7 +71,7 @@ function buildChanges(rows) {
       changes.staff.push({
         id: payload.id, displayName: payload.displayName ?? payload.display_name,
         role: payload.role, isActive: payload.isActive ?? payload.is_active ?? true,
-        createdAt: payload.createdAt ?? payload.created_at,
+        ...((payload.createdAt ?? payload.created_at) === undefined ? {} : { createdAt: payload.createdAt ?? payload.created_at }),
         deletedAt: row.operation === 'delete' ? (payload.deletedAt ?? row.created_at) : (payload.deletedAt ?? null),
         lastKnownSyncSeq: payload.lastKnownSyncSeq ?? payload.last_known_sync_seq ?? payload.sync_seq ?? 0,
       });
