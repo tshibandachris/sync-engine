@@ -174,7 +174,9 @@ function applyPulledProducts(db, productChanges) {
   const apply = db.transaction((changes) => {
     let upserted = 0;
     for (const p of [...(changes.created || []), ...(changes.updated || [])]) {
-      if (!p || typeof p.id !== 'string' || typeof p.name !== 'string') continue;
+      if (!p || typeof p.id !== 'string' || typeof p.name !== 'string') {
+        throw new Error('Invalid product record; cursor was not saved.');
+      }
       upsert.run({
         id: p.id, name: p.name, sku: p.sku ?? null, barcode: p.barcode ?? null,
         category: p.category ?? null, price: Number(p.price ?? 0), cost: p.cost ?? null,
@@ -183,15 +185,16 @@ function applyPulledProducts(db, productChanges) {
         createdAt: p.createdAt ?? p.created_at ?? null,
         updatedAt: p.updatedAt ?? p.updated_at ?? null,
         deletedAt: p.deletedAt ?? p.deleted_at ?? null,
-        lastKnownSyncSeq: Number(p.lastKnownSyncSeq ?? 0),
+        lastKnownSyncSeq: Number(p.lastKnownSyncSeq ?? p.last_known_sync_seq ?? p.sync_seq ?? 0),
       });
       upserted++;
     }
     for (const p of changes.deleted || []) {
-      if (p && typeof p.id === 'string') {
-        db.prepare('UPDATE products SET deleted_at = ?, last_known_sync_seq = ? WHERE id = ?')
-          .run(p.deletedAt ?? p.deleted_at ?? Date.now(), Number(p.lastKnownSyncSeq ?? 0), p.id);
+      if (!p || typeof p.id !== 'string') {
+        throw new Error('Invalid product deletion; cursor was not saved.');
       }
+      db.prepare('UPDATE products SET deleted_at = ?, last_known_sync_seq = ? WHERE id = ?')
+        .run(p.deletedAt ?? p.deleted_at ?? Date.now(), Number(p.lastKnownSyncSeq ?? p.last_known_sync_seq ?? p.sync_seq ?? 0), p.id);
     }
     return upserted;
   });
@@ -212,6 +215,9 @@ function applyPulledPage(db, response) {
   }
 
   const changes = response.changes;
+  if (response.timestamp < getCursor(db)) {
+    throw new Error('Pull cursor moved backwards; cursor was not saved.');
+  }
   const upsertEntity = db.prepare(`
     INSERT INTO synced_entities (entity_type, id, payload_json, deleted_at, last_known_sync_seq)
     VALUES (?, ?, ?, ?, ?)
@@ -239,7 +245,7 @@ function applyPulledPage(db, response) {
         if (!item || typeof item.id !== 'string') {
           throw new Error(`Invalid ${entityType} record; cursor was not saved.`);
         }
-        const seq = Number(item.lastKnownSyncSeq ?? item.sync_seq ?? 0);
+        const seq = Number(item.lastKnownSyncSeq ?? item.last_known_sync_seq ?? item.sync_seq ?? 0);
         upsertEntity.run(entityType, item.id, JSON.stringify(item), null,
           Number.isSafeInteger(seq) && seq >= 0 ? seq : 0);
       }
