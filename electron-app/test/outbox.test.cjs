@@ -73,10 +73,13 @@ test('rejects unsupported deletes and sales without their nested accounting reco
     assert.throws(() => enqueueOutbox(f.db, {
       entityType: 'cash_sessions', entityId: 'cs-1', operation: 'delete', payload: { id: 'cs-1' },
     }), /dedicated business workflow/);
+    const incompleteSale = validSalePayload();
+    delete incompleteSale.lines;
+    delete incompleteSale.stock_movements;
     enqueueOutbox(f.db, {
-      entityType: 'sales', entityId: 'sale-1', operation: 'create', payload: { id: 'sale-1', total: 100 },
+      entityType: 'sales', entityId: incompleteSale.id, operation: 'create', payload: incompleteSale,
     });
-    assert.throws(() => preparePushBatch(f.db), /lines and stock_movements/);
+    assert.throws(() => preparePushBatch(f.db), /lines must contain at least one line/);
     assert.equal(getOutboxStatus(f.db).pending, 1);
   } finally {
     f.cleanup();
