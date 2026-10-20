@@ -119,3 +119,86 @@ test('does not drop a newer edit queued while an older batch is in flight', () =
     f.cleanup();
   }
 });
+
+
+function validSalePayload() {
+  const saleId = '00000000-0000-4000-8000-000000000001';
+  const staffId = '00000000-0000-4000-8000-000000000002';
+  const productId = '00000000-0000-4000-8000-000000000003';
+  const now = 1700000000000;
+  return {
+    id: saleId,
+    cash_session_id: '00000000-0000-4000-8000-000000000004',
+    staff_id: staffId,
+    sale_number: 'S-000001',
+    total: 1000,
+    payment_method: 'cash',
+    cash_amount: 1000,
+    mobile_amount: 0,
+    is_void: false,
+    voided_sale_id: null,
+    void_reason: null,
+    created_at: now,
+    updated_at: now,
+    lines: [{
+      id: '00000000-0000-4000-8000-000000000005',
+      product_id: productId,
+      product_name: 'Cahier',
+      product_sku: null,
+      quantity: 2,
+      unit_price: 500,
+      subtotal: 1000,
+      created_at: now,
+      updated_at: now,
+    }],
+    stock_movements: [{
+      id: '00000000-0000-4000-8000-000000000006',
+      product_id: productId,
+      movement_type: 'sale',
+      quantity_delta: -2,
+      reference_id: saleId,
+      reference_type: 'sale',
+      unit_cost: null,
+      notes: null,
+      created_at: now,
+      updated_at: now,
+      created_by: staffId,
+    }],
+  };
+}
+
+test('accepts a sale matching the server contract before preparing a push batch', () => {
+  const f = fixture();
+  try {
+    const payload = validSalePayload();
+    enqueueOutbox(f.db, { entityType: 'sales', entityId: payload.id, operation: 'create', payload });
+    const batch = preparePushBatch(f.db);
+    assert.equal(batch.payload.changes.sales.length, 1);
+    assert.equal(batch.payload.changes.sales[0].sale_number, 'S-000001');
+    assert.equal(batch.payload.changes.sales[0].lines[0].product_name, 'Cahier');
+    assert.equal(batch.payload.changes.sales[0].stock_movements[0].reference_id, payload.id);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('rejects sales missing required header, line label, or stock movement references', () => {
+  const invalidCases = [
+    { label: 'sale_number', mutate: (sale) => { delete sale.sale_number; }, expected: /sale_number is required/ },
+    { label: 'product_name', mutate: (sale) => { delete sale.lines[0].product_name; }, expected: /product_name is required/ },
+    { label: 'reference_id', mutate: (sale) => { delete sale.stock_movements[0].reference_id; }, expected: /reference_id must be a UUID/ },
+    { label: 'reference_type', mutate: (sale) => { sale.stock_movements[0].reference_type = 'other'; }, expected: /must reference this sale/ },
+  ];
+  for (const item of invalidCases) {
+    const f = fixture();
+    try {
+      const payload = validSalePayload();
+      item.mutate(payload);
+      enqueueOutbox(f.db, { entityType: 'sales', entityId: payload.id, operation: 'create', payload });
+      assert.throws(() => preparePushBatch(f.db), item.expected, item.label);
+      assert.equal(getOutboxStatus(f.db).pending, 1, 'invalid sales remain safely queued');
+    } finally {
+      f.cleanup();
+    }
+  }
+});
