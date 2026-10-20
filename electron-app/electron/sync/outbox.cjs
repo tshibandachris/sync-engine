@@ -59,7 +59,23 @@ function requireSafeInteger(value, field, { min = Number.MIN_SAFE_INTEGER, nonZe
   }
 }
 
+function assertAllowedKeys(value, allowed, field) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new Error(`Sale contract: unknown field ${field}.${key}.`);
+  }
+}
+
 function validateSalePayload(sale) {
+  assertAllowedKeys(sale, new Set([
+    'id', 'cash_session_id', 'staff_id', 'sale_number', 'total', 'payment_method',
+    'cash_amount', 'mobile_amount', 'mobile_msisdn', 'mobile_reference', 'customer_note',
+    'is_void', 'voided_sale_id', 'void_reason', 'created_at', 'updated_at', 'lines', 'stock_movements',
+  ]), 'sale');
+  for (const [field, max] of [['mobile_msisdn', 20], ['mobile_reference', 64], ['customer_note', 200]]) {
+    if (sale[field] != null && (typeof sale[field] !== 'string' || sale[field].length > max)) {
+      throw new Error(`Sale contract: ${field} must be at most ${max} characters or null.`);
+    }
+  }
   for (const field of ['id', 'cash_session_id', 'staff_id']) requireUuid(sale[field], field);
   if (typeof sale.sale_number !== 'string' || sale.sale_number.trim().length < 1 || sale.sale_number.length > 32) {
     throw new Error('Sale contract: sale_number is required (1–32 characters).');
