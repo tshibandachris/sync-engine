@@ -1,0 +1,35 @@
+name: Electron client CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'electron-app/**'
+      - 'docs/electron-architecture.md'
+      - '.github/workflows/electron-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'electron-app/**'
+      - 'docs/electron-architecture.md'
+      - '.github/workflows/electron-ci.yml'
+
+jobs:
+  electron-check:
+    name: Electron syntax and SQLite/outbox tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: electron-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies and rebuild native SQLite module
+        run: npm install --no-audit --no-fund
+      - name: Check JavaScript syntax
+        run: npm run check
+      - name: Run local database and outbox tests
+        run: npm test
