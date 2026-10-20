@@ -49,13 +49,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 function requireUuid(value, field) {
   if (typeof value !== 'string' || !UUID_RE.test(value)) {
-    throw new Error(\`Sale contract: ${field} must be a UUID.\`);
+    throw new Error(`Sale contract: ${field} must be a UUID.`);
   }
 }
 
 function requireSafeInteger(value, field, { min = Number.MIN_SAFE_INTEGER, nonZero = false } = {}) {
   if (!Number.isSafeInteger(value) || value < min || (nonZero && value === 0)) {
-    throw new Error(\`Sale contract: ${field} must be a safe integer${nonZero ? ' other than zero' : ''}.\`);
+    throw new Error(`Sale contract: ${field} must be a safe integer${nonZero ? ' other than zero' : ''}.`);
   }
 }
 
@@ -106,24 +106,25 @@ function validateSalePayload(sale) {
   let lineTotal = 0;
   for (let i = 0; i < sale.lines.length; i++) {
     const line = sale.lines[i];
-    const prefix = \`lines[${i}]\`;
+    const prefix = `lines[${i}]`;
     if (!line || typeof line !== 'object' || Array.isArray(line)) {
-      throw new Error(\`Sale contract: ${prefix} must be an object.\`);
+      throw new Error(`Sale contract: ${prefix} must be an object.`);
     }
-    requireUuid(line.id, \`${prefix}.id\`);
-    requireUuid(line.product_id, \`${prefix}.product_id\`);
+    assertAllowedKeys(line, new Set(['id', 'product_id', 'product_name', 'product_sku', 'quantity', 'unit_price', 'subtotal', 'created_at', 'updated_at']), prefix);
+    requireUuid(line.id, `${prefix}.id`);
+    requireUuid(line.product_id, `${prefix}.product_id`);
     if (typeof line.product_name !== 'string' || !line.product_name.trim() || line.product_name.length > 200) {
-      throw new Error(\`Sale contract: ${prefix}.product_name is required (1–200 characters).\`);
+      throw new Error(`Sale contract: ${prefix}.product_name is required (1–200 characters).`);
     }
     if (line.product_sku != null && (typeof line.product_sku !== 'string' || line.product_sku.length > 64)) {
-      throw new Error(\`Sale contract: ${prefix}.product_sku must be at most 64 characters or null.\`);
+      throw new Error(`Sale contract: ${prefix}.product_sku must be at most 64 characters or null.`);
     }
-    requireSafeInteger(line.quantity, \`${prefix}.quantity\`, { nonZero: true });
-    requireSafeInteger(line.unit_price, \`${prefix}.unit_price\`, { min: 0 });
-    requireSafeInteger(line.subtotal, \`${prefix}.subtotal\`);
-    for (const field of ['created_at', 'updated_at']) requireSafeInteger(line[field], \`${prefix}.${field}\`, { min: 0 });
+    requireSafeInteger(line.quantity, `${prefix}.quantity`, { nonZero: true });
+    requireSafeInteger(line.unit_price, `${prefix}.unit_price`, { min: 0 });
+    requireSafeInteger(line.subtotal, `${prefix}.subtotal`);
+    for (const field of ['created_at', 'updated_at']) requireSafeInteger(line[field], `${prefix}.${field}`, { min: 0 });
     if (line.subtotal !== line.quantity * line.unit_price) {
-      throw new Error(\`Sale contract: ${prefix}.subtotal must equal quantity × unit_price.\`);
+      throw new Error(`Sale contract: ${prefix}.subtotal must equal quantity × unit_price.`);
     }
     lineTotal += line.subtotal;
   }
@@ -136,26 +137,27 @@ function validateSalePayload(sale) {
   }
   for (let i = 0; i < sale.stock_movements.length; i++) {
     const movement = sale.stock_movements[i];
-    const prefix = \`stock_movements[${i}]\`;
+    const prefix = `stock_movements[${i}]`;
     if (!movement || typeof movement !== 'object' || Array.isArray(movement)) {
-      throw new Error(\`Sale contract: ${prefix} must be an object.\`);
+      throw new Error(`Sale contract: ${prefix} must be an object.`);
     }
-    requireUuid(movement.id, \`${prefix}.id\`);
-    requireUuid(movement.product_id, \`${prefix}.product_id\`);
+    assertAllowedKeys(movement, new Set(['id', 'product_id', 'movement_type', 'quantity_delta', 'reference_id', 'reference_type', 'unit_cost', 'notes', 'created_at', 'updated_at', 'created_by']), prefix);
+    requireUuid(movement.id, `${prefix}.id`);
+    requireUuid(movement.product_id, `${prefix}.product_id`);
     if (!['sale', 'void'].includes(movement.movement_type)) {
-      throw new Error(\`Sale contract: ${prefix}.movement_type must be sale or void.\`);
+      throw new Error(`Sale contract: ${prefix}.movement_type must be sale or void.`);
     }
-    requireSafeInteger(movement.quantity_delta, \`${prefix}.quantity_delta\`, { nonZero: true });
-    requireUuid(movement.reference_id, \`${prefix}.reference_id\`);
+    requireSafeInteger(movement.quantity_delta, `${prefix}.quantity_delta`, { nonZero: true });
+    requireUuid(movement.reference_id, `${prefix}.reference_id`);
     if (movement.reference_id !== sale.id || movement.reference_type !== 'sale') {
-      throw new Error(\`Sale contract: ${prefix} must reference this sale with reference_type="sale".\`);
+      throw new Error(`Sale contract: ${prefix} must reference this sale with reference_type="sale".`);
     }
-    if (movement.unit_cost != null) requireSafeInteger(movement.unit_cost, \`${prefix}.unit_cost\`, { min: 0 });
+    if (movement.unit_cost != null) requireSafeInteger(movement.unit_cost, `${prefix}.unit_cost`, { min: 0 });
     if (movement.notes != null && (typeof movement.notes !== 'string' || movement.notes.length > 500)) {
-      throw new Error(\`Sale contract: ${prefix}.notes must be at most 500 characters or null.\`);
+      throw new Error(`Sale contract: ${prefix}.notes must be at most 500 characters or null.`);
     }
-    for (const field of ['created_at', 'updated_at']) requireSafeInteger(movement[field], \`${prefix}.${field}\`, { min: 0 });
-    if (movement.created_by != null) requireUuid(movement.created_by, \`${prefix}.created_by\`);
+    for (const field of ['created_at', 'updated_at']) requireSafeInteger(movement[field], `${prefix}.${field}`, { min: 0 });
+    if (movement.created_by != null) requireUuid(movement.created_by, `${prefix}.created_by`);
   }
 }
 
