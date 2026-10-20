@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none';">
+  <title>Eden Gestion</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; }
+    body { margin: 0; padding: 36px; background: #f5f6f8; color: #1c1c1c; }
+    main { max-width: 650px; margin: 30px auto; padding: 28px; border: 1px solid #e1e4e8; border-radius: 14px; background: white; }
+    h1 { margin-top: 0; } .muted { color: #606770; } .count { font-size: 48px; font-weight: 700; margin: 8px 0; }
+    .status { padding: 12px; border-radius: 8px; background: #f1f3f5; overflow-wrap: anywhere; }
+    button { padding: 10px 14px; border: 0; border-radius: 8px; background: #1c1c1c; color: white; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Eden Gestion</h1>
+    <p class="muted">Walking skeleton · client de caisse hors-ligne en construction</p>
+    <p>Produits locaux</p>
+    <div class="count" id="product-count">—</div>
+    <p class="status" id="sync-status" role="status" aria-live="polite">Initialisation…</p>
+    <button id="refresh" type="button">Synchroniser maintenant</button>
+  </main>
+  <script src="./renderer.js"></script>
+</body>
+</html>
