@@ -27,9 +27,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install dependencies and rebuild native SQLite module
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Build SQLite native module for the Node.js test runtime
+        run: npm rebuild better-sqlite3 --build-from-source
       - name: Check JavaScript syntax
         run: npm run check
       - name: Run local database and outbox tests
         run: npm test
+      - name: Verify SQLite native module can be rebuilt for Electron
+        run: npx electron-rebuild -f -w better-sqlite3
