@@ -151,6 +151,19 @@ function openDatabase(app) {
   db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)')
     .run(1, Date.now());
 
+  // Forward-only migration: preserve existing local databases while tracking staff tombstones.
+  const currentVersion = Number(db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get().version);
+  if (currentVersion < 2) {
+    const migrate = db.transaction(() => {
+      const staffColumns = db.pragma('table_info(staff)');
+      if (!staffColumns.some((column) => column.name === 'deleted_at')) {
+        db.exec('ALTER TABLE staff ADD COLUMN deleted_at INTEGER');
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(2, Date.now());
+    });
+    migrate();
+  }
+
   return db;
 }
 
@@ -232,6 +245,59 @@ function applyPulledPage(db, response) {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
 
+
+  const upsertStaff = db.prepare(`
+    INSERT INTO staff (
+      id, display_name, role, is_active, pin_hash, created_at, updated_at, deleted_at, last_known_sync_seq
+    ) VALUES (
+      @id, @displayName, @role, @isActive, NULL, @createdAt, @updatedAt, @deletedAt, @lastKnownSyncSeq
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      display_name = excluded.display_name,
+      role = excluded.role,
+      is_active = excluded.is_active,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at,
+      last_known_sync_seq = excluded.last_known_sync_seq
+    WHERE excluded.last_known_sync_seq >= staff.last_known_sync_seq
+      AND NOT EXISTS (SELECT 1 FROM outbox WHERE entity_type = 'staff' AND entity_id = excluded.id)
+  `);
+  const upsertCashSession = db.prepare(`
+    INSERT INTO cash_sessions (
+      id, staff_id, terminal_label, opened_at, closed_at, opening_amount, closing_amount,
+      expected_amount, difference, status, notes, reconciled_expected_amount,
+      reconciled_difference, reconciled_at, reconciliation_alert, reconciliation_alert_reason,
+      created_at, updated_at, last_known_sync_seq
+    ) VALUES (
+      @id, @staffId, @terminalLabel, @openedAt, @closedAt, @openingAmount, @closingAmount,
+      @expectedAmount, @difference, @status, @notes, @reconciledExpectedAmount,
+      @reconciledDifference, @reconciledAt, @reconciliationAlert, @reconciliationAlertReason,
+      @createdAt, @updatedAt, @lastKnownSyncSeq
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      staff_id = excluded.staff_id,
+      terminal_label = excluded.terminal_label,
+      opened_at = excluded.opened_at,
+      closed_at = excluded.closed_at,
+      opening_amount = excluded.opening_amount,
+      closing_amount = excluded.closing_amount,
+      expected_amount = excluded.expected_amount,
+      difference = excluded.difference,
+      status = excluded.status,
+      notes = excluded.notes,
+      reconciled_expected_amount = excluded.reconciled_expected_amount,
+      reconciled_difference = excluded.reconciled_difference,
+      reconciled_at = excluded.reconciled_at,
+      reconciliation_alert = excluded.reconciliation_alert,
+      reconciliation_alert_reason = excluded.reconciliation_alert_reason,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      last_known_sync_seq = excluded.last_known_sync_seq
+    WHERE excluded.last_known_sync_seq >= cash_sessions.last_known_sync_seq
+      AND NOT EXISTS (SELECT 1 FROM outbox WHERE entity_type = 'cash_sessions' AND entity_id = excluded.id)
+  `);
+
   const apply = db.transaction(() => {
     let productsProcessed = applyPulledProducts(db, changes.products || {});
     const buckets = [
@@ -241,6 +307,65 @@ function applyPulledPage(db, response) {
 
     for (const entityType of buckets) {
       const bucket = changes[entityType] || {};
+
+      // Persist reference entities in their queryable local tables as well as the raw sync cache.
+      if (entityType === 'staff') {
+        for (const item of [...(bucket.created || []), ...(bucket.updated || []), ...(bucket.deleted || [])]) {
+          if (!item || typeof item.id !== 'string') throw new Error('Invalid staff record; cursor was not saved.');
+          const displayName = item.displayName ?? item.display_name ?? item.name;
+          const role = item.role ?? item.staff_role;
+          if (typeof displayName !== 'string' || !displayName.trim() || typeof role !== 'string' || !role) {
+            throw new Error('Invalid staff reference fields; cursor was not saved.');
+          }
+          const seq = Number(item.lastKnownSyncSeq ?? item.last_known_sync_seq ?? item.sync_seq ?? 0);
+          upsertStaff.run({
+            id: item.id,
+            displayName,
+            role,
+            isActive: item.deletedAt != null || item.deleted_at != null || item.isActive === false || item.is_active === false ? 0 : 1,
+            createdAt: Number(item.createdAt ?? item.created_at ?? 0),
+            updatedAt: Number(item.updatedAt ?? item.updated_at ?? item.createdAt ?? item.created_at ?? 0),
+            deletedAt: item.deletedAt ?? item.deleted_at ?? null,
+            lastKnownSyncSeq: Number.isSafeInteger(seq) && seq >= 0 ? seq : 0,
+          });
+        }
+      }
+
+      if (entityType === 'cash_sessions') {
+        for (const item of [...(bucket.created || []), ...(bucket.updated || [])]) {
+          if (!item || typeof item.id !== 'string') throw new Error('Invalid cash session record; cursor was not saved.');
+          const staffId = item.staffId ?? item.staff_id ?? item.cash_staff_id;
+          const openedAt = item.openedAt ?? item.opened_at;
+          const openingAmount = item.openingAmount ?? item.opening_amount;
+          if (typeof staffId !== 'string' || openedAt == null || openingAmount == null) {
+            throw new Error('Invalid cash session reference fields; cursor was not saved.');
+          }
+          const seq = Number(item.lastKnownSyncSeq ?? item.last_known_sync_seq ?? item.sync_seq ?? 0);
+          const nullableNumber = (value) => value == null ? null : Number(value);
+          upsertCashSession.run({
+            id: item.id,
+            staffId,
+            terminalLabel: item.terminalLabel ?? item.terminal_label ?? null,
+            openedAt: Number(openedAt),
+            closedAt: nullableNumber(item.closedAt ?? item.closed_at),
+            openingAmount: Number(openingAmount),
+            closingAmount: nullableNumber(item.closingAmount ?? item.closing_amount),
+            expectedAmount: nullableNumber(item.expectedAmount ?? item.expected_amount),
+            difference: nullableNumber(item.difference),
+            status: item.status ?? item.session_status ?? 'open',
+            notes: item.notes ?? null,
+            reconciledExpectedAmount: nullableNumber(item.reconciledExpectedAmount ?? item.reconciled_expected_amount),
+            reconciledDifference: nullableNumber(item.reconciledDifference ?? item.reconciled_difference),
+            reconciledAt: nullableNumber(item.reconciledAt ?? item.reconciled_at),
+            reconciliationAlert: (item.reconciliationAlert ?? item.reconciliation_alert) == null ? null : ((item.reconciliationAlert ?? item.reconciliation_alert) ? 1 : 0),
+            reconciliationAlertReason: item.reconciliationAlertReason ?? item.reconciliation_alert_reason ?? null,
+            createdAt: Number(item.createdAt ?? item.created_at ?? openedAt),
+            updatedAt: Number(item.updatedAt ?? item.updated_at ?? item.createdAt ?? item.created_at ?? openedAt),
+            lastKnownSyncSeq: Number.isSafeInteger(seq) && seq >= 0 ? seq : 0,
+          });
+        }
+      }
+
       for (const item of [...(bucket.created || []), ...(bucket.updated || [])]) {
         if (!item || typeof item.id !== 'string') {
           throw new Error(`Invalid ${entityType} record; cursor was not saved.`);
