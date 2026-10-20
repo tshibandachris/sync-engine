@@ -129,3 +129,76 @@ test('rejects a backwards cursor without changing stored state', () => {
     f.cleanup(f.db);
   }
 });
+
+
+test('persists pulled staff and cash sessions into local queryable tables', () => {
+  const f = fixture();
+  try {
+    const now = 1700000000000;
+    const changes = emptyChanges({
+      staff: {
+        created: [{
+          id: 'staff-seed-1',
+          displayName: 'Cashier',
+          role: 'cashier',
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+          lastKnownSyncSeq: 3,
+        }],
+        updated: [],
+        deleted: [],
+      },
+      cash_sessions: {
+        created: [{
+          id: 'session-seed-1',
+          staffId: 'staff-seed-1',
+          terminalLabel: 'Front desk',
+          openedAt: now,
+          closedAt: null,
+          openingAmount: 10000,
+          closingAmount: null,
+          expectedAmount: null,
+          difference: null,
+          status: 'open',
+          notes: null,
+          reconciledExpectedAmount: null,
+          reconciledDifference: null,
+          reconciledAt: null,
+          reconciliationAlert: null,
+          reconciliationAlertReason: null,
+          createdAt: now,
+          updatedAt: now,
+          lastKnownSyncSeq: 4,
+        }],
+        updated: [],
+        deleted: [],
+      },
+    });
+
+    applyPulledPage(f.db, { timestamp: 4, has_more: false, changes });
+
+    const staff = f.db.prepare(
+      'SELECT display_name, role, is_active, pin_hash, last_known_sync_seq FROM staff WHERE id = ?',
+    ).get('staff-seed-1');
+    assert.equal(staff.display_name, 'Cashier');
+    assert.equal(staff.role, 'cashier');
+    assert.equal(staff.is_active, 1);
+    assert.equal(staff.pin_hash, null, 'pull must never provision a staff PIN hash');
+    assert.equal(staff.last_known_sync_seq, 3);
+
+    const session = f.db.prepare(
+      'SELECT staff_id, terminal_label, opened_at, opening_amount, status, last_known_sync_seq FROM cash_sessions WHERE id = ?',
+    ).get('session-seed-1');
+    assert.equal(session.staff_id, 'staff-seed-1');
+    assert.equal(session.terminal_label, 'Front desk');
+    assert.equal(session.opened_at, now);
+    assert.equal(session.opening_amount, 10000);
+    assert.equal(session.status, 'open');
+    assert.equal(session.last_known_sync_seq, 4);
+    assert.equal(f.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 2);
+  } finally {
+    f.cleanup(f.db);
+  }
+});
