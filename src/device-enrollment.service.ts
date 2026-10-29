@@ -96,9 +96,17 @@ export class DeviceEnrollmentService {
     } catch (error) {
       if (error instanceof BadRequestException ||
           error instanceof ServiceUnavailableException) throw error;
-      const code = (error as { code?: string } | null)?.code;
-      if (code === '23505') {
-        throw new ConflictException('Ce poste est déjà enrôlé pour ce tenant.');
+      // Drizzle wraps PostgreSQL driver errors in a query error; inspect the
+      // nested cause as well so unique-constraint conflicts are mapped reliably.
+      let current: unknown = error;
+      const seen = new Set<unknown>();
+      while (current && typeof current === 'object' && !seen.has(current)) {
+        seen.add(current);
+        const candidate = current as { code?: unknown; cause?: unknown };
+        if (candidate.code === '23505') {
+          throw new ConflictException('Ce poste est déjà enrôlé pour ce tenant.');
+        }
+        current = candidate.cause;
       }
       throw error;
     }
