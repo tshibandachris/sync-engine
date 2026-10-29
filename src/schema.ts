@@ -8,6 +8,7 @@ import {
   jsonb,
   pgTable,
   text,
+  timestamp,
   varchar,
   integer,
   boolean,
@@ -322,3 +323,28 @@ export const attachments = pgTable(
     }).onDelete('cascade'),
   })
 );
+
+export const devicePairingCodes = pgTable(
+  'device_pairing_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    storeId: uuid('store_id').notNull(),
+    posProfileId: uuid('pos_profile_id'),
+    codeHash: text('code_hash').notNull().unique(),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+  },
+  (table) => ({
+    tenantExpiryIdx: index('idx_device_pairing_codes_tenant_expiry')
+      .on(table.tenantId, table.expiresAt),
+    tenantStoreIdx: index('idx_device_pairing_codes_tenant_store')
+      .on(table.tenantId, table.storeId),
+  }),
+);
+
+export type DevicePairingCode = typeof devicePairingCodes.$inferSelect;
+export type NewDevicePairingCode = typeof devicePairingCodes.$inferInsert;
+
