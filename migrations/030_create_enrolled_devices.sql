@@ -29,4 +29,26 @@ CREATE POLICY tenant_isolation_devices ON devices
 
 GRANT SELECT, INSERT, UPDATE ON devices TO sync_app;
 
+-- The unauthenticated enrollment request does not know its tenant yet, so
+-- code redemption is exposed only through this narrow atomic SECURITY DEFINER
+-- function instead of granting the API role direct access to pairing codes.
+CREATE OR REPLACE FUNCTION public.redeem_device_pairing_code(p_code_hash text)
+RETURNS TABLE (id uuid, tenant_id uuid, store_id uuid, pos_profile_id uuid)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $
+  UPDATE public.device_pairing_codes
+  SET used_at = clock_timestamp()
+  WHERE code_hash = p_code_hash
+    AND used_at IS NULL
+    AND expires_at > clock_timestamp()
+  RETURNING device_pairing_codes.id,
+            device_pairing_codes.tenant_id,
+            device_pairing_codes.store_id,
+            device_pairing_codes.pos_profile_id;
+$;
+REVOKE ALL ON FUNCTION public.redeem_device_pairing_code(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.redeem_device_pairing_code(text) TO sync_app;
+
 COMMIT;
