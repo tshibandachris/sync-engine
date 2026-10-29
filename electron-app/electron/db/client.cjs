@@ -404,7 +404,7 @@ function listLocalProducts(db, { search = '' } = {}) {
   return db.prepare(`
     SELECT p.id, p.name, p.sku, p.barcode, p.category, p.price, p.cost,
            p.stock_alert AS stockAlert, p.is_active AS isActive,
-           COALESCE(SUM(sm.quantity_delta), 0) AS stockQuantity,
+           SUM(sm.quantity_delta) AS stockQuantity,
            p.updated_at AS updatedAt
     FROM products p
     LEFT JOIN stock_movements sm ON sm.product_id = p.id
@@ -419,7 +419,7 @@ function listLocalProducts(db, { search = '' } = {}) {
     cost: p.cost == null ? null : Number(p.cost),
     stockAlert: p.stockAlert == null ? null : Number(p.stockAlert),
     isActive: Boolean(p.isActive),
-    stockQuantity: Number(p.stockQuantity),
+    stockQuantity: p.stockQuantity == null ? null : Number(p.stockQuantity),
     updatedAt: p.updatedAt == null ? null : Number(p.updatedAt),
   }));
 }
@@ -474,7 +474,7 @@ function getDashboardSummary(db) {
   todayStart.setHours(0, 0, 0, 0);
   const products = db.prepare(`
     SELECT COUNT(*) AS total,
-      SUM(CASE WHEN COALESCE(stock.total_stock, 0) <= COALESCE(p.stock_alert, 5) THEN 1 ELSE 0 END) AS lowStock
+      SUM(CASE WHEN stock.total_stock IS NOT NULL AND stock.total_stock <= COALESCE(p.stock_alert, 5) THEN 1 ELSE 0 END) AS lowStock
     FROM products p
     LEFT JOIN (
       SELECT product_id, SUM(quantity_delta) AS total_stock
