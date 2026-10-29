@@ -375,6 +375,12 @@ export class CourrierService {
       if (!canActOnMail(context, this.toPolicyRecord(row), assignments, 'assign')) {
         throw new ForbiddenException('Affectation non autorisée.');
       }
+      if (row.status === 'clos' || row.status === 'archive') {
+        throw new ConflictException('Impossible d’affecter un courrier clos ou archivé.');
+      }
+      if (assignments.some((item) => item.userId === (agentId ?? null) && item.serviceId === (serviceId ?? null))) {
+        throw new ConflictException('Cette affectation est déjà active.');
+      }
 
       const now = Date.now();
       const inserted = await tx.insert(schema.courrierAssignments).values({
@@ -409,6 +415,9 @@ export class CourrierService {
       if (!courrier) throw new NotFoundException('Courrier introuvable.');
       const assignments = await this.assignmentsFor(tx, context.tenantId, courrierId);
       this.assertReadable(context, courrier, assignments);
+      if (!hasPermission(context, 'courrier:assign') && !hasPermission(context, 'courrier:manage')) {
+        throw new ForbiddenException('Permission courrier:assign ou courrier:manage requise.');
+      }
       await this.audit(tx, context, courrierId, 'courrier.assignments_read');
       return tx.select().from(schema.courrierAssignments).where(and(
         eq(schema.courrierAssignments.tenantId, context.tenantId),
@@ -479,6 +488,9 @@ export class CourrierService {
       }
       if (!canTransitionCourrierStatus(row.status, toStatus)) {
         throw new ConflictException('Transition interdite de ' + row.status + ' vers ' + toStatus + '.');
+      }
+      if (toStatus === 'affecte' && assignments.length === 0) {
+        throw new ConflictException('Un courrier doit avoir une affectation active avant de passer à affecte.');
       }
       const now = Date.now();
       const updated = await tx.update(schema.courriers).set({ status: toStatus, updatedAt: now })
