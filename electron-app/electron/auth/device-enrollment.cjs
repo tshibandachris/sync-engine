@@ -1,5 +1,3 @@
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function decodeJsonSegment(segment, label) {
   if (!segment || !/^[A-Za-z0-9_-]+$/.test(segment)) {
     throw new Error(`Le segment ${label} du JWT est invalide.`);
