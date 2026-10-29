@@ -1,0 +1,62 @@
+name: Eden Gestion Desktop — Windows installer
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'electron-app/**'
+      - '.github/workflows/electron-windows-package.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'electron-app/**'
+      - '.github/workflows/electron-windows-package.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    name: Test and package Windows x64 installer
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: electron-app
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: electron-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild SQLite for Node test runtime
+        run: npm rebuild better-sqlite3
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Run local database, catalog and outbox tests
+        run: npm test
+
+      - name: Rebuild SQLite for Electron
+        run: npx electron-rebuild -f -w better-sqlite3
+
+      - name: Build NSIS Windows x64 installer
+        run: npm run dist:win
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-gestion-desktop-windows-x64
+          path: electron-app/dist-electron/*.exe
+          if-no-files-found: error
+          retention-days: 14

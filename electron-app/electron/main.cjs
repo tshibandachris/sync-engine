@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
-const { openDatabase, applyPulledPage, getCursor } = require('./db/client.cjs');
+const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
 const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
 
@@ -13,7 +13,7 @@ function readStatus() {
   return {
     ...status,
     lastCursor: db ? getCursor(db) : status.lastCursor,
-    productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL').get().n) : 0,
+    productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL AND is_active = 1').get().n) : 0,
     outboxPending: outbox.pending,
     outboxFailed: outbox.failed,
   };
@@ -91,10 +91,10 @@ async function doSync() {
 
 function createWindow() {
   windowRef = new BrowserWindow({
-    width: 780,
-    height: 520,
-    minWidth: 600,
-    minHeight: 400,
+    width: 1440,
+    height: 920,
+    minWidth: 900,
+    minHeight: 650,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -102,6 +102,7 @@ function createWindow() {
       sandbox: true,
     },
   });
+  windowRef.setTitle('Eden Gestion Desktop');
   windowRef.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
@@ -109,6 +110,14 @@ app.whenReady().then(async () => {
   db = openDatabase(app);
   ipcMain.handle('eden:get-status', () => readStatus());
   ipcMain.handle('eden:refresh', () => doSync());
+  ipcMain.handle('eden:dashboard', () => getDashboardSummary(db));
+  ipcMain.handle('eden:products:list', (_event, search) => listLocalProducts(db, { search }));
+  ipcMain.handle('eden:products:save', (_event, input) => {
+    const product = saveLocalProduct(db, input);
+    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    return product;
+  });
   createWindow();
   await doSync();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -4,25 +4,144 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none';">
-  <title>Eden Gestion</title>
+  <title>Eden Gestion Desktop</title>
   <style>
-    :root { color-scheme: light; font-family: Arial, sans-serif; }
-    body { margin: 0; padding: 36px; background: #f5f6f8; color: #1c1c1c; }
-    main { max-width: 650px; margin: 30px auto; padding: 28px; border: 1px solid #e1e4e8; border-radius: 14px; background: white; }
-    h1 { margin-top: 0; } .muted { color: #606770; } .count { font-size: 48px; font-weight: 700; margin: 8px 0; }
-    .status { padding: 12px; border-radius: 8px; background: #f1f3f5; overflow-wrap: anywhere; }
-    button { padding: 10px 14px; border: 0; border-radius: 8px; background: #1c1c1c; color: white; cursor: pointer; }
+    :root { color-scheme: dark; font-family: Inter, "Segoe UI", Arial, sans-serif; background:#090b0f; color:#f5f6f8; --panel:#12151b; --line:#282d36; --muted:#9aa3b2; --accent:#f4f5f7; --blue:#4778f5; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(ellipse at 80% -10%,#1b2230 0,transparent 45%),#090b0f; }
+    button,input { font:inherit; }
+    button { cursor:pointer; }
+    button:disabled { opacity:.55; cursor:wait; }
+    .shell { display:grid; grid-template-columns:230px minmax(0,1fr); min-height:100vh; }
+    aside { padding:26px 16px; border-right:1px solid var(--line); background:rgba(12,14,19,.88); display:flex; flex-direction:column; gap:30px; }
+    .brand { display:flex; align-items:center; gap:11px; padding:0 8px; }
+    .mark { width:36px;height:36px;border-radius:11px;background:#f5f6f8;color:#090b0f;display:grid;place-items:center;font-weight:900;font-size:20px; }
+    .brand strong { display:block; letter-spacing:-.04em; font-size:16px; }
+    .brand small { color:var(--muted); font-size:11px; display:block; margin-top:3px; }
+    .nav-label { color:#707989; text-transform:uppercase; letter-spacing:.12em; font-size:10px; padding:0 12px; }
+    nav { display:grid; gap:6px; }
+    .nav-item { width:100%; text-align:left; border:1px solid transparent; border-radius:10px; padding:12px; color:#aab1bd; background:transparent; display:flex; gap:11px; align-items:center; }
+    .nav-item.active,.nav-item:hover { color:#fff; background:#1a1e26; border-color:#2c323d; }
+    .nav-icon { width:20px; text-align:center; font-size:16px; }
+    .aside-bottom { margin-top:auto; border:1px solid var(--line); background:#11141a; border-radius:12px; padding:13px; color:var(--muted); font-size:12px; line-height:1.5; }
+    .aside-bottom strong { color:#f4f5f7; display:block; margin-bottom:4px; }
+    main { min-width:0; padding:30px clamp(18px,3vw,44px) 40px; max-width:1500px; width:100%; margin:0 auto; }
+    .topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:30px; }
+    .eyebrow { color:var(--muted); font-size:12px; margin:0 0 7px; }
+    h1 { font-size:clamp(24px,3vw,32px); letter-spacing:-.05em; margin:0; }
+    .top-actions { display:flex; align-items:center; gap:10px; }
+    .sync-pill { display:flex; align-items:center; gap:8px; border:1px solid var(--line); background:#11141a; padding:9px 12px; border-radius:99px; color:#c5cbd4; font-size:12px; white-space:nowrap; }
+    .dot { width:7px;height:7px;border-radius:50%;background:#9ba3b2; }
+    .dot.synced { background:#46d39a; }.dot.syncing { background:#f1c75b; }.dot.pending { background:#f0a34d; }
+    .btn { border:1px solid #343a46; border-radius:10px; padding:10px 14px; color:#f7f8fa; background:#1a1e26; font-weight:600; font-size:13px; }
+    .btn:hover { background:#252b36; }.btn.primary { background:#f4f5f7;color:#111319;border-color:#f4f5f7; }.btn.primary:hover { background:#dfe3e9; }
+    .btn.ghost { background:transparent; }.btn.small { padding:7px 10px; font-size:12px; }
+    .page { display:none; }.page.active { display:block; }
+    .section-heading { display:flex; align-items:end; justify-content:space-between; gap:15px; margin:0 0 18px; }
+    .section-heading h2 { margin:0; font-size:18px; letter-spacing:-.03em; }.section-heading p { color:var(--muted); font-size:13px; margin:6px 0 0; }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:28px; }
+    .metric { border:1px solid var(--line); border-radius:15px; background:linear-gradient(145deg,#171b23,#11141a); padding:18px; min-width:0; }
+    .metric-label { color:var(--muted); font-size:12px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .metric-value { font-size:clamp(23px,3vw,32px); font-weight:750; letter-spacing:-.05em; margin-top:16px; overflow-wrap:anywhere; }
+    .metric-note { color:#7f8999; font-size:11px; margin-top:7px; }
+    .grid-two { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(250px,.8fr); gap:15px; }
+    .panel { border:1px solid var(--line); border-radius:15px; background:rgba(18,21,27,.94); overflow:hidden; min-width:0; }
+    .panel-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:17px 19px; border-bottom:1px solid var(--line); }
+    .panel-head h3 { font-size:14px; margin:0; }.panel-head p { color:var(--muted); font-size:12px; margin:5px 0 0; }
+    .panel-body { padding:18px 19px; }
+    .guide-list { display:grid; gap:17px; }.guide { display:flex; gap:12px; align-items:flex-start; }.guide-icon { width:32px;height:32px;border-radius:9px;background:#202632;display:grid;place-items:center;flex:0 0 auto; }.guide strong { display:block;font-size:13px;margin:1px 0 5px; }.guide span { color:var(--muted);font-size:12px;line-height:1.5;display:block; }
+    .notice { border:1px solid #3d3421; background:#211c12; color:#d9c18b; border-radius:12px; padding:13px 15px; font-size:12px; line-height:1.55; margin-top:16px; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .search { width:min(360px,100%); border:1px solid var(--line); border-radius:10px; background:#11141a; color:#f5f6f8; padding:11px 13px; outline:none; }.search:focus,input:focus { border-color:#627bb5; box-shadow:0 0 0 3px #4778f522; }
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; min-width:650px; }
+    th { text-align:left; color:#7f8999; text-transform:uppercase; letter-spacing:.08em; font-size:10px; font-weight:650; padding:13px 16px; background:#151920; }
+    td { border-top:1px solid #252a33; padding:14px 16px; font-size:12px; color:#dfe3e9; }
+    td .product-name { color:#fff;font-weight:650;font-size:13px;display:block; }.subtext { display:block;color:#808999;font-size:11px;margin-top:4px; }
+    .price { white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:650; }
+    .stock-badge { display:inline-flex;padding:5px 8px;border-radius:99px;font-size:11px;background:#18271f;color:#78dca9;white-space:nowrap; }
+    .stock-badge.low { background:#302418;color:#f3bb71; }
+    .empty { text-align:center;padding:42px 20px;color:var(--muted);font-size:13px; }
+    .empty strong { display:block;color:#e9ebef;margin-bottom:7px;font-size:14px; }
+    .feedback { min-height:20px; margin:12px 0 0; font-size:12px; color:#9ca7b7; }.feedback.error { color:#ff9a9a; }.feedback.success { color:#72dba8; }
+    dialog { width:min(560px,calc(100% - 28px)); border:1px solid #333a47; border-radius:16px; padding:0; color:#f5f6f8; background:#12151b; box-shadow:0 24px 80px #0009; }
+    dialog::backdrop { background:#030508bb; backdrop-filter:blur(5px); }
+    .dialog-head { display:flex;align-items:center;justify-content:space-between;padding:20px 22px;border-bottom:1px solid var(--line); }.dialog-head h2 { font-size:18px;margin:0; }.dialog-body { padding:22px; }
+    .form-grid { display:grid;grid-template-columns:1fr 1fr;gap:15px; }.field { display:grid;gap:7px;min-width:0; }.field.full { grid-column:1/-1; }.field label { color:#aab2c0;font-size:12px; }.field input { width:100%;min-width:0;background:#0c0f14;border:1px solid #303642;border-radius:9px;padding:11px 12px;color:#fff;outline:none; }
+    .form-help { color:#808999;font-size:11px;line-height:1.5;margin:15px 0 0; }.dialog-actions { display:flex;justify-content:flex-end;gap:9px;margin-top:22px; }
+    .footer-note { color:#687283;font-size:11px;margin-top:28px; }
+    @media(max-width:1000px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-two{grid-template-columns:1fr}}
+    @media(max-width:700px){.shell{grid-template-columns:1fr}aside{padding:14px;border-right:0;border-bottom:1px solid var(--line);gap:14px}.brand{padding:0 4px}.nav-label,.aside-bottom{display:none}nav{grid-template-columns:repeat(2,minmax(0,1fr))}.nav-item{padding:10px}.topbar{align-items:flex-start;flex-direction:column}.top-actions{width:100%;justify-content:space-between}main{padding:22px 14px}.metrics{gap:9px}.metric{padding:14px}.metric-value{font-size:24px}.toolbar{align-items:stretch;flex-direction:column}.search{width:100%}.section-heading{align-items:flex-start}}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Eden Gestion</h1>
-    <p class="muted">Walking skeleton · client de caisse hors-ligne en construction</p>
-    <p>Produits locaux</p>
-    <div class="count" id="product-count">—</div>
-    <p class="status" id="sync-status" role="status" aria-live="polite">Initialisation…</p>
-    <button id="refresh" type="button">Synchroniser maintenant</button>
-  </main>
+  <div class="shell">
+    <aside>
+      <div class="brand"><div class="mark">E</div><div><strong>Eden Gestion</strong><small>DESKTOP · COMMERCE</small></div></div>
+      <div><div class="nav-label">Espace de travail</div><nav aria-label="Navigation principale">
+        <button class="nav-item active" data-page="dashboard"><span class="nav-icon">▦</span>Vue d’ensemble</button>
+        <button class="nav-item" data-page="products"><span class="nav-icon">▤</span>Produits & stock</button>
+      </nav></div>
+      <div class="aside-bottom"><strong>Conçu pour fonctionner hors ligne</strong>Les données locales restent sur cet ordinateur. La synchronisation reprend lorsque le serveur est accessible.</div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow">GESTION COMMERCIALE / RDC</p><h1 id="page-title">Vue d’ensemble</h1></div>
+        <div class="top-actions"><div class="sync-pill" id="sync-pill"><span class="dot" id="sync-dot"></span><span id="sync-label">Initialisation…</span></div><button class="btn" id="sync-button" type="button">↻ Synchroniser</button></div>
+      </header>
+
+      <section class="page active" id="page-dashboard">
+        <div class="section-heading"><div><h2>Activité du commerce</h2><p>Résumé des données enregistrées sur cet ordinateur.</p></div><span class="subtext" id="last-refresh">Chargement…</span></div>
+        <div class="metrics">
+          <article class="metric"><div class="metric-label">Produits actifs <span>▤</span></div><div class="metric-value" id="metric-products">—</div><div class="metric-note">Catalogue local</div></article>
+          <article class="metric"><div class="metric-label">Stock à surveiller <span>⚑</span></div><div class="metric-value" id="metric-low-stock">—</div><div class="metric-note">Au seuil d’alerte ou en dessous</div></article>
+          <article class="metric"><div class="metric-label">Ventes aujourd’hui <span>↗</span></div><div class="metric-value" id="metric-sales">—</div><div class="metric-note" id="metric-sales-total">Montant total : —</div></article>
+          <article class="metric"><div class="metric-label">À synchroniser <span>⇄</span></div><div class="metric-value" id="metric-pending">—</div><div class="metric-note">Opérations conservées localement</div></article>
+        </div>
+        <div class="grid-two">
+          <section class="panel"><div class="panel-head"><div><h3>Démarrer simplement</h3><p>Les premières étapes de mise en place.</p></div></div><div class="panel-body"><div class="guide-list">
+            <div class="guide"><div class="guide-icon">01</div><div><strong>Compléter le catalogue</strong><span>Ajoutez le nom, le prix en francs congolais, la référence et le seuil d’alerte de chaque article.</span></div></div>
+            <div class="guide"><div class="guide-icon">02</div><div><strong>Vérifier les données</strong><span>Les modifications sont d’abord enregistrées dans la base locale, puis placées dans la file de synchronisation.</span></div></div>
+            <div class="guide"><div class="guide-icon">03</div><div><strong>Connecter le moteur de synchronisation</strong><span>Une URL d’API et un jeton de terminal valides sont nécessaires pour échanger les données avec le serveur.</span></div></div>
+          </div></div></section>
+          <section class="panel"><div class="panel-head"><div><h3>État du poste</h3><p>État technique utile au quotidien.</p></div></div><div class="panel-body"><div class="guide-list">
+            <div class="guide"><div class="guide-icon">⌂</div><div><strong>Base locale</strong><span>SQLite · stockage persistant sur ce poste.</span></div></div>
+            <div class="guide"><div class="guide-icon">⇄</div><div><strong>File de synchronisation</strong><span id="queue-detail">Lecture de l’état…</span></div></div>
+            <div class="guide"><div class="guide-icon">◷</div><div><strong>Sessions de caisse ouvertes</strong><span id="metric-sessions">—</span></div></div>
+          </div><div class="notice">Version de travail : le catalogue local est disponible. Le parcours complet de vente, la clôture de caisse et l’impression des reçus doivent encore être finalisés et testés avant utilisation commerciale.</div></div></section>
+        </div>
+      </section>
+
+      <section class="page" id="page-products">
+        <div class="section-heading"><div><h2>Catalogue produits</h2><p>Gérez les articles et leurs prix. Les changements sont sauvegardés localement.</p></div><button class="btn primary" id="new-product" type="button">＋ Nouveau produit</button></div>
+        <div class="toolbar"><input class="search" id="product-search" type="search" placeholder="Rechercher par nom, référence ou code-barres…" aria-label="Rechercher un produit"><span class="subtext" id="product-count-label">0 produit</span></div>
+        <section class="panel"><div class="table-wrap"><table><thead><tr><th>Produit</th><th>Référence</th><th>Catégorie</th><th>Prix de vente</th><th>Stock local</th><th>Action</th></tr></thead><tbody id="products-body"></tbody></table><div class="empty" id="products-empty"><strong>Aucun produit dans le catalogue</strong>Ajoutez un premier produit pour commencer à configurer votre commerce.</div></div></section>
+        <p class="feedback" id="product-feedback" role="status" aria-live="polite"></p>
+      </section>
+      <p class="footer-note">Eden Devs Corp · Eden Gestion Desktop · Les données de caisse ne quittent pas ce poste sans synchronisation configurée.</p>
+    </main>
+  </div>
+
+  <dialog id="product-dialog">
+    <form id="product-form">
+      <div class="dialog-head"><h2 id="product-dialog-title">Nouveau produit</h2><button class="btn ghost small" type="button" id="close-dialog" aria-label="Fermer">✕</button></div>
+      <div class="dialog-body">
+        <input id="product-id" type="hidden">
+        <div class="form-grid">
+          <div class="field full"><label for="product-name">Nom du produit *</label><input id="product-name" name="name" maxlength="200" required autocomplete="off" placeholder="Ex. Cahier 200 pages"></div>
+          <div class="field"><label for="product-price">Prix de vente (CDF) *</label><input id="product-price" name="price" type="number" min="0" step="1" required placeholder="2500"></div>
+          <div class="field"><label for="product-cost">Coût d’achat (CDF)</label><input id="product-cost" name="cost" type="number" min="0" step="1" placeholder="Optionnel"></div>
+          <div class="field"><label for="product-sku">Référence interne</label><input id="product-sku" name="sku" maxlength="64" placeholder="Ex. CAH-200"></div>
+          <div class="field"><label for="product-barcode">Code-barres</label><input id="product-barcode" name="barcode" maxlength="128" placeholder="Optionnel"></div>
+          <div class="field"><label for="product-category">Catégorie</label><input id="product-category" name="category" maxlength="100" placeholder="Ex. Papeterie"></div>
+          <div class="field"><label for="product-alert">Seuil d’alerte de stock</label><input id="product-alert" name="stockAlert" type="number" min="0" step="1" value="5" required></div>
+        </div>
+        <p class="form-help">Les montants sont enregistrés en francs congolais entiers. La quantité en stock est calculée à partir des mouvements de stock enregistrés ; elle ne peut pas être modifiée directement dans ce formulaire.</p>
+        <p class="feedback" id="form-feedback" role="status" aria-live="polite"></p>
+        <div class="dialog-actions"><button class="btn" type="button" id="cancel-product">Annuler</button><button class="btn primary" type="submit" id="save-product">Enregistrer le produit</button></div>
+      </div>
+    </form>
+  </dialog>
   <script src="./renderer.js"></script>
 </body>
 </html>

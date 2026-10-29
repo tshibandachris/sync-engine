@@ -398,8 +398,108 @@ function applyPulledPage(db, response) {
   return apply();
 }
 
+
+function listLocalProducts(db, { search = '' } = {}) {
+  const term = String(search || '').trim();
+  return db.prepare(`
+    SELECT p.id, p.name, p.sku, p.barcode, p.category, p.price, p.cost,
+           p.stock_alert AS stockAlert, p.is_active AS isActive,
+           SUM(sm.quantity_delta) AS stockQuantity,
+           p.updated_at AS updatedAt
+    FROM products p
+    LEFT JOIN stock_movements sm ON sm.product_id = p.id
+    WHERE p.deleted_at IS NULL AND p.is_active = 1
+      AND (? = '' OR p.name LIKE ? OR COALESCE(p.sku, '') LIKE ? OR COALESCE(p.barcode, '') LIKE ?)
+    GROUP BY p.id
+    ORDER BY p.name COLLATE NOCASE
+    LIMIT 500
+  `).all(term, `%${term}%`, `%${term}%`, `%${term}%`).map((p) => ({
+    ...p,
+    price: Number(p.price),
+    cost: p.cost == null ? null : Number(p.cost),
+    stockAlert: p.stockAlert == null ? null : Number(p.stockAlert),
+    isActive: Boolean(p.isActive),
+    stockQuantity: p.stockQuantity == null ? null : Number(p.stockQuantity),
+    updatedAt: p.updatedAt == null ? null : Number(p.updatedAt),
+  }));
+}
+
+function saveLocalProduct(db, input, now = Date.now()) {
+  const name = typeof input?.name === 'string' ? input.name.trim() : '';
+  if (!name || name.length > 200) throw new Error('Le nom du produit est obligatoire (200 caractères maximum).');
+  const price = Number(input.price);
+  if (!Number.isSafeInteger(price) || price < 0) throw new Error('Le prix doit être un montant entier positif ou nul en CDF.');
+  const cost = input.cost === '' || input.cost == null ? null : Number(input.cost);
+  if (cost != null && (!Number.isSafeInteger(cost) || cost < 0)) throw new Error('Le coût doit être un montant entier positif ou nul en CDF.');
+  const stockAlert = input.stockAlert === '' || input.stockAlert == null ? 5 : Number(input.stockAlert);
+  if (!Number.isSafeInteger(stockAlert) || stockAlert < 0) throw new Error('Le seuil d’alerte doit être un entier positif ou nul.');
+  const cleanOptional = (value, max, label) => {
+    const result = typeof value === 'string' ? value.trim() : '';
+    if (result.length > max) throw new Error(`${label} ne peut pas dépasser ${max} caractères.`);
+    return result || null;
+  };
+  const sku = cleanOptional(input.sku, 64, 'La référence');
+  const barcode = cleanOptional(input.barcode, 128, 'Le code-barres');
+  const category = cleanOptional(input.category, 100, 'La catégorie');
+  const id = typeof input.id === 'string' && input.id ? input.id : require('node:crypto').randomUUID();
+  const existing = db.prepare('SELECT id, created_at AS createdAt FROM products WHERE id = ? AND deleted_at IS NULL').get(id);
+  const operation = existing && !db.prepare("SELECT 1 FROM outbox WHERE entity_type = 'products' AND entity_id = ? AND operation = 'create'").get(id)
+    ? 'update' : 'create';
+  const product = {
+    id, name, sku, barcode, category, price, cost, stockAlert,
+    isActive: true, createdAt: existing?.createdAt ?? now, updatedAt: now, lastKnownSyncSeq: 0,
+  };
+  const save = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO products (id, name, sku, barcode, category, price, cost, stock_alert, is_active, created_at, updated_at, deleted_at, last_known_sync_seq)
+      VALUES (@id, @name, @sku, @barcode, @category, @price, @cost, @stockAlert, 1, @createdAt, @updatedAt, NULL, 0)
+      ON CONFLICT(id) DO UPDATE SET
+        name=excluded.name, sku=excluded.sku, barcode=excluded.barcode, category=excluded.category,
+        price=excluded.price, cost=excluded.cost, stock_alert=excluded.stock_alert,
+        is_active=1, updated_at=excluded.updated_at, deleted_at=NULL
+    `).run(product);
+    const { enqueueOutbox } = require('../sync/outbox.cjs');
+    enqueueOutbox(db, { entityType: 'products', entityId: id, operation, payload: product, now });
+  });
+  save();
+  return db.prepare(`
+    SELECT id, name, sku, barcode, category, price, cost, stock_alert AS stockAlert,
+           is_active AS isActive, updated_at AS updatedAt
+    FROM products WHERE id = ?
+  `).get(id);
+}
+
+function getDashboardSummary(db) {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const products = db.prepare(`
+    SELECT COUNT(*) AS total,
+      SUM(CASE WHEN stock.total_stock IS NOT NULL AND stock.total_stock <= COALESCE(p.stock_alert, 5) THEN 1 ELSE 0 END) AS lowStock
+    FROM products p
+    LEFT JOIN (
+      SELECT product_id, SUM(quantity_delta) AS total_stock
+      FROM stock_movements GROUP BY product_id
+    ) stock ON stock.product_id = p.id
+    WHERE p.deleted_at IS NULL AND p.is_active = 1
+  `).get();
+  const sales = db.prepare(`
+    SELECT COUNT(*) AS count, COALESCE(SUM(total), 0) AS total
+    FROM sales WHERE created_at >= ? AND is_void = 0
+  `).get(todayStart.getTime());
+  const sessions = db.prepare("SELECT COUNT(*) AS open FROM cash_sessions WHERE status = 'open' AND closed_at IS NULL").get();
+  const pending = db.prepare('SELECT COUNT(*) AS total FROM outbox').get();
+  return {
+    products: Number(products.total || 0),
+    lowStock: Number(products.lowStock || 0),
+    salesToday: Number(sales.count || 0),
+    salesTotalToday: Number(sales.total || 0),
+    openSessions: Number(sessions.open || 0),
+    pendingSync: Number(pending.total || 0),
+  };
+}
+
 function resetCursor(db) {
   db.prepare("DELETE FROM sync_state WHERE key = 'pull_cursor'").run();
 }
 
-module.exports = { openDatabase, applyPulledProducts, applyPulledPage, getCursor, resetCursor };
+module.exports = { openDatabase, applyPulledProducts, applyPulledPage, getCursor, resetCursor, listLocalProducts, saveLocalProduct, getDashboardSummary };
