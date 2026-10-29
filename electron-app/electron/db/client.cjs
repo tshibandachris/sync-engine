@@ -442,12 +442,12 @@ function saveLocalProduct(db, input, now = Date.now()) {
   const barcode = cleanOptional(input.barcode, 128, 'Le code-barres');
   const category = cleanOptional(input.category, 100, 'La catégorie');
   const id = typeof input.id === 'string' && input.id ? input.id : require('node:crypto').randomUUID();
-  const existing = db.prepare('SELECT id FROM products WHERE id = ? AND deleted_at IS NULL').get(id);
+  const existing = db.prepare('SELECT id, created_at AS createdAt FROM products WHERE id = ? AND deleted_at IS NULL').get(id);
   const operation = existing && !db.prepare("SELECT 1 FROM outbox WHERE entity_type = 'products' AND entity_id = ? AND operation = 'create'").get(id)
     ? 'update' : 'create';
   const product = {
     id, name, sku, barcode, category, price, cost, stockAlert,
-    isActive: true, createdAt: now, updatedAt: now, lastKnownSyncSeq: 0,
+    isActive: true, createdAt: existing?.createdAt ?? now, updatedAt: now, lastKnownSyncSeq: 0,
   };
   const save = db.transaction(() => {
     db.prepare(`
