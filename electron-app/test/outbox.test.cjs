@@ -41,6 +41,50 @@ test('persists a queued operation and reuses the exact idempotent batch after re
   }
 });
 
+test('builds a product push payload that strictly matches the server contract', () => {
+  const f = fixture();
+  try {
+    const id = '00000000-0000-4000-8000-000000000101';
+    enqueueOutbox(f.db, {
+      entityType: 'products',
+      entityId: id,
+      operation: 'create',
+      payload: {
+        id,
+        name: 'Cahier',
+        sku: 'CAH-01',
+        barcode: '1234567890123',
+        category: 'Papeterie',
+        price: 500,
+        cost: 250,
+        stockAlert: 5,
+        isActive: true,
+        createdAt: 1700000000000,
+        updatedAt: 1700000001000,
+        deletedAt: null,
+        lastKnownSyncSeq: 0,
+        serverOwnedField: 'must not leak',
+      },
+      now: 1700000001000,
+    });
+
+    const batch = preparePushBatch(f.db);
+    const productPayload = batch.payload.changes.products[0];
+    const allowedKeys = [
+      'id', 'name', 'sku', 'barcode', 'category', 'price', 'cost',
+      'stockAlert', 'isActive', 'createdAt', 'deletedAt', 'lastKnownSyncSeq',
+    ];
+
+    assert.deepEqual(Object.keys(productPayload).sort(), allowedKeys.sort());
+    assert.equal(Object.hasOwn(productPayload, 'updatedAt'), false);
+    assert.equal(Object.hasOwn(productPayload, 'serverOwnedField'), false);
+    assert.equal(productPayload.lastKnownSyncSeq, 0);
+    assert.equal(productPayload.createdAt, 1700000000000);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('acknowledges only confirmed entities and retains conflicts for review', () => {
   const f = fixture();
   try {
