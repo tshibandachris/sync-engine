@@ -4,12 +4,15 @@ const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalPr
 const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
+const { validateDeviceToken } = require('./auth/device-enrollment.cjs');
 
 let db;
 let windowRef;
 let tokenStore;
 let deviceToken;
 let tokenStoreError;
+let authState = 'checking';
+let authMessage = 'Vérification du stockage sécurisé…';
 let status = { state: 'starting', message: 'Initialisation…', productCount: 0, lastCursor: 0, outboxPending: 0, outboxFailed: 0 };
 
 function requireDeviceToken() {
@@ -22,29 +25,35 @@ function requireDeviceToken() {
 
 async function initializeDeviceToken() {
   tokenStore = new DeviceTokenStore({ app, safeStorage });
-  deviceToken = await tokenStore.getToken();
+  deviceToken = await tokenStore.load();
 
   // Environment-based bootstrap is strictly for unpackaged local development.
   // Packaged production builds never read EDEN_SYNC_TOKEN from process.env.
   if (!deviceToken && !app.isPackaged) {
     const developmentToken = process.env.EDEN_SYNC_TOKEN;
     if (developmentToken) {
-      await tokenStore.setToken(developmentToken);
-      deviceToken = developmentToken;
+      const validated = validateDeviceToken(developmentToken);
+      await tokenStore.setToken(validated);
+      deviceToken = await tokenStore.load();
     }
   }
 
-  if (!deviceToken) {
-    throw new Error(app.isPackaged
-      ? 'Jeton d’appareil chiffré absent. Enrôlez cet appareil avant la synchronisation.'
-      : 'Jeton absent : définissez EDEN_SYNC_TOKEN uniquement pour le développement local.');
+  if (deviceToken) {
+    authState = 'ready';
+    authMessage = 'Jeton d’appareil chargé depuis le stockage sécurisé.';
+    return;
   }
+
+  authState = 'enrollment-required';
+  authMessage = 'Cette caisse doit être enrôlée avant de synchroniser.';
 }
 
 function readStatus() {
   const outbox = db ? getOutboxStatus(db) : { pending: status.outboxPending, failed: status.outboxFailed };
   return {
     ...status,
+    authState,
+    authMessage,
     lastCursor: db ? getCursor(db) : status.lastCursor,
     productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL AND is_active = 1').get().n) : 0,
     outboxPending: outbox.pending,
@@ -146,10 +155,50 @@ app.whenReady().then(async () => {
     await initializeDeviceToken();
   } catch (error) {
     tokenStoreError = error;
+    authState = 'storage-error';
+    authMessage = 'Stockage sécurisé indisponible. La caisse reste bloquée pour protéger le jeton.';
     console.error('[auth] secure device token unavailable:', error.message);
   }
 
   ipcMain.handle('eden:get-status', () => readStatus());
+  ipcMain.handle('eden:device:enroll', async (event, credentials) => {
+    if (event.sender !== windowRef?.webContents || event.senderFrame !== event.sender.mainFrame) {
+      return { success: false, error: 'Origine IPC non autorisée.' };
+    }
+    if (tokenStoreError || authState === 'storage-error') {
+      return { success: false, error: 'Le stockage sécurisé est indisponible. L’enrôlement est bloqué.' };
+    }
+    if (deviceToken) return { success: false, error: 'Cette caisse est déjà enrôlée.' };
+
+    let token;
+    try {
+      token = validateDeviceToken(credentials?.token);
+    } catch (error) {
+      return { success: false, error: error.message || 'JWT invalide.' };
+    }
+
+    try {
+      await tokenStore.setToken(token);
+      const storedToken = await tokenStore.load();
+      if (storedToken !== token) throw new Error('La vérification du stockage sécurisé a échoué.');
+      deviceToken = storedToken;
+      tokenStoreError = null;
+      authState = 'ready';
+      authMessage = 'Appareil enrôlé et jeton relu depuis le stockage sécurisé.';
+      status = { ...status, state: 'pending', message: 'Caisse enrôlée. Synchronisation en attente du serveur.', lastCursor: getCursor(db) };
+      windowRef?.webContents.send('eden:status', readStatus());
+      // Enrollment succeeds on verified encrypted persistence; network sync is asynchronous.
+      void doSync();
+      return { success: true };
+    } catch (error) {
+      tokenStoreError = error;
+      authState = 'storage-error';
+      authMessage = 'Impossible de confirmer le stockage chiffré. La synchronisation reste bloquée.';
+      windowRef?.webContents.send('eden:status', readStatus());
+      console.error('[auth] enrollment storage failed:', error.message);
+      return { success: false, error: authMessage };
+    }
+  });
   ipcMain.handle('eden:refresh', () => doSync());
   ipcMain.handle('eden:dashboard', () => getDashboardSummary(db));
   ipcMain.handle('eden:products:list', (_event, search) => listLocalProducts(db, { search }));
