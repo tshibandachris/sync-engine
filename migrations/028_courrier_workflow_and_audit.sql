@@ -60,6 +60,8 @@ CREATE POLICY tenant_isolation_courrier_audit_logs ON courrier_audit_logs
   USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
--- Audit records are append-only for application roles; no UPDATE or DELETE grants
--- should be granted to the runtime database role.
+-- Runtime access: assignment lifecycle is mutable; audit history is append-only.
+GRANT SELECT, INSERT, UPDATE ON courrier_assignments TO sync_app;
+GRANT SELECT, INSERT ON courrier_audit_logs TO sync_app;
+
 COMMIT;
