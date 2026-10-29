@@ -20,7 +20,6 @@ import {
   type CourrierAccessContext,
   type CourrierAssignment,
   type Confidentiality,
-  type CourrierPermission,
 } from './courrier-policy.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 
