@@ -5,7 +5,6 @@ import {
   Get,
   Inject,
   Param,
-  ParseIntPipe,
   Post,
   Query,
   Req,
