@@ -41,12 +41,8 @@ export class DeviceEnrollmentService {
       return await this.db.transaction(async (tx) => {
         // One atomic compare-and-set. Never SELECT first and then UPDATE.
         const consumed = await tx.execute(sql`
-          UPDATE device_pairing_codes
-          SET used_at = ${now}
-          WHERE code_hash = ${codeHash}
-            AND used_at IS NULL
-            AND expires_at > ${now}
-          RETURNING id, tenant_id, store_id, pos_profile_id
+          SELECT id, tenant_id, store_id, pos_profile_id
+          FROM public.redeem_device_pairing_code(${codeHash})
         `);
 
         const pairing = consumed.rows[0] as
