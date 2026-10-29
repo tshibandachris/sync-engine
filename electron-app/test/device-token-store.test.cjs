@@ -31,6 +31,7 @@ test('DeviceTokenStore persists only encrypted bytes and reads the JWT back', as
     assert.notEqual(disk.toString('utf8'), token);
     assert.match(disk.toString('utf8'), /^encrypted:/);
     assert.equal(await f.store.getToken(), token);
+    assert.equal(await f.store.load(), token);
   } finally {
     f.cleanup();
   }
