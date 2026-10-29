@@ -439,8 +439,8 @@ function saveLocalProduct(db, input, now = Date.now()) {
     return result || null;
   };
   const sku = cleanOptional(input.sku, 64, 'La référence');
-  const barcode = cleanOptional(input.barcode, 128, 'Le code-barres');
-  const category = cleanOptional(input.category, 100, 'La catégorie');
+  const barcode = cleanOptional(input.barcode, 64, 'Le code-barres');
+  const category = cleanOptional(input.category, 80, 'La catégorie');
   const id = typeof input.id === 'string' && input.id ? input.id : require('node:crypto').randomUUID();
   const existing = db.prepare('SELECT id, created_at AS createdAt FROM products WHERE id = ? AND deleted_at IS NULL').get(id);
   const operation = existing && !db.prepare("SELECT 1 FROM outbox WHERE entity_type = 'products' AND entity_id = ? AND operation = 'create'").get(id)
