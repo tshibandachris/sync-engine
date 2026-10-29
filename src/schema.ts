@@ -163,17 +163,19 @@ export const courriers = pgTable(
       'courriers_status_check',
       sql`${table.status} IN ('enregistre', 'affecte', 'en_cours', 'repondu', 'clos', 'archive')`,
     ),
-    tenantIdx: index('idx_courriers_tenant').on(table.tenantId),
+    tenantIdx: index('idx_courriers_tenant')
+      .on(table.tenantId)
+      .where(sql`${table.deletedAt} IS NULL`),
     tenantAgentIdx: index('idx_courriers_tenant_agent').on(
       table.tenantId,
       table.agentId,
-      table.createdAt,
-    ),
+      table.createdAt.desc(),
+    ).where(sql`${table.deletedAt} IS NULL`),
     tenantConfidentialityIdx: index('idx_courriers_tenant_confidentiality').on(
       table.tenantId,
       table.confidentiality,
-      table.createdAt,
-    ),
+      table.createdAt.desc(),
+    ).where(sql`${table.deletedAt} IS NULL`),
     syncSeqIdx: index('idx_courriers_sync_seq').on(table.tenantId, table.syncSeq),
   }),
 );
