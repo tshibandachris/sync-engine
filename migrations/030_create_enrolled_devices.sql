@@ -37,7 +37,7 @@ RETURNS TABLE (id uuid, tenant_id uuid, store_id uuid, pos_profile_id uuid)
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
-AS $
+AS '
   UPDATE public.device_pairing_codes
   SET used_at = clock_timestamp()
   WHERE code_hash = p_code_hash
@@ -47,7 +47,7 @@ AS $
             device_pairing_codes.tenant_id,
             device_pairing_codes.store_id,
             device_pairing_codes.pos_profile_id;
-$;
+';
 REVOKE ALL ON FUNCTION public.redeem_device_pairing_code(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.redeem_device_pairing_code(text) TO sync_app;
 
