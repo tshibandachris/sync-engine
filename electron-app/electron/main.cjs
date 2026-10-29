@@ -5,6 +5,12 @@ const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { validateDeviceToken } = require('./auth/device-enrollment.cjs');
+const {
+  assertTrustedIpcSender,
+  validateSearchQuery,
+  validateEnrollmentCredentials,
+  validateProductInput,
+} = require('./security/ipc-security.cjs');
 
 let db;
 let windowRef;
@@ -132,6 +138,13 @@ async function doSync() {
   return readStatus();
 }
 
+function registerTrustedHandler(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedIpcSender(event, windowRef);
+    return handler(...args);
+  });
+}
+
 function createWindow() {
   windowRef = new BrowserWindow({
     width: 1440,
@@ -146,6 +159,13 @@ function createWindow() {
     },
   });
   windowRef.setTitle('Eden Gestion Desktop');
+  const rendererUrl = require('node:url').pathToFileURL(
+    path.join(__dirname, 'renderer', 'index.html'),
+  ).href;
+  windowRef.webContents.on('will-navigate', (event, url) => {
+    if (url !== rendererUrl) event.preventDefault();
+  });
+  windowRef.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   windowRef.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
@@ -160,10 +180,12 @@ app.whenReady().then(async () => {
     console.error('[auth] secure device token unavailable:', error.message);
   }
 
-  ipcMain.handle('eden:get-status', () => readStatus());
-  ipcMain.handle('eden:device:enroll', async (event, credentials) => {
-    if (event.sender !== windowRef?.webContents || event.senderFrame !== event.sender.mainFrame) {
-      return { success: false, error: 'Origine IPC non autorisée.' };
+  registerTrustedHandler('eden:get-status', () => readStatus());
+  registerTrustedHandler('eden:device:enroll', async (credentials) => {
+    try {
+      credentials = validateEnrollmentCredentials(credentials);
+    } catch (error) {
+      return { success: false, error: error.message || 'Identifiants d’enrôlement invalides.' };
     }
     if (tokenStoreError || authState === 'storage-error') {
       return { success: false, error: 'Le stockage sécurisé est indisponible. L’enrôlement est bloqué.' };
@@ -199,11 +221,12 @@ app.whenReady().then(async () => {
       return { success: false, error: authMessage };
     }
   });
-  ipcMain.handle('eden:refresh', () => doSync());
-  ipcMain.handle('eden:dashboard', () => getDashboardSummary(db));
-  ipcMain.handle('eden:products:list', (_event, search) => listLocalProducts(db, { search }));
-  ipcMain.handle('eden:products:save', (_event, input) => {
-    const product = saveLocalProduct(db, input);
+  registerTrustedHandler('eden:refresh', () => doSync());
+  registerTrustedHandler('eden:dashboard', () => getDashboardSummary(db));
+  registerTrustedHandler('eden:products:list', (search = '') =>
+    listLocalProducts(db, { search: validateSearchQuery(search) }));
+  registerTrustedHandler('eden:products:save', (input) => {
+    const product = saveLocalProduct(db, validateProductInput(input));
     status = { ...status, outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
     return product;
