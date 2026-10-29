@@ -47,7 +47,35 @@ describe('verifyToken', () => {
       issuer: ISSUER,
       tenantClaim: TENANT_CLAIM,
     });
-    expect(id).toEqual({ agentId: AGENT, tenantId: TENANT });
+    expect(id).toEqual({ agentId: AGENT, tenantId: TENANT, permissions: [], serviceIds: [] });
+  });
+
+  it('extracts permission and service claims from the verified token', async () => {
+    const { privateKey, jwks } = await makeKeys();
+    const token = await sign(privateKey, {
+      sub: AGENT,
+      tenantId: TENANT,
+      permissions: ['courrier:read', 'courrier:register'],
+      service_ids: ['00000000-0000-4000-8000-000000000003', 'invalid'],
+    });
+    const id = await verifyToken(token, jwks, {
+      audience: AUDIENCE,
+      issuer: ISSUER,
+      tenantClaim: TENANT_CLAIM,
+    });
+    expect(id.permissions).toEqual(['courrier:read', 'courrier:register']);
+    expect(id.serviceIds).toEqual(['00000000-0000-4000-8000-000000000003']);
+  });
+
+  it('parses OAuth scope strings when a permissions array is absent', async () => {
+    const { privateKey, jwks } = await makeKeys();
+    const token = await sign(privateKey, { sub: AGENT, tenantId: TENANT, scope: 'courrier:read courrier:register' });
+    const id = await verifyToken(token, jwks, {
+      audience: AUDIENCE,
+      issuer: ISSUER,
+      tenantClaim: TENANT_CLAIM,
+    });
+    expect(id.permissions).toEqual(['courrier:read', 'courrier:register']);
   });
 
   it('rejects an expired token', async () => {
@@ -115,6 +143,6 @@ describe('verifyToken', () => {
       issuer: ISSUER,
       tenantClaim: 'https://sync/tenant',
     });
-    expect(id).toEqual({ agentId: AGENT, tenantId: TENANT });
+    expect(id).toEqual({ agentId: AGENT, tenantId: TENANT, permissions: [], serviceIds: [] });
   });
 });
