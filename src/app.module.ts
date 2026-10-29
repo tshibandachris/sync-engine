@@ -14,6 +14,8 @@ import { AttachmentController } from './sync-attachment.controller.js';
 import { AttachmentService } from './sync-attachment.service.js';
 import { CourrierController } from './courrier.controller.js';
 import { CourrierService } from './courrier.service.js';
+import { DeviceEnrollmentController } from './device-enrollment.controller.js';
+import { DeviceEnrollmentService } from './device-enrollment.service.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 
 export const ATTACHMENT_STORAGE = 'ATTACHMENT_STORAGE';
@@ -41,7 +43,7 @@ export class AppModule {
           signOptions: { expiresIn: jwtExpiresIn as any },
         }),
       ],
-      controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController],
+      controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController],
       providers: [
         { provide: 'DRIZZLE_DB', useValue: db },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
@@ -52,6 +54,7 @@ export class AppModule {
         { provide: ATTACHMENT_STORAGE, useValue: storage },
         { provide: AttachmentService, useFactory: (d: any, s: any) => new AttachmentService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
         { provide: CourrierService, useFactory: (d: any, s: any) => new CourrierService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
+        { provide: DeviceEnrollmentService, useFactory: (d: any) => new DeviceEnrollmentService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
         SyncLogService,
         { provide: APP_INTERCEPTOR, useClass: SyncLogInterceptor },
