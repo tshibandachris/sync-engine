@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const state = { products: [], query: '', status: null };
+let dashboardInitialized = false;
 
 const money = (amount) => new Intl.NumberFormat('fr-CD', {
   style: 'currency', currency: 'CDF', maximumFractionDigits: 0,
@@ -171,7 +172,22 @@ async function saveProduct(event) {
   }
 }
 
-window.addEventListener('DOMContentLoaded', async () => {
+function renderAuthState(status) {
+  const authState = status?.authState || 'storage-error';
+  $('app-shell').hidden = authState !== 'ready';
+  $('enrollment-screen').hidden = authState !== 'enrollment-required';
+  $('storage-error-screen').hidden = authState !== 'storage-error';
+  if (authState === 'ready') initializeDashboard();
+}
+
+function handleStatus(status) {
+  renderAuthState(status);
+  if (status?.authState === 'ready') renderStatus(status);
+}
+
+function initializeDashboard() {
+  if (dashboardInitialized) return;
+  dashboardInitialized = true;
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => switchPage(button.dataset.page)));
   $('new-product').addEventListener('click', () => openProductDialog());
   $('close-dialog').addEventListener('click', closeProductDialog);
@@ -192,9 +208,35 @@ window.addEventListener('DOMContentLoaded', async () => {
     catch (error) { setFeedback(error.message || 'Synchronisation impossible.', 'error'); }
     await Promise.all([refreshDashboard(), loadProducts()]);
   });
+  void refreshDashboard();
+  void loadProducts();
+  window.eden.getStatus().then(renderStatus).catch((error) => renderStatus({ state: 'pending', message: error.message, outboxPending: 0, outboxFailed: 0 }));
+}
 
-  window.eden.onStatus(renderStatus);
-  try { renderStatus(await window.eden.getStatus()); }
-  catch (error) { renderStatus({ state: 'pending', message: error.message, outboxPending: 0, outboxFailed: 0 }); }
-  await Promise.all([refreshDashboard(), loadProducts()]);
+window.addEventListener('DOMContentLoaded', async () => {
+  $('enrollment-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = $('enroll-button');
+    const feedback = $('enrollment-feedback');
+    const token = $('device-token').value.trim();
+    button.disabled = true;
+    feedback.className = 'feedback';
+    feedback.textContent = 'Validation et chiffrement du jeton…';
+    try {
+      const result = await window.eden.enrollDevice({ token });
+      if (!result?.success) throw new Error(result?.error || 'Enrôlement impossible.');
+      $('device-token').value = '';
+      feedback.className = 'feedback success';
+      feedback.textContent = 'Jeton chiffré et vérifié. Ouverture du tableau de bord…';
+      handleStatus(await window.eden.getStatus());
+    } catch (error) {
+      feedback.className = 'feedback error';
+      feedback.textContent = error.message || 'Enrôlement impossible.';
+    } finally {
+      button.disabled = false;
+    }
+  });
+  window.eden.onStatus(handleStatus);
+  try { handleStatus(await window.eden.getStatus()); }
+  catch (error) { renderAuthState({ authState: 'storage-error' }); console.error('Authentication status unavailable:', error.message); }
 });
