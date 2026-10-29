@@ -35,5 +35,7 @@ jobs:
         run: npm run check
       - name: Run local database and outbox tests
         run: npm test
+      - name: Run POS field-failure simulations
+        run: npm run test:field
       - name: Verify SQLite native module can be rebuilt for Electron
         run: npx electron-rebuild -f -w better-sqlite3
