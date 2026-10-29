@@ -270,8 +270,9 @@ export class CourrierService {
       )).limit(1);
       const courrier = rows[0];
       if (!courrier) throw new NotFoundException('Courrier introuvable.');
-      this.assertReadable(context, courrier);
-      if (!canActOnMail(context, this.toPolicyRecord(courrier), [], 'transition')) {
+      const assignments = await this.assignmentsFor(tx, context.tenantId, courrierId);
+      this.assertReadable(context, courrier, assignments);
+      if (!canActOnMail(context, this.toPolicyRecord(courrier), assignments, 'transition')) {
         throw new ForbiddenException('Vous ne pouvez pas ajouter de pièce jointe à ce courrier.');
       }
 
@@ -291,6 +292,7 @@ export class CourrierService {
         createdAt: Date.now(),
         uploadedAt: null,
       });
+      await this.audit(tx, context, courrierId, 'courrier.attachment_upload_requested', { metadata: { attachmentId: id } });
       const signed = await this.storage.presignPut(objectKey, dto.contentType, PUT_TTL_SECONDS);
       return { attachment_id: id, upload_url: signed.url, expires_in: signed.expiresIn };
     }, { write: true });
@@ -308,8 +310,9 @@ export class CourrierService {
       )).limit(1);
       const courrier = mailRows[0];
       if (!courrier) throw new NotFoundException('Courrier introuvable.');
-      this.assertReadable(context, courrier);
-      if (!canActOnMail(context, this.toPolicyRecord(courrier), [], 'transition')) {
+      const assignments = await this.assignmentsFor(tx, context.tenantId, courrierId);
+      this.assertReadable(context, courrier, assignments);
+      if (!canActOnMail(context, this.toPolicyRecord(courrier), assignments, 'transition')) {
         throw new ForbiddenException('Vous ne pouvez pas confirmer une pièce jointe sur ce courrier.');
       }
 
@@ -336,6 +339,7 @@ export class CourrierService {
         eq(schema.courrierAttachments.id, attachmentId),
         eq(schema.courrierAttachments.tenantId, context.tenantId),
       ));
+      await this.audit(tx, context, courrierId, 'courrier.attachment_uploaded', { metadata: { attachmentId } });
       return { attachment_id: attachmentId, status: 'uploaded', uploaded_at: uploadedAt };
     }, { write: true });
   }
@@ -462,7 +466,9 @@ export class CourrierService {
       )).limit(1);
       const courrier = mailRows[0];
       if (!courrier) throw new NotFoundException('Courrier introuvable.');
-      this.assertReadable(context, courrier);
+      const assignments = await this.assignmentsFor(tx, context.tenantId, courrierId);
+      this.assertReadable(context, courrier, assignments);
+      await this.audit(tx, context, courrierId, 'courrier.attachments_read');
       const rows = await tx.select().from(schema.courrierAttachments).where(and(
         eq(schema.courrierAttachments.courrierId, courrierId),
         eq(schema.courrierAttachments.tenantId, context.tenantId),
