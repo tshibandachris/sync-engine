@@ -56,7 +56,11 @@ test('applies an entity and its cursor in the same transaction', () => {
   try {
     const changes = emptyChanges({
       sales: {
-        created: [{ id: 'sale-1', total: 1250, lastKnownSyncSeq: 8 }],
+        created: [{
+          id: 'sale-1', total: 1250, sale_number: 'S-1',
+          cash_session_id: 'session-1', staff_id: 'staff-1', payment_method: 'cash',
+          created_at: 100, updated_at: 100, last_known_sync_seq: 8,
+        }],
         updated: [],
         deleted: [],
       },
