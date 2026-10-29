@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
+import { CourrierService } from '../src/courrier.service.js';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 
 const TENANT_ID = '10000000-0000-4000-8000-000000000001';
@@ -23,52 +24,6 @@ async function seedCourrier(pool: Pool, status = 'enregistre'): Promise<string> 
   return id;
 }
 
-async function asTenant<T>(pool: Pool, fn: (client: import('pg').PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(
-      `SELECT set_config('app.current_tenant_id', $1, true)`,
-      [TENANT_ID],
-    );
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * Exercise the same per-tenant advisory lock used by withTenant({ write: true }).
- * A transition is accepted only if the status still matches the state that the
- * caller intended to advance from; stale concurrent attempts must fail closed.
- */
-async function tryTransition(pool: Pool, id: string, from: string, to: string) {
-  return asTenant(pool, async (client) => {
-    await client.query(
-      'SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))',
-      [7301, TENANT_ID],
-    );
-    const current = await client.query(
-      'SELECT status FROM courriers WHERE tenant_id = $1 AND id = $2',
-      [TENANT_ID, id],
-    );
-    if (current.rows[0]?.status !== from) {
-      throw new Error(`stale transition rejected: expected ${from}, found ${current.rows[0]?.status}`);
-    }
-    const updated = await client.query(
-      `UPDATE courriers SET status = $3, updated_at = $4
-       WHERE tenant_id = $1 AND id = $2 AND status = $5 RETURNING status`,
-      [TENANT_ID, id, to, Date.now(), from],
-    );
-    if (updated.rowCount !== 1) throw new Error('compare-and-set transition rejected');
-    return updated.rows[0].status as string;
-  });
-}
 
 beforeAll(async () => {
   pg = await startTestPostgres();
@@ -86,9 +41,21 @@ afterAll(async () => {
 describe('Courrier security hardening (PostgreSQL integration)', () => {
   it('serializes competing stale transitions and accepts exactly one winner', async () => {
     const id = await seedCourrier(pg.pool);
+    const service = new CourrierService(pg.appDb, {
+      delete: async () => undefined,
+      listByPrefix: async () => [],
+      presignPut: async () => ({ url: 'https://example.invalid/upload', expiresIn: 900 }),
+      presignGet: async () => ({ url: 'https://example.invalid/download', expiresIn: 3600 }),
+      head: async () => ({ exists: false }),
+    } as any);
+    const actor = {
+      tenantId: TENANT_ID,
+      agentId: ACTOR_ID,
+      permissions: ['courrier:read', 'courrier:manage'],
+    };
     const results = await Promise.allSettled([
-      tryTransition(pg.appPool, id, 'enregistre', 'affecte'),
-      tryTransition(pg.appPool, id, 'enregistre', 'affecte'),
+      service.transition(actor, id, 'affecte'),
+      service.transition(actor, id, 'affecte'),
     ]);
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
