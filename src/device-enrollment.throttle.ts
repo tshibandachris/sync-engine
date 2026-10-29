@@ -1,6 +1,23 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { ThrottlerModule, type ThrottlerStorage } from '@nestjs/throttler';
-import * as IORedis from 'ioredis';
+interface RedisClientLike {
+  status: string;
+  connect(): Promise<unknown>;
+  ping(): Promise<unknown>;
+  eval(script: string, numberOfKeys: number, ...args: Array<string | number>): Promise<unknown>;
+  quit(): Promise<unknown>;
+  disconnect(): void;
+}
+
+type RedisConstructor = new (
+  url: string,
+  options: {
+    lazyConnect: boolean;
+    maxRetriesPerRequest: number;
+    enableOfflineQueue: boolean;
+    retryStrategy: (attempt: number) => number | null;
+  },
+) => RedisClientLike;
 
 const DEVICE_ENROLLMENT_THROTTLER_STORAGE = Symbol('DEVICE_ENROLLMENT_THROTTLER_STORAGE');
 
@@ -45,18 +62,29 @@ return { totalHits, timeToExpire, isBlocked and 1 or 0, timeToBlockExpire }
  * so concurrent API instances cannot race around the configured limit.
  */
 export class ThrottlerStorageRedisService implements ThrottlerStorage {
-  private readonly redis: InstanceType<typeof IORedis.default>;
+  private readonly redis: RedisClientLike;
 
-  constructor(url: string) {
-    this.redis = new IORedis.default(url, {
+  private constructor(redis: RedisClientLike) {
+    this.redis = redis;
+  }
+
+  static async create(url: string): Promise<ThrottlerStorageRedisService> {
+    // ioredis v5 is CommonJS; the cast keeps NodeNext's namespace typing from
+    // leaking into the adapter while preserving the runtime default export.
+    const loaded = await import('ioredis');
+    const RedisCtor = (loaded as unknown as { default: RedisConstructor }).default;
+    const redis = new RedisCtor(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
       retryStrategy: (attempt: number) => attempt <= 3 ? Math.min(attempt * 100, 1_000) : null,
     });
+    const storage = new ThrottlerStorageRedisService(redis);
+    await storage.connect();
+    return storage;
   }
 
-  async connect(): Promise<void> {
+  private async connect(): Promise<void> {
     await this.redis.connect();
     await this.redis.ping();
   }
@@ -116,9 +144,7 @@ class DeviceEnrollmentThrottleStorageModule {
           provide: DEVICE_ENROLLMENT_THROTTLER_STORAGE,
           useFactory: async (): Promise<ThrottlerStorageRedisService | undefined> => {
             if (!redisUrl) return undefined;
-            const storage = new ThrottlerStorageRedisService(redisUrl);
-            await storage.connect();
-            return storage;
+            return ThrottlerStorageRedisService.create(redisUrl);
           },
         },
       ],
