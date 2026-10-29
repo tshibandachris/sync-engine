@@ -1,0 +1,319 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import * as schema from './schema.js';
+import { withTenant } from './with-tenant.js';
+import { requireTenantId } from './tenant-id.js';
+import {
+  canActOnMail,
+  canReadMail,
+  effectiveClearance,
+  filterVisibleMails,
+  hasPermission,
+  requireConfidentiality,
+  type CourrierAccessContext,
+  type CourrierAssignment,
+  type Confidentiality,
+  type CourrierPermission,
+} from './courrier-policy.js';
+import type { AttachmentStorage } from './attachment-storage.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CHECKSUM_RE = /^[0-9a-f]{64}$/i;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const PUT_TTL_SECONDS = 15 * 60;
+const GET_TTL_SECONDS = 60 * 60;
+const ALLOWED_CONTENT_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+
+export interface CourrierActor {
+  tenantId: string;
+  agentId: string;
+  permissions?: readonly string[];
+  serviceIds?: readonly string[];
+}
+
+export interface CreateCourrierDto {
+  subject: string;
+  body?: string;
+  confidentiality?: unknown;
+}
+
+export interface RequestCourrierAttachmentDto {
+  contentType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+}
+
+type CourrierRow = typeof schema.courriers.$inferSelect;
+
+export class CourrierService {
+  constructor(
+    private readonly db: NodePgDatabase<typeof schema>,
+    private readonly storage: AttachmentStorage,
+  ) {}
+
+  private context(actor: CourrierActor): CourrierAccessContext {
+    const permissions = new Set(actor.permissions ?? []);
+    return {
+      tenantId: requireTenantId(actor.tenantId),
+      actorId: this.requireUuid(actor.agentId, 'agentId'),
+      permissions,
+      clearance: effectiveClearance(permissions),
+      serviceIds: new Set(actor.serviceIds ?? []),
+    };
+  }
+
+  private requireUuid(value: unknown, field: string): string {
+    if (typeof value !== 'string' || !UUID_RE.test(value)) {
+      throw new BadRequestException(field + ' UUID requis.');
+    }
+    return value;
+  }
+
+  private toPolicyRecord(row: CourrierRow) {
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      createdBy: row.agentId,
+      confidentiality: row.confidentiality as Confidentiality,
+    };
+  }
+
+  private assertReadable(
+    context: CourrierAccessContext,
+    row: CourrierRow,
+    assignments: readonly CourrierAssignment[] = [],
+  ): void {
+    if (!canReadMail(context, this.toPolicyRecord(row), assignments)) {
+      // Do not disclose whether a record exists outside the caller's visibility.
+      throw new NotFoundException('Courrier introuvable.');
+    }
+  }
+
+  async create(actor: CourrierActor, dto: CreateCourrierDto) {
+    const context = this.context(actor);
+    if (!hasPermission(context, 'courrier:register')) {
+      throw new ForbiddenException('Permission courrier:register requise.');
+    }
+    if (typeof dto?.subject !== 'string' || !dto.subject.trim() || dto.subject.trim().length > 200) {
+      throw new BadRequestException('subject requis (1 à 200 caractères).');
+    }
+    if (dto.body !== undefined && (typeof dto.body !== 'string' || dto.body.length > 100_000)) {
+      throw new BadRequestException('body doit être un texte de 100 000 caractères maximum.');
+    }
+
+    let confidentiality: Confidentiality;
+    try {
+      confidentiality = requireConfidentiality(dto.confidentiality ?? 'interne');
+    } catch {
+      throw new BadRequestException('Niveau de confidentialité invalide.');
+    }
+    if (
+      confidentiality === 'secret' &&
+      !context.permissions.has('*') &&
+      !context.permissions.has('clearance:secret')
+    ) {
+      throw new ForbiddenException('Autorisation de créer un courrier secret requise.');
+    }
+    if (
+      confidentiality === 'confidentiel' &&
+      !context.permissions.has('*') &&
+      !context.permissions.has('clearance:confidentiel') &&
+      !context.permissions.has('clearance:secret')
+    ) {
+      throw new ForbiddenException('Habilitation confidentielle requise.');
+    }
+
+    const now = Date.now();
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const rows = await tx.insert(schema.courriers).values({
+        id: randomUUID(),
+        tenantId: context.tenantId,
+        agentId: context.actorId,
+        subject: dto.subject.trim(),
+        body: dto.body ?? '',
+        confidentiality,
+        status: 'enregistre',
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        syncSeq: 0,
+        firstSyncSeq: 0,
+      }).returning();
+      return rows[0];
+    }, { write: true });
+  }
+
+  async list(actor: CourrierActor, limitRaw?: number) {
+    const context = this.context(actor);
+    if (!hasPermission(context, 'courrier:read')) {
+      throw new ForbiddenException('Permission courrier:read requise.');
+    }
+    const limit = limitRaw === undefined ? 50 : Number(limitRaw);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException('limit doit être compris entre 1 et 100.');
+    }
+
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const rows = await tx.select().from(schema.courriers)
+        .where(and(eq(schema.courriers.tenantId, context.tenantId), isNull(schema.courriers.deletedAt)))
+        .orderBy(desc(schema.courriers.createdAt))
+        .limit(500);
+      // Assignments are not yet modelled in this repository; never infer an assignment
+      // from client input. Record-level policy still enforces tenant and clearance.
+      return filterVisibleMails(
+        context,
+        rows.map((row) => ({ ...this.toPolicyRecord(row), row })),
+        [],
+      ).slice(0, limit).map(({ row }) => row);
+    });
+  }
+
+  async get(actor: CourrierActor, idRaw: string) {
+    const context = this.context(actor);
+    const id = this.requireUuid(idRaw, 'courrierId');
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const rows = await tx.select().from(schema.courriers).where(and(
+        eq(schema.courriers.id, id),
+        eq(schema.courriers.tenantId, context.tenantId),
+        isNull(schema.courriers.deletedAt),
+      )).limit(1);
+      const row = rows[0];
+      if (!row) throw new NotFoundException('Courrier introuvable.');
+      this.assertReadable(context, row);
+      return row;
+    });
+  }
+
+  async requestAttachment(actor: CourrierActor, courrierIdRaw: string, dto: RequestCourrierAttachmentDto) {
+    const context = this.context(actor);
+    const courrierId = this.requireUuid(courrierIdRaw, 'courrierId');
+    if (!ALLOWED_CONTENT_TYPES.has(dto?.contentType)) {
+      throw new BadRequestException('content_type accepté : application/pdf, image/jpeg, image/png.');
+    }
+    if (!Number.isSafeInteger(dto.sizeBytes) || dto.sizeBytes <= 0 || dto.sizeBytes > MAX_ATTACHMENT_BYTES) {
+      throw new BadRequestException('size_bytes doit être compris entre 1 octet et 10 Mio.');
+    }
+    if (!CHECKSUM_RE.test(dto.checksumSha256)) {
+      throw new BadRequestException('checksum_sha256 doit contenir 64 caractères hexadécimaux.');
+    }
+
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const rows = await tx.select().from(schema.courriers).where(and(
+        eq(schema.courriers.id, courrierId),
+        eq(schema.courriers.tenantId, context.tenantId),
+        isNull(schema.courriers.deletedAt),
+      )).limit(1);
+      const courrier = rows[0];
+      if (!courrier) throw new NotFoundException('Courrier introuvable.');
+      this.assertReadable(context, courrier);
+      if (!canActOnMail(context, this.toPolicyRecord(courrier), [], 'transition')) {
+        throw new ForbiddenException('Vous ne pouvez pas ajouter de pièce jointe à ce courrier.');
+      }
+
+      const id = randomUUID();
+      const ext = dto.contentType === 'application/pdf' ? 'pdf' : dto.contentType === 'image/png' ? 'png' : 'jpg';
+      const objectKey = 'tenants/' + context.tenantId + '/courriers/' + courrierId + '/' + id + '.' + ext;
+      await tx.insert(schema.courrierAttachments).values({
+        id,
+        tenantId: context.tenantId,
+        courrierId,
+        agentId: context.actorId,
+        objectKey,
+        contentType: dto.contentType,
+        sizeBytes: dto.sizeBytes,
+        checksumSha256: dto.checksumSha256.toLowerCase(),
+        status: 'pending',
+        createdAt: Date.now(),
+        uploadedAt: null,
+      });
+      const signed = await this.storage.presignPut(objectKey, dto.contentType, PUT_TTL_SECONDS);
+      return { attachment_id: id, upload_url: signed.url, expires_in: signed.expiresIn };
+    }, { write: true });
+  }
+
+  async confirmAttachment(actor: CourrierActor, courrierIdRaw: string, attachmentIdRaw: string) {
+    const context = this.context(actor);
+    const courrierId = this.requireUuid(courrierIdRaw, 'courrierId');
+    const attachmentId = this.requireUuid(attachmentIdRaw, 'attachmentId');
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const mailRows = await tx.select().from(schema.courriers).where(and(
+        eq(schema.courriers.id, courrierId),
+        eq(schema.courriers.tenantId, context.tenantId),
+        isNull(schema.courriers.deletedAt),
+      )).limit(1);
+      const courrier = mailRows[0];
+      if (!courrier) throw new NotFoundException('Courrier introuvable.');
+      this.assertReadable(context, courrier);
+      if (!canActOnMail(context, this.toPolicyRecord(courrier), [], 'transition')) {
+        throw new ForbiddenException('Vous ne pouvez pas confirmer une pièce jointe sur ce courrier.');
+      }
+
+      const rows = await tx.select().from(schema.courrierAttachments).where(and(
+        eq(schema.courrierAttachments.id, attachmentId),
+        eq(schema.courrierAttachments.courrierId, courrierId),
+        eq(schema.courrierAttachments.tenantId, context.tenantId),
+      )).limit(1);
+      const attachment = rows[0];
+      if (!attachment) throw new NotFoundException('Pièce jointe introuvable.');
+      if (attachment.status === 'uploaded') {
+        return { attachment_id: attachment.id, status: 'uploaded', uploaded_at: attachment.uploadedAt };
+      }
+      const head = await this.storage.head(attachment.objectKey);
+      if (!head.exists) throw new ConflictException('Fichier absent du stockage : téléversement non confirmé.');
+      if (head.sizeBytes !== undefined && head.sizeBytes !== Number(attachment.sizeBytes)) {
+        throw new ConflictException('La taille du fichier ne correspond pas aux métadonnées déclarées.');
+      }
+      if (head.contentType !== undefined && head.contentType !== attachment.contentType) {
+        throw new ConflictException('Le type du fichier ne correspond pas aux métadonnées déclarées.');
+      }
+      const uploadedAt = Date.now();
+      await tx.update(schema.courrierAttachments).set({ status: 'uploaded', uploadedAt }).where(and(
+        eq(schema.courrierAttachments.id, attachmentId),
+        eq(schema.courrierAttachments.tenantId, context.tenantId),
+      ));
+      return { attachment_id: attachmentId, status: 'uploaded', uploaded_at: uploadedAt };
+    }, { write: true });
+  }
+
+  async listAttachments(actor: CourrierActor, courrierIdRaw: string) {
+    const context = this.context(actor);
+    const courrierId = this.requireUuid(courrierIdRaw, 'courrierId');
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const mailRows = await tx.select().from(schema.courriers).where(and(
+        eq(schema.courriers.id, courrierId),
+        eq(schema.courriers.tenantId, context.tenantId),
+        isNull(schema.courriers.deletedAt),
+      )).limit(1);
+      const courrier = mailRows[0];
+      if (!courrier) throw new NotFoundException('Courrier introuvable.');
+      this.assertReadable(context, courrier);
+      const rows = await tx.select().from(schema.courrierAttachments).where(and(
+        eq(schema.courrierAttachments.courrierId, courrierId),
+        eq(schema.courrierAttachments.tenantId, context.tenantId),
+        eq(schema.courrierAttachments.status, 'uploaded'),
+      )).orderBy(desc(schema.courrierAttachments.createdAt));
+      const result = [];
+      for (const row of rows) {
+        const signed = await this.storage.presignGet(row.objectKey, GET_TTL_SECONDS);
+        result.push({
+          id: row.id,
+          courrier_id: row.courrierId,
+          content_type: row.contentType,
+          size_bytes: Number(row.sizeBytes),
+          checksum_sha256: row.checksumSha256,
+          uploaded_at: row.uploadedAt,
+          download_url: signed.url,
+          expires_in: signed.expiresIn,
+        });
+      }
+      return result;
+    });
+  }
+}
