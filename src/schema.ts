@@ -214,6 +214,69 @@ export const courrierAttachments = pgTable(
 export type CourrierAttachment = typeof courrierAttachments.$inferSelect;
 export type NewCourrierAttachment = typeof courrierAttachments.$inferInsert;
 
+export const courrierAssignments = pgTable(
+  'courrier_assignments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    courrierId: uuid('courrier_id').notNull(),
+    agentId: uuid('agent_id'),
+    serviceId: uuid('service_id'),
+    assignedBy: uuid('assigned_by').notNull(),
+    assignedAt: bigint('assigned_at', { mode: 'number' }).notNull(),
+    revokedAt: bigint('revoked_at', { mode: 'number' }),
+  },
+  (table) => ({
+    targetCheck: check(
+      'courrier_assignments_exactly_one_target',
+      sql`( ${table.agentId} IS NOT NULL AND ${table.serviceId} IS NULL ) OR ( ${table.agentId} IS NULL AND ${table.serviceId} IS NOT NULL )`,
+    ),
+    fkCourrierTenant: foreignKey({
+      columns: [table.tenantId, table.courrierId],
+      foreignColumns: [courriers.tenantId, courriers.id],
+      name: 'fk_courrier_assignments_courrier_tenant',
+    }).onDelete('cascade'),
+    activeAgentIdx: uniqueIndex('courrier_assignments_active_agent_unique')
+      .on(table.tenantId, table.courrierId, table.agentId)
+      .where(sql`${table.agentId} IS NOT NULL AND ${table.revokedAt} IS NULL`),
+    activeServiceIdx: uniqueIndex('courrier_assignments_active_service_unique')
+      .on(table.tenantId, table.courrierId, table.serviceId)
+      .where(sql`${table.serviceId} IS NOT NULL AND ${table.revokedAt} IS NULL`),
+    tenantCourrierIdx: index('idx_courrier_assignments_tenant_courrier')
+      .on(table.tenantId, table.courrierId, table.assignedAt.desc()),
+  }),
+);
+
+export type CourrierAssignmentRow = typeof courrierAssignments.$inferSelect;
+export type NewCourrierAssignmentRow = typeof courrierAssignments.$inferInsert;
+
+export const courrierAuditLogs = pgTable(
+  'courrier_audit_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    courrierId: uuid('courrier_id').notNull(),
+    actorId: uuid('actor_id').notNull(),
+    action: varchar('action', { length: 80 }).notNull(),
+    fromStatus: varchar('from_status', { length: 20 }),
+    toStatus: varchar('to_status', { length: 20 }),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => ({
+    fkCourrierTenant: foreignKey({
+      columns: [table.tenantId, table.courrierId],
+      foreignColumns: [courriers.tenantId, courriers.id],
+      name: 'fk_courrier_audit_logs_courrier_tenant',
+    }).onDelete('cascade'),
+    tenantCourrierIdx: index('idx_courrier_audit_logs_tenant_courrier')
+      .on(table.tenantId, table.courrierId, table.createdAt.desc()),
+  }),
+);
+
+export type CourrierAuditLog = typeof courrierAuditLogs.$inferSelect;
+export type NewCourrierAuditLog = typeof courrierAuditLogs.$inferInsert;
+
 export type SyncDatabase = typeof import('./schema.js');
 
 export const syncConflicts = pgTable('sync_conflicts', {

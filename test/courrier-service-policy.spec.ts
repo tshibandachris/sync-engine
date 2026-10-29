@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
-import { CourrierService } from '../src/courrier.service.js';
+import { canTransitionCourrierStatus, CourrierService } from '../src/courrier.service.js';
 
 function service() {
   const db = { transaction: vi.fn() };
@@ -44,5 +44,23 @@ describe('CourrierService access boundaries', () => {
       '00000000-0000-4000-8000-000000000003', {
         contentType: 'application/x-msdownload', sizeBytes: 100, checksumSha256: 'a'.repeat(64),
       })).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('Courrier workflow transition graph', () => {
+  it('allows only the next forward state', () => {
+    expect(canTransitionCourrierStatus('enregistre', 'affecte')).toBe(true);
+    expect(canTransitionCourrierStatus('affecte', 'en_cours')).toBe(true);
+    expect(canTransitionCourrierStatus('en_cours', 'repondu')).toBe(true);
+    expect(canTransitionCourrierStatus('repondu', 'clos')).toBe(true);
+    expect(canTransitionCourrierStatus('clos', 'archive')).toBe(true);
+  });
+
+  it('rejects skipped, backward, repeated, and unknown states', () => {
+    expect(canTransitionCourrierStatus('enregistre', 'en_cours')).toBe(false);
+    expect(canTransitionCourrierStatus('repondu', 'en_cours')).toBe(false);
+    expect(canTransitionCourrierStatus('clos', 'clos')).toBe(false);
+    expect(canTransitionCourrierStatus('archive', 'enregistre')).toBe(false);
+    expect(canTransitionCourrierStatus('unknown', 'clos')).toBe(false);
   });
 });

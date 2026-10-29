@@ -234,6 +234,7 @@ export class TestPostgres {
     '025_pos_reconciliation.sql',
     '026_courriers.sql',
     '027_courrier_attachments.sql',
+    '028_courrier_workflow_and_audit.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
