@@ -1,0 +1,49 @@
+name: Electron lockfile generation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/electron-production-lock
+    paths:
+      - 'electron-app/package.json'
+      - '.github/workflows/ci-lock.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: electron-lock-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate-lockfile:
+    if: github.ref == 'refs/heads/feat/electron-production-lock'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/electron-production-lock
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: electron-app/package.json
+
+      - name: Generate official npm lockfile
+        working-directory: electron-app
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Commit generated lockfile
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: feat/electron-production-lock
+          file_pattern: electron-app/package-lock.json
+          commit_message: 'build(electron): generate npm package lock'
+          commit_user_name: github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          skip_dirty_check: false
