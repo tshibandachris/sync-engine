@@ -1,5 +1,7 @@
+import { sql } from 'drizzle-orm';
 import {
   bigint,
+  check,
   doublePrecision,
   foreignKey,
   index,
@@ -128,6 +130,57 @@ export type Mission = typeof missions.$inferSelect;
 export type NewMission = typeof missions.$inferInsert;
 export type CheckIn = typeof checkIns.$inferSelect;
 export type NewCheckIn = typeof checkIns.$inferInsert;
+
+export const courriers = pgTable(
+  'courriers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    agentId: uuid('agent_id').notNull(),
+    subject: varchar('subject', { length: 200 }).notNull(),
+    body: text('body').notNull().default(''),
+    confidentiality: varchar('confidentiality', { length: 20 })
+      .$type<'public' | 'interne' | 'confidentiel' | 'secret'>()
+      .notNull()
+      .default('interne'),
+    status: varchar('status', { length: 20 })
+      .$type<'enregistre' | 'affecte' | 'en_cours' | 'repondu' | 'clos' | 'archive'>()
+      .notNull()
+      .default('enregistre'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+    deletedAt: bigint('deleted_at', { mode: 'number' }),
+    syncSeq: bigint('sync_seq', { mode: 'number' }).notNull(),
+    firstSyncSeq: bigint('first_sync_seq', { mode: 'number' }).notNull(),
+  },
+  (table) => ({
+    tenantIdUnique: unique('courriers_tenant_id_unique').on(table.tenantId, table.id),
+    confidentialityCheck: check(
+      'courriers_confidentiality_check',
+      sql`${table.confidentiality} IN ('public', 'interne', 'confidentiel', 'secret')`,
+    ),
+    statusCheck: check(
+      'courriers_status_check',
+      sql`${table.status} IN ('enregistre', 'affecte', 'en_cours', 'repondu', 'clos', 'archive')`,
+    ),
+    tenantIdx: index('idx_courriers_tenant').on(table.tenantId),
+    tenantAgentIdx: index('idx_courriers_tenant_agent').on(
+      table.tenantId,
+      table.agentId,
+      table.createdAt,
+    ),
+    tenantConfidentialityIdx: index('idx_courriers_tenant_confidentiality').on(
+      table.tenantId,
+      table.confidentiality,
+      table.createdAt,
+    ),
+    syncSeqIdx: index('idx_courriers_sync_seq').on(table.tenantId, table.syncSeq),
+  }),
+);
+
+export type Courrier = typeof courriers.$inferSelect;
+export type NewCourrier = typeof courriers.$inferInsert;
+
 export type SyncDatabase = typeof import('./schema.js');
 
 export const syncConflicts = pgTable('sync_conflicts', {
