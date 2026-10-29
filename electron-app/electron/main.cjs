@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
-const { openDatabase, applyPulledPage, getCursor } = require('./db/client.cjs');
+const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
 const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
 
@@ -109,6 +109,14 @@ app.whenReady().then(async () => {
   db = openDatabase(app);
   ipcMain.handle('eden:get-status', () => readStatus());
   ipcMain.handle('eden:refresh', () => doSync());
+  ipcMain.handle('eden:dashboard', () => getDashboardSummary(db));
+  ipcMain.handle('eden:products:list', (_event, search) => listLocalProducts(db, { search }));
+  ipcMain.handle('eden:products:save', (_event, input) => {
+    const product = saveLocalProduct(db, input);
+    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    return product;
+  });
   createWindow();
   await doSync();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
