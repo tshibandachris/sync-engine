@@ -183,6 +183,37 @@ export const courriers = pgTable(
 export type Courrier = typeof courriers.$inferSelect;
 export type NewCourrier = typeof courriers.$inferInsert;
 
+
+export const courrierAttachments = pgTable(
+  'courrier_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    courrierId: uuid('courrier_id').notNull(),
+    agentId: uuid('agent_id').notNull(),
+    objectKey: text('object_key').notNull(),
+    contentType: varchar('content_type', { length: 100 }).notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    checksumSha256: varchar('checksum_sha256', { length: 64 }).notNull(),
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    uploadedAt: bigint('uploaded_at', { mode: 'number' }),
+  },
+  (table) => ({
+    objectKeyIdx: uniqueIndex('courrier_attachments_object_key_idx').on(table.objectKey),
+    tenantCourrierIdx: index('idx_courrier_attachments_tenant_courrier')
+      .on(table.tenantId, table.courrierId, table.createdAt.desc()),
+    fkCourrierTenant: foreignKey({
+      columns: [table.tenantId, table.courrierId],
+      foreignColumns: [courriers.tenantId, courriers.id],
+      name: 'fk_courrier_attachments_courrier_tenant',
+    }).onDelete('cascade'),
+  }),
+);
+
+export type CourrierAttachment = typeof courrierAttachments.$inferSelect;
+export type NewCourrierAttachment = typeof courrierAttachments.$inferInsert;
+
 export type SyncDatabase = typeof import('./schema.js');
 
 export const syncConflicts = pgTable('sync_conflicts', {
