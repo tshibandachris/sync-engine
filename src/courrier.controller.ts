@@ -71,6 +71,20 @@ export class CourrierController {
     });
   }
 
+  @Get(':id/assignments')
+  listAssignments(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.courriers.listAssignments(actorFromRequest(req), id);
+  }
+
+  @Post(':id/assignments/:assignmentId/revoke')
+  revokeAssignment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    return this.courriers.revokeAssignment(actorFromRequest(req), id, assignmentId);
+  }
+
   @Post(':id/transitions')
   transition(
     @Req() req: AuthenticatedRequest,
