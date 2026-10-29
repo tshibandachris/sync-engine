@@ -52,6 +52,7 @@ export class ThrottlerStorageRedisService implements ThrottlerStorage {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
+      retryStrategy: (attempt) => attempt <= 3 ? Math.min(attempt * 100, 1_000) : null,
     });
   }
 
