@@ -32,6 +32,10 @@ class DeviceTokenStore {
     }
   }
 
+  async load() {
+    return this.getToken();
+  }
+
   async getToken() {
     this.assertEncryptionAvailable();
     if (!this.fs.existsSync(this.filePath)) return null;
