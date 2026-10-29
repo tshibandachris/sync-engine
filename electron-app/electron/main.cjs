@@ -1,12 +1,45 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('node:path');
 const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
 const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
+const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 
 let db;
 let windowRef;
+let tokenStore;
+let deviceToken;
+let tokenStoreError;
 let status = { state: 'starting', message: 'Initialisation…', productCount: 0, lastCursor: 0, outboxPending: 0, outboxFailed: 0 };
+
+function requireDeviceToken() {
+  if (tokenStoreError) throw tokenStoreError;
+  if (!deviceToken) {
+    throw new Error('Jeton d’appareil absent du stockage sécurisé. Réenrôlez cet appareil avant de synchroniser.');
+  }
+  return deviceToken;
+}
+
+async function initializeDeviceToken() {
+  tokenStore = new DeviceTokenStore({ app, safeStorage });
+  deviceToken = await tokenStore.getToken();
+
+  // Environment-based bootstrap is strictly for unpackaged local development.
+  // Packaged production builds never read EDEN_SYNC_TOKEN from process.env.
+  if (!deviceToken && !app.isPackaged) {
+    const developmentToken = process.env.EDEN_SYNC_TOKEN;
+    if (developmentToken) {
+      await tokenStore.setToken(developmentToken);
+      deviceToken = developmentToken;
+    }
+  }
+
+  if (!deviceToken) {
+    throw new Error(app.isPackaged
+      ? 'Jeton d’appareil chiffré absent. Enrôlez cet appareil avant la synchronisation.'
+      : 'Jeton absent : définissez EDEN_SYNC_TOKEN uniquement pour le développement local.');
+  }
+}
 
 function readStatus() {
   const outbox = db ? getOutboxStatus(db) : { pending: status.outboxPending, failed: status.outboxFailed };
@@ -20,6 +53,7 @@ function readStatus() {
 }
 
 async function pullAll() {
+  const token = requireDeviceToken();
   let cursor = getCursor(db);
   let pages = 0;
   let productsProcessed = 0;
@@ -27,7 +61,7 @@ async function pullAll() {
     if (++pages > 1000) throw new Error('Pull stopped after 1000 pages; check API pagination.');
     const response = await pullChanges({
       baseUrl: process.env.EDEN_SYNC_URL,
-      token: process.env.EDEN_SYNC_TOKEN,
+      token,
       lastPulledAt: cursor,
     });
     productsProcessed += applyPulledPage(db, response);
@@ -43,7 +77,7 @@ async function pushPending() {
   if (!batch) return { sent: false, acknowledged: 0, retained: 0 };
   const response = await pushChanges({
     baseUrl: process.env.EDEN_SYNC_URL,
-    token: process.env.EDEN_SYNC_TOKEN,
+    token: requireDeviceToken(),
     idempotencyKey: batch.idempotencyKey,
     payload: batch.payload,
   });
@@ -82,7 +116,7 @@ async function doSync() {
       outboxPending: outbox.pending,
       outboxFailed: outbox.failed,
     };
-    console.error('[sync] failed:', error);
+    console.error('[sync] failed:', error.message);
   }
 
   windowRef?.webContents.send('eden:status', readStatus());
@@ -108,6 +142,13 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   db = openDatabase(app);
+  try {
+    await initializeDeviceToken();
+  } catch (error) {
+    tokenStoreError = error;
+    console.error('[auth] secure device token unavailable:', error.message);
+  }
+
   ipcMain.handle('eden:get-status', () => readStatus());
   ipcMain.handle('eden:refresh', () => doSync());
   ipcMain.handle('eden:dashboard', () => getDashboardSummary(db));
