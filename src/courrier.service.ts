@@ -391,6 +391,65 @@ export class CourrierService {
     }, { write: true });
   }
 
+
+  async listAssignments(actor: CourrierActor, courrierIdRaw: string) {
+    const context = this.context(actor);
+    const courrierId = this.requireUuid(courrierIdRaw, 'courrierId');
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const rows = await tx.select().from(schema.courriers).where(and(
+        eq(schema.courriers.id, courrierId), eq(schema.courriers.tenantId, context.tenantId),
+        isNull(schema.courriers.deletedAt),
+      )).limit(1);
+      const courrier = rows[0];
+      if (!courrier) throw new NotFoundException('Courrier introuvable.');
+      const assignments = await this.assignmentsFor(tx, context.tenantId, courrierId);
+      this.assertReadable(context, courrier, assignments);
+      await this.audit(tx, context, courrierId, 'courrier.assignments_read');
+      return tx.select().from(schema.courrierAssignments).where(and(
+        eq(schema.courrierAssignments.tenantId, context.tenantId),
+        eq(schema.courrierAssignments.courrierId, courrierId),
+      )).orderBy(desc(schema.courrierAssignments.assignedAt));
+    }, { write: true });
+  }
+
+  async revokeAssignment(actor: CourrierActor, courrierIdRaw: string, assignmentIdRaw: string) {
+    const context = this.context(actor);
+    const courrierId = this.requireUuid(courrierIdRaw, 'courrierId');
+    const assignmentId = this.requireUuid(assignmentIdRaw, 'assignmentId');
+    if (!hasPermission(context, 'courrier:assign')) {
+      throw new ForbiddenException('Permission courrier:assign requise.');
+    }
+    return withTenant(this.db, context.tenantId, async (tx) => {
+      const rows = await tx.select().from(schema.courriers).where(and(
+        eq(schema.courriers.id, courrierId), eq(schema.courriers.tenantId, context.tenantId),
+        isNull(schema.courriers.deletedAt),
+      )).limit(1);
+      const courrier = rows[0];
+      if (!courrier) throw new NotFoundException('Courrier introuvable.');
+      const assignments = await this.assignmentsFor(tx, context.tenantId, courrierId);
+      this.assertReadable(context, courrier, assignments);
+      if (!canActOnMail(context, this.toPolicyRecord(courrier), assignments, 'assign')) {
+        throw new ForbiddenException('Révocation d’affectation non autorisée.');
+      }
+      const current = await tx.select().from(schema.courrierAssignments).where(and(
+        eq(schema.courrierAssignments.id, assignmentId),
+        eq(schema.courrierAssignments.tenantId, context.tenantId),
+        eq(schema.courrierAssignments.courrierId, courrierId),
+        isNull(schema.courrierAssignments.revokedAt),
+      )).limit(1);
+      if (!current[0]) throw new NotFoundException('Affectation active introuvable.');
+      const revokedAt = Date.now();
+      const updated = await tx.update(schema.courrierAssignments).set({ revokedAt }).where(and(
+        eq(schema.courrierAssignments.id, assignmentId),
+        eq(schema.courrierAssignments.tenantId, context.tenantId),
+      )).returning();
+      await this.audit(tx, context, courrierId, 'courrier.assignment_revoked', {
+        metadata: { assignmentId, agentId: current[0].agentId, serviceId: current[0].serviceId },
+      });
+      return updated[0];
+    }, { write: true });
+  }
+
   async transition(actor: CourrierActor, courrierIdRaw: string, toStatusRaw: unknown) {
     const context = this.context(actor);
     const courrierId = this.requireUuid(courrierIdRaw, 'courrierId');
