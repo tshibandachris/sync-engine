@@ -159,7 +159,7 @@ test('persists pulled sales, sale lines, and stock movements in the operational 
     });
     assert.deepEqual(f.db.prepare(
       'SELECT id, sale_id, product_id, quantity, unit_price, subtotal, last_known_sync_seq FROM sale_lines WHERE id = ?',
-    ).get('line-pull-1), {
+    ).get('line-pull-1'), {
       id: 'line-pull-1', sale_id: saleId, product_id: productId,
       quantity: 2, unit_price: 500, subtotal: 1000, last_known_sync_seq: 12,
     });
