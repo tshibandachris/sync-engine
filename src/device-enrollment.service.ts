@@ -66,7 +66,7 @@ export class DeviceEnrollmentService {
           posProfileId: pairing.pos_profile_id,
           name: dto.deviceName,
           fingerprint: hardwareId.trim(),
-          hardwareInfo: dto.hardwareInfo,
+          hardwareInfo: { ...dto.hardwareInfo },
           isActive: true,
           createdAt: now,
         }).returning({
