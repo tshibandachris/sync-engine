@@ -348,3 +348,26 @@ export const devicePairingCodes = pgTable(
 export type DevicePairingCode = typeof devicePairingCodes.$inferSelect;
 export type NewDevicePairingCode = typeof devicePairingCodes.$inferInsert;
 
+
+export const devices = pgTable(
+  'devices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    storeId: uuid('store_id').notNull(),
+    posProfileId: uuid('pos_profile_id'),
+    name: varchar('name', { length: 120 }).notNull(),
+    fingerprint: varchar('fingerprint', { length: 255 }).notNull(),
+    hardwareInfo: jsonb('hardware_info').$type<Record<string, string>>().notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tenantFingerprintUnique: unique('devices_tenant_fingerprint_unique').on(table.tenantId, table.fingerprint),
+    tenantStoreIdx: index('idx_devices_tenant_store').on(table.tenantId, table.storeId),
+    tenantActiveIdx: index('idx_devices_tenant_active').on(table.tenantId, table.isActive),
+  }),
+);
+
+export type Device = typeof devices.$inferSelect;
+export type NewDevice = typeof devices.$inferInsert;
