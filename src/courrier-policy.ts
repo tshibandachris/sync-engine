@@ -31,6 +31,7 @@ export interface CourrierAccessContext {
   actorId: string;
   permissions: ReadonlySet<string>;
   clearance: Confidentiality;
+  serviceIds?: ReadonlySet<string>;
 }
 
 export interface CourrierRecord {
@@ -70,7 +71,7 @@ export function effectiveClearance(
   base: unknown = 'interne',
 ): Confidentiality {
   if (!isConfidentiality(base)) return 'interne';
-  if (permissions.has('clearance:secret')) return 'secret';
+  if (permissions.has('*') || permissions.has('clearance:secret')) return 'secret';
   if (permissions.has('clearance:confidentiel') && LEVEL[base] < LEVEL.confidentiel) {
     return 'confidentiel';
   }
@@ -106,7 +107,9 @@ export function canReadMail(
   // Service assignment grants access to confidential mail, but never secret mail.
   if (
     mail.confidentiality === 'confidentiel' &&
-    relevant.some((assignment) => Boolean(assignment.serviceId))
+    relevant.some((assignment) =>
+      Boolean(assignment.serviceId && context.serviceIds?.has(assignment.serviceId)),
+    )
   ) {
     return true;
   }
