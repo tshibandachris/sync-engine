@@ -59,6 +59,41 @@ export class CourrierController {
     return this.courriers.get(actorFromRequest(req), id);
   }
 
+  @Post(':id/assignments')
+  assign(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { agent_id?: string; service_id?: string; agentId?: string; serviceId?: string },
+  ) {
+    return this.courriers.assign(actorFromRequest(req), id, {
+      agentId: body?.agentId ?? body?.agent_id,
+      serviceId: body?.serviceId ?? body?.service_id,
+    });
+  }
+
+  @Post(':id/transitions')
+  transition(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { to_status?: string; toStatus?: string },
+  ) {
+    return this.courriers.transition(actorFromRequest(req), id, body?.toStatus ?? body?.to_status);
+  }
+
+  @Get(':id/audit')
+  audit(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    let parsed: number | undefined;
+    if (limit !== undefined) {
+      parsed = Number(limit);
+      if (!Number.isInteger(parsed)) throw new BadRequestException('limit doit être un entier.');
+    }
+    return this.courriers.listAudit(actorFromRequest(req), id, parsed);
+  }
+
   @Post(':id/attachments/request-upload')
   requestAttachment(
     @Req() req: AuthenticatedRequest,
