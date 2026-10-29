@@ -40,7 +40,13 @@ afterAll(async () => {
 
 describe('Courrier security hardening (PostgreSQL integration)', () => {
   it('serializes competing stale transitions and accepts exactly one winner', async () => {
-    const id = await seedCourrier(pg.pool);
+    const id = await seedCourrier(pg.pool, 'affecte');
+    await pg.pool.query(
+      `INSERT INTO courrier_assignments
+         (tenant_id, courrier_id, agent_id, service_id, assigned_by, assigned_at)
+       VALUES ($1, $2, $3, NULL, $4, $5)`,
+      [TENANT_ID, id, AGENT_ID, ACTOR_ID, Date.now()],
+    );
     const service = new CourrierService(pg.appDb, {
       delete: async () => undefined,
       listByPrefix: async () => [],
@@ -54,8 +60,8 @@ describe('Courrier security hardening (PostgreSQL integration)', () => {
       permissions: ['courrier:read', 'courrier:manage'],
     };
     const results = await Promise.allSettled([
-      service.transition(actor, id, 'affecte'),
-      service.transition(actor, id, 'affecte'),
+      service.transition(actor, id, 'en_cours'),
+      service.transition(actor, id, 'en_cours'),
     ]);
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
@@ -64,7 +70,7 @@ describe('Courrier security hardening (PostgreSQL integration)', () => {
       'SELECT status FROM courriers WHERE tenant_id = $1 AND id = $2',
       [TENANT_ID, id],
     );
-    expect(final.rows[0].status).toBe('affecte');
+    expect(final.rows[0].status).toBe('en_cours');
   });
 
   it('rejects UPDATE and DELETE against the audit log for the runtime role', async () => {
