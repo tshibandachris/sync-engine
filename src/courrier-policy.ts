@@ -134,7 +134,13 @@ export function canActOnMail(
       (assignment) =>
         assignment.tenantId === mail.tenantId &&
         assignment.mailId === mail.id &&
-        assignment.userId === context.actorId,
+        (
+          assignment.userId === context.actorId ||
+          (
+            mail.confidentiality === 'confidentiel' &&
+            Boolean(assignment.serviceId && context.serviceIds?.has(assignment.serviceId))
+          )
+        ),
     );
 
   switch (action) {
