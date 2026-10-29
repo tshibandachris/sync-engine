@@ -63,5 +63,6 @@ CREATE POLICY tenant_isolation_courrier_audit_logs ON courrier_audit_logs
 -- Runtime access: assignment lifecycle is mutable; audit history is append-only.
 GRANT SELECT, INSERT, UPDATE ON courrier_assignments TO sync_app;
 GRANT SELECT, INSERT ON courrier_audit_logs TO sync_app;
+REVOKE UPDATE, DELETE ON courrier_audit_logs FROM sync_app;
 
 COMMIT;
