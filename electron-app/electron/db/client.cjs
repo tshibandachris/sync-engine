@@ -298,6 +298,71 @@ function applyPulledPage(db, response) {
       AND NOT EXISTS (SELECT 1 FROM outbox WHERE entity_type = 'cash_sessions' AND entity_id = excluded.id)
   `);
 
+  // POS operational tables are populated from the same pull page as the generic cache.
+  // Do not overwrite a locally queued sale or its child accounting records.
+  const upsertSale = db.prepare(`
+    INSERT INTO sales (
+      id, cash_session_id, staff_id, sale_number, total, payment_method,
+      cash_amount, mobile_amount, mobile_msisdn, mobile_reference, customer_note,
+      is_void, voided_sale_id, void_reason, created_at, updated_at, last_known_sync_seq
+    ) VALUES (
+      @id, @cashSessionId, @staffId, @saleNumber, @total, @paymentMethod,
+      @cashAmount, @mobileAmount, @mobileMsisdn, @mobileReference, @customerNote,
+      @isVoid, @voidedSaleId, @voidReason, @createdAt, @updatedAt, @lastKnownSyncSeq
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      cash_session_id=excluded.cash_session_id, staff_id=excluded.staff_id,
+      sale_number=excluded.sale_number, total=excluded.total,
+      payment_method=excluded.payment_method, cash_amount=excluded.cash_amount,
+      mobile_amount=excluded.mobile_amount, mobile_msisdn=excluded.mobile_msisdn,
+      mobile_reference=excluded.mobile_reference, customer_note=excluded.customer_note,
+      is_void=excluded.is_void, voided_sale_id=excluded.voided_sale_id,
+      void_reason=excluded.void_reason, created_at=excluded.created_at,
+      updated_at=excluded.updated_at, last_known_sync_seq=excluded.last_known_sync_seq
+    WHERE excluded.last_known_sync_seq >= sales.last_known_sync_seq
+      AND NOT EXISTS (SELECT 1 FROM outbox WHERE entity_type='sales' AND entity_id=excluded.id)
+  `);
+  const upsertSaleLine = db.prepare(`
+    INSERT INTO sale_lines (
+      id, sale_id, product_id, product_name, product_sku, quantity,
+      unit_price, subtotal, created_at, updated_at, last_known_sync_seq
+    ) VALUES (
+      @id, @saleId, @productId, @productName, @productSku, @quantity,
+      @unitPrice, @subtotal, @createdAt, @updatedAt, @lastKnownSyncSeq
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      sale_id=excluded.sale_id, product_id=excluded.product_id,
+      product_name=excluded.product_name, product_sku=excluded.product_sku,
+      quantity=excluded.quantity, unit_price=excluded.unit_price,
+      subtotal=excluded.subtotal, created_at=excluded.created_at,
+      updated_at=excluded.updated_at, last_known_sync_seq=excluded.last_known_sync_seq
+    WHERE excluded.last_known_sync_seq >= sale_lines.last_known_sync_seq
+      AND NOT EXISTS (SELECT 1 FROM outbox WHERE entity_type='sales' AND entity_id=excluded.sale_id)
+  `);
+  const upsertStockMovement = db.prepare(`
+    INSERT INTO stock_movements (
+      id, product_id, movement_type, quantity_delta, reference_id,
+      reference_type, unit_cost, notes, created_at, updated_at, created_by,
+      last_known_sync_seq
+    ) VALUES (
+      @id, @productId, @movementType, @quantityDelta, @referenceId,
+      @referenceType, @unitCost, @notes, @createdAt, @updatedAt, @createdBy,
+      @lastKnownSyncSeq
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      product_id=excluded.product_id, movement_type=excluded.movement_type,
+      quantity_delta=excluded.quantity_delta, reference_id=excluded.reference_id,
+      reference_type=excluded.reference_type, unit_cost=excluded.unit_cost,
+      notes=excluded.notes, created_at=excluded.created_at,
+      updated_at=excluded.updated_at, created_by=excluded.created_by,
+      last_known_sync_seq=excluded.last_known_sync_seq
+    WHERE excluded.last_known_sync_seq >= stock_movements.last_known_sync_seq
+      AND NOT EXISTS (
+        SELECT 1 FROM outbox
+        WHERE entity_type='sales' AND entity_id=COALESCE(excluded.reference_id, '')
+      )
+  `);
+
   const apply = db.transaction(() => {
     let productsProcessed = applyPulledProducts(db, changes.products || {});
     const buckets = [
@@ -327,6 +392,92 @@ function applyPulledPage(db, response) {
             updatedAt: Number(item.updatedAt ?? item.updated_at ?? item.createdAt ?? item.created_at ?? 0),
             deletedAt: item.deletedAt ?? item.deleted_at ?? null,
             lastKnownSyncSeq: Number.isSafeInteger(seq) && seq >= 0 ? seq : 0,
+          });
+        }
+      }
+
+      if (entityType === 'sales') {
+        for (const item of [...(bucket.created || []), ...(bucket.updated || [])]) {
+          if (!item || typeof item.id !== 'string') throw new Error('Invalid sales record; cursor was not saved.');
+          const createdAt = item.created_at ?? item.createdAt;
+          const updatedAt = item.updated_at ?? item.updatedAt ?? createdAt;
+          const saleNumber = item.sale_number ?? item.saleNumber;
+          const sessionId = item.cash_session_id ?? item.cashSessionId;
+          const staffId = item.staff_id ?? item.staffId;
+          const paymentMethod = item.payment_method ?? item.paymentMethod;
+          if (createdAt == null || updatedAt == null || typeof saleNumber !== 'string' ||
+              typeof sessionId !== 'string' || typeof staffId !== 'string' ||
+              typeof paymentMethod !== 'string' || !Number.isSafeInteger(Number(item.total))) {
+            throw new Error('Invalid sales fields; cursor was not saved.');
+          }
+          const seq = Number(item.lastKnownSyncSeq ?? item.last_known_sync_seq ?? item.sync_seq ?? 0);
+          if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('Invalid sales sync sequence; cursor was not saved.');
+          upsertSale.run({
+            id: item.id, cashSessionId: sessionId, staffId, saleNumber,
+            total: Number(item.total), paymentMethod,
+            cashAmount: Number(item.cash_amount ?? item.cashAmount ?? 0),
+            mobileAmount: Number(item.mobile_amount ?? item.mobileAmount ?? 0),
+            mobileMsisdn: item.mobile_msisdn ?? item.mobileMsisdn ?? null,
+            mobileReference: item.mobile_reference ?? item.mobileReference ?? null,
+            customerNote: item.customer_note ?? item.customerNote ?? null,
+            isVoid: (item.is_void ?? item.isVoid) ? 1 : 0,
+            voidedSaleId: item.voided_sale_id ?? item.voidedSaleId ?? null,
+            voidReason: item.void_reason ?? item.voidReason ?? null,
+            createdAt: Number(createdAt), updatedAt: Number(updatedAt), lastKnownSyncSeq: seq,
+          });
+        }
+      }
+
+      if (entityType === 'sale_lines') {
+        for (const item of [...(bucket.created || []), ...(bucket.updated || [])]) {
+          if (!item || typeof item.id !== 'string') throw new Error('Invalid sale_lines record; cursor was not saved.');
+          const saleId = item.sale_id ?? item.saleId;
+          const productId = item.product_id ?? item.productId;
+          const productName = item.product_name ?? item.productName;
+          const createdAt = item.created_at ?? item.createdAt;
+          const updatedAt = item.updated_at ?? item.updatedAt ?? createdAt;
+          if (typeof saleId !== 'string' || typeof productId !== 'string' ||
+              typeof productName !== 'string' || !productName.trim() ||
+              createdAt == null || updatedAt == null ||
+              !Number.isSafeInteger(Number(item.quantity)) ||
+              !Number.isSafeInteger(Number(item.unit_price ?? item.unitPrice)) ||
+              !Number.isSafeInteger(Number(item.subtotal))) {
+            throw new Error('Invalid sale_lines fields; cursor was not saved.');
+          }
+          const seq = Number(item.lastKnownSyncSeq ?? item.last_known_sync_seq ?? item.sync_seq ?? 0);
+          if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('Invalid sale_lines sync sequence; cursor was not saved.');
+          upsertSaleLine.run({
+            id: item.id, saleId, productId, productName,
+            productSku: item.product_sku ?? item.productSku ?? null,
+            quantity: Number(item.quantity), unitPrice: Number(item.unit_price ?? item.unitPrice),
+            subtotal: Number(item.subtotal), createdAt: Number(createdAt),
+            updatedAt: Number(updatedAt), lastKnownSyncSeq: seq,
+          });
+        }
+      }
+
+      if (entityType === 'stock_movements') {
+        for (const item of [...(bucket.created || []), ...(bucket.updated || [])]) {
+          if (!item || typeof item.id !== 'string') throw new Error('Invalid stock_movements record; cursor was not saved.');
+          const productId = item.product_id ?? item.productId;
+          const movementType = item.movement_type ?? item.movementType;
+          const createdAt = item.created_at ?? item.createdAt;
+          const updatedAt = item.updated_at ?? item.updatedAt ?? createdAt;
+          if (typeof productId !== 'string' || typeof movementType !== 'string' ||
+              !Number.isSafeInteger(Number(item.quantity_delta ?? item.quantityDelta)) ||
+              createdAt == null || updatedAt == null) {
+            throw new Error('Invalid stock_movements fields; cursor was not saved.');
+          }
+          const seq = Number(item.lastKnownSyncSeq ?? item.last_known_sync_seq ?? item.sync_seq ?? 0);
+          if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('Invalid stock_movements sync sequence; cursor was not saved.');
+          upsertStockMovement.run({
+            id: item.id, productId, movementType,
+            quantityDelta: Number(item.quantity_delta ?? item.quantityDelta),
+            referenceId: item.reference_id ?? item.referenceId ?? null,
+            referenceType: item.reference_type ?? item.referenceType ?? null,
+            unitCost: item.unit_cost == null && item.unitCost == null ? null : Number(item.unit_cost ?? item.unitCost),
+            notes: item.notes ?? null, createdAt: Number(createdAt), updatedAt: Number(updatedAt),
+            createdBy: item.created_by ?? item.createdBy ?? null, lastKnownSyncSeq: seq,
           });
         }
       }
