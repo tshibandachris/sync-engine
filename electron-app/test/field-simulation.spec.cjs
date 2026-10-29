@@ -179,7 +179,7 @@ test('Scénario 3 — arrêt brutal du processus dans une transaction : SQLite r
       "db.exec('BEGIN IMMEDIATE');",
       "db.prepare(\"INSERT INTO sales (id, cash_session_id, staff_id, sale_number, total, payment_method, created_at, updated_at, last_known_sync_seq) VALUES ('crash-sale', 'crash-session', 'crash-staff', 'CRASH-1', 900, 'cash', 100, 100, 1)\").run();",
       "db.prepare(\"INSERT INTO sale_lines (id, sale_id, product_id, product_name, quantity, unit_price, subtotal, created_at, updated_at, last_known_sync_seq) VALUES ('crash-line', 'crash-sale', 'crash-product', 'Partial item', 1, 900, 900, 100, 100, 1)\").run();",
-      "process.stdout.write('writes staged; exiting before stock movement and COMMIT');",
+      "require('node:fs').writeSync(1, 'writes staged; exiting before stock movement and COMMIT');",
       "process.exit(73);",
     ].join('\n');
 
