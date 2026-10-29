@@ -63,6 +63,11 @@ const NEXT_STATUSES: Record<CourrierStatus, readonly CourrierStatus[]> = {
   archive: [],
 };
 
+export function canTransitionCourrierStatus(from: string, to: string): boolean {
+  return Object.hasOwn(NEXT_STATUSES, from) &&
+    (NEXT_STATUSES[from as CourrierStatus] ?? []).includes(to as CourrierStatus);
+}
+
 
 export class CourrierService {
   constructor(
@@ -353,7 +358,7 @@ export class CourrierService {
     if (Boolean(agentId) === Boolean(serviceId)) {
       throw new BadRequestException('Fournissez exactement un agentId ou serviceId.');
     }
-    if (!hasPermission(context, 'courrier:assign')) {
+    if (!hasPermission(context, 'courrier:assign') && !hasPermission(context, 'courrier:manage')) {
       throw new ForbiddenException('Permission courrier:assign requise.');
     }
 
@@ -472,7 +477,7 @@ export class CourrierService {
       if (!canActOnMail(context, this.toPolicyRecord(row), assignments, action)) {
         throw new ForbiddenException('Transition non autorisée.');
       }
-      if (!(NEXT_STATUSES[row.status as CourrierStatus] ?? []).includes(toStatus)) {
+      if (!canTransitionCourrierStatus(row.status, toStatus)) {
         throw new ConflictException('Transition interdite de ' + row.status + ' vers ' + toStatus + '.');
       }
       const now = Date.now();
