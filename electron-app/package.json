@@ -10,7 +10,8 @@
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "test": "node --test test/*.test.cjs",
     "dist:win": "electron-builder --win nsis --x64",
-    "dist:dir": "electron-builder --dir"
+    "dist:dir": "electron-builder --dir",
+    "test:field": "node --test test/field-simulation.spec.cjs"
   },
   "dependencies": {
     "better-sqlite3": "12.2.0"
