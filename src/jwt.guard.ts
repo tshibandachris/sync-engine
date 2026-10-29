@@ -57,11 +57,13 @@ export class JwtAuthGuard implements CanActivate {
         });
         request.agentId = id.agentId;
         request.tenantId = id.tenantId;
+        request.permissions = id.permissions;
+        request.serviceIds = id.serviceIds;
         return true;
       }
 
       // dev-secret mode
-      const payload = await this.jwt.verifyAsync<{ sub: string; tenantId: string }>(token);
+      const payload = await this.jwt.verifyAsync<{ sub: string; tenantId: string; permissions?: unknown; scope?: unknown; service_ids?: unknown; serviceIds?: unknown }>(token);
 
       if (!payload.sub || !UUID_RE.test(payload.sub)) {
         throw new UnauthorizedException('Payload JWT invalide : sub manquant.');
@@ -72,6 +74,14 @@ export class JwtAuthGuard implements CanActivate {
 
       request.agentId = payload.sub;
       request.tenantId = payload.tenantId;
+      const rawPermissions = payload.permissions;
+      request.permissions = Array.isArray(rawPermissions)
+        ? rawPermissions.filter((value): value is string => typeof value === 'string')
+        : typeof payload.scope === 'string' ? payload.scope.split(/\\s+/).filter(Boolean) : [];
+      const rawServiceIds = payload.service_ids ?? payload.serviceIds;
+      request.serviceIds = Array.isArray(rawServiceIds)
+        ? rawServiceIds.filter((value): value is string => typeof value === 'string' && UUID_RE.test(value))
+        : [];
       return true;
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;
