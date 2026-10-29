@@ -18,11 +18,11 @@ The Electron client is a separate application in `electron-app/`, kept beside th
 8. **Local schema:** numbered, forward-only local migrations recorded in SQLite (`schema_migrations`). Never delete the local database to upgrade it. Back up before migrations that may rewrite data.
 9. **Native module build:** `better-sqlite3` must be rebuilt for Electron's Node ABI after dependency installation via `@electron/rebuild`. On Windows, a source build may require Python 3 and Visual Studio Build Tools with the Desktop development with C++ workload. The successful `node -e "require('better-sqlite3')"` test under system Node does not prove Electron compatibility.
 
-## Pull cursor contract — required before Milestone 2
+## Pull cursor contract
 
-The current backend feed uses a global `timestamp` cursor and can return multiple entity types. The walking skeleton intentionally does **not** persist that global cursor while it stores products only; it starts from zero again so unpersisted staff/sales/stock changes cannot be silently skipped.
+The backend currently exposes one global `timestamp` cursor across the entity feed. The Electron client commits each returned page in one SQLite transaction: product rows are upserted into `products`, staff and cash sessions are also upserted into their queryable local tables, and every other returned entity (including sales, sale lines, stock movements, check-ins, missions, and sites) is durably retained in `synced_entities`. The global cursor is updated in that same transaction only after the full page validates and persists. This is safe only while the response includes every entity type covered by that cursor and the client commits the entire page atomically.
 
-Before implementing multi-entity pull in Milestone 2, adopt **independent per-entity cursors**: `last_pulled_at_products`, `last_pulled_at_staff`, `last_pulled_at_sales`, `last_pulled_at_stock_movements`, etc. The backend response must provide a high-water mark/cursor for each entity type, and the client advances each cursor only after that entity's changes are committed locally. If an entity type fails to persist, its cursor must remain unchanged while other entity cursors may advance. Do not use one global cursor until every entity in its feed is durably persisted. An `entity_types` request filter may be added later as an optimization, not as a substitute for per-entity durability unless the API contract is explicitly redesigned and tested.
+If a future implementation filters entity types, commits entity buckets independently, or stops retaining any returned entity, introduce independent per-entity cursors (for example `last_pulled_at_products`, `last_pulled_at_staff`, `last_pulled_at_sales`, and `last_pulled_at_stock_movements`) with corresponding server high-water marks. Never advance a cursor for changes that were not durably persisted.
 
 ## Walking skeleton scope
 
