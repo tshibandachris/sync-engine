@@ -62,6 +62,10 @@ Le fichier NSIS est produit dans `electron-app/dist-electron/`. Le script `dist:
 
 Le workflow GitHub Actions **Eden Gestion Desktop — Windows installer** construit l’installateur sur un runner Windows, exécute les contrôles et tests, puis publie l’EXE comme artefact téléchargeable pendant 14 jours. Cet artefact est un paquet de test, pas encore une version de production signée.
 
+## Identité Windows
+
+Le paquet npm est `eden-gestion-desktop`. Le nom du produit, les raccourcis Bureau et menu Démarrer ainsi que le nom du programme de désinstallation sont **Eden Gestion Desktop**. NSIS utilise ce nom de produit pour son dossier d’installation par défaut. L’identifiant Electron est `corp.edendevs.edengestion.desktop`.
+
 ## Parcours d’installation prévu
 
 1. Télécharger l’artefact de l’installateur depuis l’exécution du workflow GitHub Actions.
