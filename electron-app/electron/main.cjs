@@ -13,7 +13,7 @@ function readStatus() {
   return {
     ...status,
     lastCursor: db ? getCursor(db) : status.lastCursor,
-    productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL').get().n) : 0,
+    productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL AND is_active = 1').get().n) : 0,
     outboxPending: outbox.pending,
     outboxFailed: outbox.failed,
   };
@@ -91,10 +91,10 @@ async function doSync() {
 
 function createWindow() {
   windowRef = new BrowserWindow({
-    width: 780,
-    height: 520,
-    minWidth: 600,
-    minHeight: 400,
+    width: 1440,
+    height: 920,
+    minWidth: 900,
+    minHeight: 650,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -102,6 +102,7 @@ function createWindow() {
       sandbox: true,
     },
   });
+  windowRef.setTitle('Eden Gestion Desktop');
   windowRef.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
