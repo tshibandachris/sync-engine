@@ -17,6 +17,26 @@ export async function createApp(
     { logger: false },
   );
 
+  // Express derives req.ip from this setting. Keep proxy trust disabled by
+  // default; production must set the exact number of trusted proxy hops.
+  const expressApp = moduleRef.getHttpAdapter().getInstance() as {
+    set?: (name: string, value: boolean | number) => void;
+  };
+  if (typeof expressApp.set === 'function') {
+    const rawTrustProxyHops = process.env.TRUST_PROXY_HOPS;
+    if (rawTrustProxyHops === undefined || rawTrustProxyHops.trim() === '') {
+      expressApp.set('trust proxy', false);
+    } else {
+      const hops = Number(rawTrustProxyHops);
+      if (!Number.isSafeInteger(hops) || hops < 0 || hops > 5) {
+        throw new Error(
+          'TRUST_PROXY_HOPS must be an integer from 0 to 5; use the exact trusted proxy count.',
+        );
+      }
+      expressApp.set('trust proxy', hops === 0 ? false : hops);
+    }
+  }
+
   return moduleRef;
 }
 

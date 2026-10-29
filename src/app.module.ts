@@ -16,6 +16,7 @@ import { CourrierController } from './courrier.controller.js';
 import { CourrierService } from './courrier.service.js';
 import { DeviceEnrollmentController } from './device-enrollment.controller.js';
 import { DeviceEnrollmentService } from './device-enrollment.service.js';
+import { createDeviceEnrollmentThrottleModule } from './device-enrollment.throttle.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 
 export const ATTACHMENT_STORAGE = 'ATTACHMENT_STORAGE';
@@ -42,6 +43,7 @@ export class AppModule {
           secret: jwtSecret,
           signOptions: { expiresIn: jwtExpiresIn as any },
         }),
+        createDeviceEnrollmentThrottleModule(),
       ],
       controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController],
       providers: [

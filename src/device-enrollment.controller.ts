@@ -1,4 +1,5 @@
-import { Body, Controller, Headers, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { DeviceEnrollmentService } from './device-enrollment.service.js';
 import { parseEnrollDeviceDto } from './device-enrollment.dto.js';
 
@@ -7,6 +8,7 @@ export class DeviceEnrollmentController {
   constructor(private readonly enrollment: DeviceEnrollmentService) {}
 
   @Post('enroll')
+  @UseGuards(ThrottlerGuard)
   @HttpCode(HttpStatus.CREATED)
   async enrollDevice(
     @Body() body: unknown,
