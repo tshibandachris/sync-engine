@@ -421,7 +421,7 @@ export class CourrierService {
     const context = this.context(actor);
     const courrierId = this.requireUuid(courrierIdRaw, 'courrierId');
     const assignmentId = this.requireUuid(assignmentIdRaw, 'assignmentId');
-    if (!hasPermission(context, 'courrier:assign')) {
+    if (!hasPermission(context, 'courrier:assign') && !hasPermission(context, 'courrier:manage')) {
       throw new ForbiddenException('Permission courrier:assign requise.');
     }
     return withTenant(this.db, context.tenantId, async (tx) => {
