@@ -11,6 +11,8 @@ export interface VerifyOptions {
 export interface VerifiedIdentity {
   agentId: string;
   tenantId: string;
+  permissions: string[];
+  serviceIds: string[];
 }
 
 export class IdpVerificationError extends Error {
@@ -59,5 +61,16 @@ export async function verifyToken(
     );
   }
 
-  return { agentId: sub, tenantId: tenant };
+  const rawPermissions = (payload as Record<string, unknown>).permissions;
+  const rawScope = (payload as Record<string, unknown>).scope;
+  const permissions = Array.isArray(rawPermissions)
+    ? rawPermissions.filter((value): value is string => typeof value === 'string')
+    : typeof rawScope === 'string' ? rawScope.split(/\\s+/).filter(Boolean) : [];
+  const rawServiceIds = (payload as Record<string, unknown>).service_ids
+    ?? (payload as Record<string, unknown>).serviceIds;
+  const serviceIds = Array.isArray(rawServiceIds)
+    ? rawServiceIds.filter((value): value is string => typeof value === 'string' && UUID_RE.test(value))
+    : [];
+
+  return { agentId: sub, tenantId: tenant, permissions, serviceIds };
 }
