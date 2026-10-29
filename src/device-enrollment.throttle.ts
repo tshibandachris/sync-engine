@@ -1,6 +1,6 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { ThrottlerModule, type ThrottlerStorage } from '@nestjs/throttler';
-import { Redis } from 'ioredis';
+import Redis from 'ioredis';
 
 const DEVICE_ENROLLMENT_THROTTLER_STORAGE = Symbol('DEVICE_ENROLLMENT_THROTTLER_STORAGE');
 
