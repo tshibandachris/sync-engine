@@ -38,6 +38,10 @@ jobs:
         working-directory: electron-app
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
+      - name: Validate reproducible install from lockfile
+        working-directory: electron-app
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - name: Commit generated lockfile
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
