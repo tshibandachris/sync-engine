@@ -1,8 +1,8 @@
 {
-  "name": "eden-gestion-electron",
-  "version": "0.1.0",
+  "name": "eden-bureau",
+  "version": "1.0.0",
   "private": true,
-  "description": "Eden Gestion offline-first desktop POS client",
+  "description": "Eden Bureau - Client lourd de caisse hors ligne",
   "main": "electron/main.cjs",
   "scripts": {
     "start": "electron .",
@@ -11,10 +11,43 @@
     "test": "node --test test/*.test.cjs"
   },
   "dependencies": {
-    "better-sqlite3": "^12.2.0"
+    "better-sqlite3": "12.2.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.2",
-    "electron": "^38.2.0"
+    "@electron/rebuild": "3.7.2",
+    "electron": "38.2.0",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "corp.edendevs.edenbureau",
+    "productName": "Eden Bureau",
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist-electron"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Eden Bureau"
+    }
   }
 }
