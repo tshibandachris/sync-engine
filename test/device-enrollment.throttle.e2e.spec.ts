@@ -36,16 +36,18 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
         { provide: SyncPullService, useValue: { pullChanges: vi.fn() } },
         { provide: SyncPushService, useValue: { pushChanges: vi.fn() } },
         { provide: SyncConflictService, useValue: { listConflicts: vi.fn(), resolveConflict: vi.fn() } },
-        {
-          provide: JwtAuthGuard,
-          useValue: {
-            canActivate: () => {
-              throw new UnauthorizedException('Authorization required for POS sync.');
-            },
-          },
-        },
       ],
-    }).compile();
+    })
+      // JwtAuthGuard is attached by class reference in SyncController metadata.
+      // Override the guard itself; registering a provider with the same token
+      // does not prevent Nest from trying to instantiate its JwtService dependency.
+      .overrideGuard(JwtAuthGuard)
+      .useValue({
+        canActivate: () => {
+          throw new UnauthorizedException('Authorization required for POS sync.');
+        },
+      })
+      .compile();
 
     app = moduleRef.createNestApplication();
     await app.init();
