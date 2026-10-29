@@ -13,6 +13,16 @@
     button { cursor:pointer; }
     button:disabled { opacity:.55; cursor:wait; }
     .shell { display:grid; grid-template-columns:230px minmax(0,1fr); min-height:100vh; }
+    .shell[hidden], #enrollment-screen[hidden], #storage-error-screen[hidden] { display:none !important; }
+    #enrollment-screen, #storage-error-screen { min-height:100vh; padding:24px; display:flex; align-items:center; justify-content:center; }
+    .auth-card { width:min(520px,100%); border:1px solid var(--line); border-radius:18px; background:linear-gradient(145deg,#171b23,#11141a); padding:clamp(22px,5vw,38px); box-shadow:0 24px 80px #0005; }
+    .auth-brand { display:flex; align-items:center; gap:12px; margin-bottom:28px; }
+    .auth-card h1 { font-size:28px; margin:0 0 12px; }
+    .auth-card > p { color:var(--muted); font-size:13px; line-height:1.65; margin:0 0 24px; }
+    .auth-card .field { margin-top:18px; }
+    .auth-card textarea { width:100%; min-height:112px; resize:vertical; background:#0c0f14; border:1px solid #303642; border-radius:9px; padding:12px; color:#fff; outline:none; font:12px ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
+    .auth-card textarea:focus { border-color:#627bb5; box-shadow:0 0 0 3px #4778f522; }
+    .auth-card .btn { width:100%; margin-top:10px; }
     aside { padding:26px 16px; border-right:1px solid var(--line); background:rgba(12,14,19,.88); display:flex; flex-direction:column; gap:30px; }
     .brand { display:flex; align-items:center; gap:11px; padding:0 8px; }
     .mark { width:36px;height:36px;border-radius:11px;background:#f5f6f8;color:#090b0f;display:grid;place-items:center;font-weight:900;font-size:20px; }
@@ -75,7 +85,28 @@
   </style>
 </head>
 <body>
-  <div class="shell">
+  <section id="enrollment-screen" hidden aria-labelledby="enrollment-title">
+    <div class="auth-card">
+      <div class="auth-brand"><div class="mark">E</div><div><strong>Eden Gestion</strong><small class="subtext">CONFIGURATION INITIALE</small></div></div>
+      <h1 id="enrollment-title">Connecter cette caisse</h1>
+      <p>Cette installation n’a pas encore de jeton d’appareil chiffré. Collez le JWT fourni par votre administrateur. Il sera enregistré uniquement après chiffrement par le stockage sécurisé du système.</p>
+      <form id="enrollment-form">
+        <div class="field"><label for="device-token">Jeton d’appareil (JWT)</label><textarea id="device-token" name="token" required maxlength="16384" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="eyJ..." aria-describedby="enrollment-help"></textarea></div>
+        <p class="form-help" id="enrollment-help">Le serveur actuel ne fournit pas encore de route d’échange pour un code d’activation. Utilisez un JWT d’appareil émis par votre administrateur. Sa signature et ses autorisations seront vérifiées par le serveur lors de la synchronisation.</p>
+        <p class="feedback" id="enrollment-feedback" role="status" aria-live="polite"></p>
+        <button class="btn primary" id="enroll-button" type="submit">Chiffrer et connecter la caisse</button>
+      </form>
+    </div>
+  </section>
+  <section id="storage-error-screen" hidden aria-labelledby="storage-error-title">
+    <div class="auth-card">
+      <div class="auth-brand"><div class="mark">E</div><div><strong>Eden Gestion</strong><small class="subtext">SÉCURITÉ DU POSTE</small></div></div>
+      <h1 id="storage-error-title">Stockage sécurisé indisponible</h1>
+      <p id="storage-error-message">La caisse ne peut pas confirmer le stockage chiffré du jeton. L’accès au tableau de bord et la synchronisation sont bloqués pour protéger les identifiants.</p>
+      <p class="form-help">Vérifiez la configuration du système ou contactez l’administrateur. Aucun jeton ne sera enregistré en clair.</p>
+    </div>
+  </section>
+  <div class="shell" id="app-shell" hidden>
     <aside>
       <div class="brand"><div class="mark">E</div><div><strong>Eden Gestion</strong><small>DESKTOP · COMMERCE</small></div></div>
       <div><div class="nav-label">Espace de travail</div><nav aria-label="Navigation principale">
