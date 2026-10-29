@@ -1,8 +1,8 @@
 {
-  "name": "eden-bureau",
+  "name": "eden-gestion-desktop",
   "version": "1.0.0",
   "private": true,
-  "description": "Eden Bureau - Client lourd de caisse hors ligne",
+  "description": "Eden Gestion Desktop - Client lourd de caisse hors ligne",
   "main": "electron/main.cjs",
   "scripts": {
     "start": "electron .",
@@ -19,8 +19,8 @@
     "electron-builder": "24.13.3"
   },
   "build": {
-    "appId": "corp.edendevs.edenbureau",
-    "productName": "Eden Bureau",
+    "appId": "corp.edendevs.edengestion.desktop",
+    "productName": "Eden Gestion Desktop",
     "asar": true,
     "asarUnpack": [
       "**/*.node"
@@ -47,7 +47,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Eden Bureau"
+      "shortcutName": "Eden Gestion Desktop"
     }
   }
 }
