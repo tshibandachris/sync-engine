@@ -8,7 +8,7 @@ function normalizeBaseUrl(value) {
 }
 
 async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, timeoutMs = 15000, label }) {
-  if (!token) throw new Error('EDEN_SYNC_TOKEN is required; no token is stored in source code.');
+  if (!token) throw new Error('A device JWT must be loaded from secure device storage before synchronization.');
   const response = await fetchImpl(url, {
     method: 'POST',
     headers: {
