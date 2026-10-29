@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, type INestApplication } from '@nestjs/common';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
@@ -12,7 +12,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 describe('Device enrollment rate limit (HTTP integration)', () => {
-  let app: Awaited<ReturnType<ReturnType<typeof Test.createTestingModule>['compile']>['createNestApplication']>;
+  let app: INestApplication;
   const enrollmentService = {
     enrollDevice: vi.fn().mockResolvedValue({
       success: true,
