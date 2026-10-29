@@ -56,7 +56,11 @@ test('applies an entity and its cursor in the same transaction', () => {
   try {
     const changes = emptyChanges({
       sales: {
-        created: [{ id: 'sale-1', total: 1250, lastKnownSyncSeq: 8 }],
+        created: [{
+          id: 'sale-1', total: 1250, sale_number: 'S-1',
+          cash_session_id: 'session-1', staff_id: 'staff-1', payment_method: 'cash',
+          created_at: 100, updated_at: 100, last_known_sync_seq: 8,
+        }],
         updated: [],
         deleted: [],
       },
@@ -85,7 +89,7 @@ test('does not advance the cursor or retain partial records when a page is inval
     });
     assert.throws(
       () => applyPulledPage(f.db, { timestamp: 9, has_more: false, changes }),
-      /Invalid sales record/,
+      /Invalid sales/,
     );
     assert.equal(getCursor(f.db), 0);
     assert.equal(f.db.prepare('SELECT count(*) AS n FROM synced_entities').get().n, 0);
@@ -111,6 +115,68 @@ test('uses snake_case sync sequence fields for product records', () => {
     const product = f.db.prepare('SELECT name, last_known_sync_seq FROM products WHERE id = ?').get('product-1');
     assert.equal(product.name, 'Cahier');
     assert.equal(product.last_known_sync_seq, 12);
+  } finally {
+    f.cleanup(f.db);
+  }
+});
+
+test('persists pulled sales, sale lines, and stock movements in the operational POS tables', () => {
+  const f = fixture();
+  try {
+    const now = 1700000000000;
+    const saleId = 'sale-pull-1';
+    const productId = 'product-pull-1';
+    const changes = emptyChanges({
+      sales: {
+        created: [{
+          id: saleId, cash_session_id: 'session-pull-1', staff_id: 'staff-pull-1',
+          sale_number: 'S-PULL-001', total: 1000, payment_method: 'cash',
+          cash_amount: 1000, mobile_amount: 0, is_void: false,
+          created_at: now, updated_at: now, lastKnownSyncSeq: 11,
+        }], updated: [], deleted: [],
+      },
+      sale_lines: {
+        created: [{
+          id: 'line-pull-1', sale_id: saleId, product_id: productId,
+          product_name: 'Cahier', product_sku: 'CAH-01',
+          quantity: 2, unit_price: 500, subtotal: 1000,
+          created_at: now, updated_at: now, lastKnownSyncSeq: 12,
+        }], updated: [], deleted: [],
+      },
+      stock_movements: {
+        created: [{
+          id: 'movement-pull-1', product_id: productId, movement_type: 'sale',
+          quantity_delta: -2, reference_id: saleId, reference_type: 'sale',
+          unit_cost: 250, notes: null, created_at: now, updated_at: now,
+          created_by: 'staff-pull-1', lastKnownSyncSeq: 13,
+        }], updated: [], deleted: [],
+      },
+    });
+
+    applyPulledPage(f.db, { timestamp: 13, has_more: false, changes });
+
+    assert.deepEqual(f.db.prepare(
+      'SELECT id, sale_number, total, payment_method, last_known_sync_seq FROM sales WHERE id = ?',
+    ).get(saleId), {
+      id: saleId, sale_number: 'S-PULL-001', total: 1000,
+      payment_method: 'cash', last_known_sync_seq: 11,
+    });
+    assert.deepEqual(f.db.prepare(
+      'SELECT id, sale_id, product_id, quantity, unit_price, subtotal, last_known_sync_seq FROM sale_lines WHERE id = ?',
+    ).get('line-pull-1'), {
+      id: 'line-pull-1', sale_id: saleId, product_id: productId,
+      quantity: 2, unit_price: 500, subtotal: 1000, last_known_sync_seq: 12,
+    });
+    assert.deepEqual(f.db.prepare(
+      'SELECT id, product_id, quantity_delta, reference_id, last_known_sync_seq FROM stock_movements WHERE id = ?',
+    ).get('movement-pull-1'), {
+      id: 'movement-pull-1', product_id: productId, quantity_delta: -2,
+      reference_id: saleId, last_known_sync_seq: 13,
+    });
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 1);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 1);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM stock_movements').get().n, 1);
+    assert.equal(getCursor(f.db), 13);
   } finally {
     f.cleanup(f.db);
   }
