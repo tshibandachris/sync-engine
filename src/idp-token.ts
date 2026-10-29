@@ -65,7 +65,7 @@ export async function verifyToken(
   const rawScope = (payload as Record<string, unknown>).scope;
   const permissions = Array.isArray(rawPermissions)
     ? rawPermissions.filter((value): value is string => typeof value === 'string')
-    : typeof rawScope === 'string' ? rawScope.split(/\\s+/).filter(Boolean) : [];
+    : typeof rawScope === 'string' ? rawScope.split(/\s+/).filter(Boolean) : [];
   const rawServiceIds = (payload as Record<string, unknown>).service_ids
     ?? (payload as Record<string, unknown>).serviceIds;
   const serviceIds = Array.isArray(rawServiceIds)
