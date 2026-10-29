@@ -1,6 +1,6 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { ThrottlerModule, type ThrottlerStorage } from '@nestjs/throttler';
-import Redis from 'ioredis';
+import * as IORedis from 'ioredis';
 
 const DEVICE_ENROLLMENT_THROTTLER_STORAGE = Symbol('DEVICE_ENROLLMENT_THROTTLER_STORAGE');
 
@@ -45,14 +45,14 @@ return { totalHits, timeToExpire, isBlocked and 1 or 0, timeToBlockExpire }
  * so concurrent API instances cannot race around the configured limit.
  */
 export class ThrottlerStorageRedisService implements ThrottlerStorage {
-  private readonly redis: Redis;
+  private readonly redis: InstanceType<typeof IORedis.default>;
 
   constructor(url: string) {
-    this.redis = new Redis(url, {
+    this.redis = new IORedis.default(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
-      retryStrategy: (attempt) => attempt <= 3 ? Math.min(attempt * 100, 1_000) : null,
+      retryStrategy: (attempt: number) => attempt <= 3 ? Math.min(attempt * 100, 1_000) : null,
     });
   }
 
