@@ -77,7 +77,7 @@ export class JwtAuthGuard implements CanActivate {
       const rawPermissions = payload.permissions;
       request.permissions = Array.isArray(rawPermissions)
         ? rawPermissions.filter((value): value is string => typeof value === 'string')
-        : typeof payload.scope === 'string' ? payload.scope.split(/\\s+/).filter(Boolean) : [];
+        : typeof payload.scope === 'string' ? payload.scope.split(/\s+/).filter(Boolean) : [];
       const rawServiceIds = payload.service_ids ?? payload.serviceIds;
       request.serviceIds = Array.isArray(rawServiceIds)
         ? rawServiceIds.filter((value): value is string => typeof value === 'string' && UUID_RE.test(value))
