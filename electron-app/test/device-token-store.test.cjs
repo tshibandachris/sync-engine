@@ -74,6 +74,7 @@ test('DeviceTokenStore returns null only when no token file exists', async () =>
   const f = fixture();
   try {
     assert.equal(await f.store.getToken(), null);
+    assert.equal(await f.store.load(), null);
   } finally {
     f.cleanup();
   }
