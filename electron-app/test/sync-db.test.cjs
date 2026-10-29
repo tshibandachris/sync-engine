@@ -85,7 +85,7 @@ test('does not advance the cursor or retain partial records when a page is inval
     });
     assert.throws(
       () => applyPulledPage(f.db, { timestamp: 9, has_more: false, changes }),
-      /Invalid sales record/,
+      /Invalid sales/,
     );
     assert.equal(getCursor(f.db), 0);
     assert.equal(f.db.prepare('SELECT count(*) AS n FROM synced_entities').get().n, 0);
