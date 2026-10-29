@@ -49,7 +49,10 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Eden Gestion Desktop"
+      "shortcutName": "Eden Gestion Desktop",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "uninstallDisplayName": "Eden Gestion Desktop"
     }
   }
 }
