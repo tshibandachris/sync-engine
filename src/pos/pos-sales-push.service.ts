@@ -91,8 +91,31 @@ export class PosSalesPushService {
             (id,tenant_id,sale_id,product_id,product_name,product_sku,quantity,unit_price,subtotal,created_at,updated_at,sync_seq,first_sync_seq)
             VALUES (${l.id}::uuid,${tenantId}::uuid,${s.id}::uuid,${l.product_id}::uuid,${l.product_name},
             ${l.product_sku ?? null},${l.quantity},${l.unit_price},${l.subtotal},${l.created_at},${l.updated_at},0,0)`);
+          // The stock ledger must mirror the sale lines exactly, aggregated by product.
+          // A movement per line is not required, but missing, excess, or mis-signed
+          // quantities are rejected before any sale/line/movement is committed.
+          const expectedByProduct = new Map<string, number>();
+          for (const line of s.lines) {
+            expectedByProduct.set(line.product_id,
+              (expectedByProduct.get(line.product_id) ?? 0) + line.quantity);
+          }
+          const actualByProduct = new Map<string, number>();
+          for (const movement of s.stock_movements) {
+            if (movement.reference_id !== s.id || movement.reference_type !== 'sale') {
+              throw new BadRequestException('stock movement must reference its sale');
+            }
+            if (movement.movement_type !== (s.is_void ? 'void' : 'sale')) {
+              throw new BadRequestException('stock movement type does not match sale type');
+            }
+            actualByProduct.set(movement.product_id,
+              (actualByProduct.get(movement.product_id) ?? 0) + movement.quantity_delta);
+          }
+          if (expectedByProduct.size !== actualByProduct.size ||
+              [...expectedByProduct].some(([productId, quantity]) =>
+                actualByProduct.get(productId) !== -quantity)) {
+            throw new BadRequestException('stock movements must exactly reverse sale line quantities by product');
+          }
           for (const m of s.stock_movements) {
-            if (m.reference_id !== s.id || m.reference_type !== 'sale') throw new BadRequestException('stock movement must reference its sale');
             await tx.execute(sql`INSERT INTO stock_movements
               (id,tenant_id,product_id,movement_type,quantity_delta,reference_id,reference_type,unit_cost,notes,created_at,updated_at,created_by,sync_seq,first_sync_seq)
               VALUES (${m.id}::uuid,${tenantId}::uuid,${m.product_id}::uuid,${m.movement_type},${m.quantity_delta},
