@@ -724,7 +724,10 @@ export class SyncPushService {
 
       return response;
     }, { write: true });
-      if (dto.changes.sales !== undefined) {
+      // A replay must stop the entire request, including POS sales. Otherwise a
+      // reused Idempotency-Key with fresh sale UUIDs could create new sales.
+      if (!(response as PushResponse & { [IDEMPOTENCY_REPLAY]?: boolean })[IDEMPOTENCY_REPLAY] &&
+          dto.changes.sales !== undefined) {
         response.results = await new PosSalesPushService(this.db).push(tenantId, dto.changes.sales);
       }
       return response;
