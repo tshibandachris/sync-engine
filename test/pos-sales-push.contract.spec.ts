@@ -184,6 +184,44 @@ describe('POS sales push contract', () => {
     expect(after.difference).toBe(historical.difference);
   });
 
+  it('rejects missing stock movements for a sale with lines', async () => {
+    const item = sale();
+    item.stock_movements = [];
+    const res = await push([item]);
+    expect(res.body.results[0].status).toBe('invalid');
+    expect(res.body.results[0].reason).toContain('stock movements must exactly reverse');
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(0);
+  });
+
+  it('rejects incomplete, excessive, or wrong-product stock movements', async () => {
+    const incomplete = sale({ quantity: 3 });
+    incomplete.stock_movements[0].quantity_delta = -1;
+    const excessive = sale({ quantity: 2 });
+    excessive.stock_movements[0].quantity_delta = -3;
+    const wrongProduct = sale();
+    wrongProduct.stock_movements[0].product_id = randomUUID();
+    const res = await push([incomplete, excessive, wrongProduct]);
+    expect(res.body.results.map((r: any) => r.status)).toEqual(['invalid', 'invalid', 'invalid']);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(0);
+  });
+
+  it('requires void stock movements to restore exactly the reversed quantities', async () => {
+    const original = sale({ quantity: 2, total: 2000 });
+    original.lines[0].subtotal = 2000;
+    original.stock_movements[0].quantity_delta = -2;
+    expect((await push([original])).body.results[0].status).toBe('applied');
+    const voided = sale({ total: -2000, cash_amount: -2000, quantity: -2,
+      is_void: true, voided_sale_id: original.id, void_reason: 'Correction' });
+    voided.lines[0].quantity = -2;
+    voided.lines[0].subtotal = -2000;
+    voided.stock_movements[0].movement_type = 'void';
+    voided.stock_movements[0].quantity_delta = 1;
+    const res = await push([voided]);
+    expect(res.body.results[0].status).toBe('invalid');
+    expect(res.body.results[0].reason).toContain('stock movements must exactly reverse');
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(1);
+  });
+
   it('returns invalid with a clear reason when cash session is missing', async () => {
     const item = sale({ cash_session_id: randomUUID() });
     const res = await push([item]);
