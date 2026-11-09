@@ -1,10 +1,10 @@
 # Spécification technique — Packaging Electron et stockage des secrets
 
-- **Projet :** Eden Bureau (application Electron)
-- **Branche de travail :** `docs/electron-packaging-spec`
+- **Projet :** Eden Gestion Desktop (application Electron)
+- **Branche de référence du document :** `main`
 - **Statut :** spécification de préparation à la production — à valider avant publication
 - **Cible prioritaire :** Windows x64
-- **Références du dépôt au moment de la rédaction :** Electron 38.2.0, Node.js 24.19.0, ABI Node 137, `better-sqlite3` 12.2.0. Vérifier ces versions dans les manifestes et le lockfile avant chaque release.
+- **Références du dépôt au moment de la rédaction :** Electron 38.2.0, Node.js 22 (version minimale documentée côté client), ABI native à confirmer sur le runner, `better-sqlite3` 12.2.0. Vérifier ces versions dans les manifestes et le lockfile avant chaque release.
 
 ## 1. Objectifs et principes
 
@@ -18,7 +18,7 @@ Principes obligatoires :
 4. construction sur des runners adaptés à chaque système cible, artefacts identifiés par version, architecture et commit ;
 5. aucune publication si les tests de démarrage, de persistance et de synchronisation échouent.
 
-Cette spécification décrit la cible de packaging. Elle ne signifie pas que tous les artefacts ou mécanismes de sécurité sont déjà implémentés.
+Cette spécification décrit les exigences de packaging et de validation. Le dépôt possède déjà un workflow de packaging Windows et un stockage de jeton via Electron safeStorage ; cela ne signifie pas que l'installation et les parcours métier ont été validés sur une machine propre.
 
 ## 2. Prérequis de build multi-plateforme
 
@@ -56,8 +56,8 @@ Exemple indicatif à adapter aux chemins réels du projet :
 ```json
 {
   "build": {
-    "appId": "corp.edendevs.edenbureau",
-    "productName": "Eden Bureau",
+    "appId": "corp.edendevs.edengestion.desktop",
+    "productName": "Eden Gestion Desktop",
     "asar": true,
     "asarUnpack": [
       "**/*.node"
@@ -79,7 +79,7 @@ Exemple indicatif à adapter aux chemins réels du projet :
 }
 ```
 
-Cet exemple est une base de discussion, pas une configuration prête à coller sans vérification : confirmer l'identifiant produit retenu, les scripts existants, les chemins de l'application et les exigences d'installation avant de l'activer.
+La configuration réellement versionnée dans `electron-app/package.json` utilise déjà `appId: corp.edendevs.edengestion.desktop`, `productName: Eden Gestion Desktop`, NSIS x64, ASAR et `asarUnpack: ["**/*.node"]`. Cet exemple illustre les paramètres correspondants ; le manifeste du dépôt reste la source de vérité.
 
 ### 2.4 Scripts et validation de release
 

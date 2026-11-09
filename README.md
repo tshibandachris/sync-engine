@@ -1,76 +1,102 @@
-Eden Devs Corp: Sync Engine & Eden Gestion
-An offline-first point-of-sale (POS) and stock management system built for shops and small businesses in Sub-Saharan Africa, where power and internet cuts are routine.
-This repository contains the backend (Sync Engine) and the desktop cashier client (Eden Gestion).
-
-
-
-
 # Eden Devs Corp — Sync Engine & Eden Gestion
 
-Bienvenue sur le dépôt principal d'Eden Devs Corp. Ce projet contient l'infrastructure backend (Sync Engine) et l'application client de caisse (Eden Gestion) conçus pour les commerces et PME en Afrique subsaharienne.
+Dépôt du système de gestion commerciale **Eden Gestion**, composé d'une API backend multi-tenant (Sync Engine) et d'un client de caisse Windows offline-first.
 
-## 🎯 Vision du Produit
+Le produit vise les commerces et PME qui doivent continuer à travailler pendant les coupures d'électricité ou d'accès à Internet, puis synchroniser leurs opérations lorsque la connexion revient.
 
-Eden Gestion est un logiciel de point de vente (POS) et de gestion de stock **offline-first**. Il est conçu pour continuer à fonctionner lors des coupures d'électricité et d'internet, et se synchronise automatiquement avec le serveur dès que la connexion est rétablie.
+## Architecture
 
-## 🏗 Architecture
+- **Backend — Sync Engine :** API NestJS, PostgreSQL, Drizzle ORM, politiques Row-Level Security (RLS), synchronisation push/pull et stockage S3 compatible via SeaweedFS.
+- **Client — Eden Gestion Desktop :** application Electron pour Windows x64, base locale SQLite, catalogue local et file d'attente durable des changements.
 
-Le projet est divisé en deux composants majeurs :
-
-1. **Le Backend (Sync Engine)** : Une API NestJS multi-tenant (PostgreSQL, Drizzle ORM, SeaweedFS pour le stockage S3) qui gère l'authentification, la logique métier (ventes, stocks, caisses) et la synchronisation (push/pull).
-2. **Le Client (Eden Gestion Desktop)** : Une application Electron (Windows) couplée à une base de données locale SQLite. Elle permet au caissier de travailler en totale autonomie hors-ligne et pousse ses données en arrière-plan.
-
-## 🚀 Démarrage Rapide (Environnement Local)
+## Démarrage local
 
 ### Prérequis
-- **Docker Desktop** (pour le backend)
-- **Node.js** v20+ et **Visual Studio Build Tools (C++)** (pour le client Electron)
 
-### 1. Lancer le Backend (Sync Engine)
+- Node.js 20 ou supérieur pour le backend.
+- Docker et Docker Compose pour les services locaux.
+- Windows x64 et Node.js 22 pour le client Electron.
+- Visual Studio Build Tools avec les composants C++ peuvent être nécessaires pour les modules natifs.
+
+### 1. Backend
+
+À la racine du dépôt, configurez les variables requises dans un fichier d'environnement local non versionné. Pour démarrer les services locaux :
 
 ```powershell
-# À la racine du projet
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
-L'API sera accessible sur http://localhost:3000.
+docker compose up -d
+```
 
-2. Lancer le Client (Eden Gestion)
+Pour l'environnement de production, utilisez uniquement une configuration de secrets préparée et vérifiée :
+
+```powershell
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+```
+
+L'API utilise le port 3000 avec la configuration locale par défaut.
+
+### 2. Client desktop
 
 ```powershell
 cd electron-app
-npm install
-```
-
-Configurez l'URL de l'API et un jeton JWT valide, puis démarrez :
-
-```powershell
-$env:EDEN_SYNC_URL = "http://localhost:3000"
-$env:EDEN_SYNC_TOKEN = "votre_jeton_genere_via_mint-token"
+npm ci
+npm run check
+npm test
 npm start
 ```
 
-📁 Structure du Dépôt
+Le client nécessite une URL d'API joignable et un jeton d'appareil valide. En mode développement non empaqueté, `EDEN_SYNC_TOKEN` peut servir au bootstrap local. Les builds empaquetés ne doivent pas utiliser cette variable comme mécanisme d'authentification.
 
-· /src : Code source de l'API NestJS (contrôleurs, services de synchronisation, schémas Drizzle).
-· /migrations : Scripts SQL (001 à 025) pour l'initialisation de la base de données PostgreSQL (incluant les extensions POS).
-· /electron-app : Code source complet de l'application client (main, preload, renderer, SQLite local).
-· /test : Plus de 250 tests d'intégration et de contrat (incluant la validation RLS, le POS et la synchronisation multi-appareils).
-· /docs : Documentation technique (HANDOFF, plan de test POS, architecture Electron).
+## Structure du dépôt
 
-🔐 Sécurité et Données
+- `src/` : API NestJS, services métier, synchronisation, sécurité et observabilité.
+- `migrations/` : 30 migrations SQL versionnées pour PostgreSQL.
+- `electron-app/` : client Windows Electron, SQLite, interface, sécurité IPC et synchronisation.
+- `test/` : tests backend et d'intégration.
+- `electron-app/test/` : tests du client desktop et simulations.
+- `docs/` : contrats techniques, architecture, sécurité et plans de validation.
+- `.github/workflows/` : contrôles CI, tests Electron et packaging Windows.
 
-· Multi-tenant strict : Chaque donnée est isolée par tenant_id via PostgreSQL Row-Level Security (RLS).
-· Immuabilité comptable : Les tables sales, sale_lines et stock_movements sont protégées par des triggers SQL. Aucune vente ne peut être modifiée ou supprimée (seule une vente miroir d'annulation "void" est autorisée).
-· Zéro secret dans le code : Les variables d'environnement (.env.prod) contiennent les secrets de production et ne doivent jamais être commitées.
+## Sécurité et intégrité des données
 
-🧪 Tests
+- **Isolation multi-tenant :** les données sont protégées par tenant, notamment au moyen de PostgreSQL RLS.
+- **Opérations métier :** les ventes et mouvements de stock s'appuient sur des migrations et contrats dédiés.
+- **Synchronisation :** l'outbox locale conserve les opérations en attente et utilise l'idempotence pour limiter les doublons.
+- **Secrets :** ne jamais versionner de jetons, mots de passe, clés ou fichiers d'environnement contenant des secrets.
+- **Client desktop :** le jeton persistant doit être conservé par le stockage sécurisé du processus principal Electron.
 
-Pour vérifier que le backend et les migrations sont sains :
+## Contrôles
+
+Depuis la racine :
 
 ```powershell
-npx tsc --noEmit
-npx vitest run
+npm ci
+npm run typecheck
+npm test
+npm run build
 ```
 
-👨‍💻 Auteur
+Depuis `electron-app/` :
 
-Développé par Eden Devs Corp (Kinshasa, RDC).
+```powershell
+npm ci
+npm run check
+npm test
+```
+
+Le succès de la CI et des tests automatisés ne remplace pas les essais d'installation, de sauvegarde/restauration, de synchronisation et de validation métier sur une machine Windows cible.
+
+## État de préparation
+
+Le backend et le client desktop contiennent déjà des composants fonctionnels importants. Toutefois, le parcours complet de caisse et sa validation terrain, l'intégration bout en bout de l'activation par code, ainsi que les tests d'installation et de mise à jour sur machine Windows propre doivent être vérifiés avant tout usage commercial.
+
+## Documentation
+
+Consulter les documents du dossier `docs/`, en particulier :
+
+- `docs/electron-architecture.md`
+- `docs/electron-packaging.md`
+- `docs/pos-sales-push-contract.md`
+- `docs/courrier-security-audit.md`
+
+---
+Eden Devs Corp — Kinshasa, RDC

@@ -1,6 +1,6 @@
 # Eden Gestion Desktop
 
-Application Windows de gestion commerciale hors ligne d’Eden Devs Corp. Cette application est en cours de construction : le catalogue local et sa file de synchronisation sont en place, mais le parcours complet de caisse n’est pas encore prêt pour un usage commercial.
+Application Windows de gestion commerciale hors ligne d’Eden Devs Corp. Le client dispose d’un catalogue local, d’une base SQLite persistante, d’une outbox durable, d’une synchronisation push/pull et d’un stockage sécurisé du jeton d’appareil. Le parcours commercial complet et sa validation terrain restent à achever.
 
 ## Fonctionnalités disponibles dans cette version de travail
 
@@ -18,7 +18,7 @@ Application Windows de gestion commerciale hors ligne d’Eden Devs Corp. Cette 
 - Parcours complet de caisse : panier, paiement, création atomique de vente et lignes de vente.
 - Ajustements et mouvements de stock, inventaire initial et validation de leur contrat de synchronisation côté serveur.
 - Ouverture et clôture de caisse, rapprochement et reçus imprimables.
-- Enrôlement sécurisé du terminal et stockage protégé du jeton. Les variables d’environnement ci-dessous sont uniquement un mécanisme de développement.
+- Intégration complète dans le client du parcours d’activation par code : le backend expose un endpoint de redemption, tandis que l’interface desktop doit encore être raccordée à ce flux pour obtenir le jeton sans saisie manuelle d’un JWT.
 - Sauvegarde/restauration vérifiée, tests sur un Windows propre et essais métier de bout en bout.
 
 Ne pas utiliser cette version pour enregistrer des ventes réelles tant que ces points ne sont pas validés.
@@ -48,7 +48,7 @@ npm test
 npm start
 ```
 
-La synchronisation nécessite une URL d’API joignable et un jeton valide émis par le backend. L’application peut conserver le catalogue local lorsque l’API n’est pas joignable, mais elle ne peut pas synchroniser tant que l’accès n’est pas configuré.
+La synchronisation nécessite une URL d’API joignable et un jeton d’appareil valide. Le jeton persistant est chargé depuis DeviceTokenStore, qui s’appuie sur Electron safeStorage. Le bootstrap par EDEN_SYNC_TOKEN est réservé au développement non empaqueté. L’application conserve le catalogue local lorsque l’API est indisponible, mais ne peut synchroniser sans accès configuré.
 
 ## Construire l’installateur Windows
 
@@ -71,9 +71,9 @@ Le paquet npm est `eden-gestion-desktop`. Le nom du produit, les raccourcis Bure
 1. Télécharger l’artefact de l’installateur depuis l’exécution du workflow GitHub Actions.
 2. Ouvrir le fichier `.exe` sur un PC Windows x64 et suivre l’assistant NSIS.
 3. Lancer **Eden Gestion Desktop** depuis le raccourci.
-4. Vérifier le catalogue local et la connexion de synchronisation avant tout usage réel.
+4. Vérifier le catalogue local, le stockage sécurisé du jeton et la connexion de synchronisation.
 
-L’installation sur une machine propre, le premier démarrage, la mise à jour et la préservation des données doivent encore faire l’objet d’un test manuel documenté.
+L’installation sur une machine propre, le premier démarrage, la mise à jour et la préservation des données doivent encore faire l’objet d’un test manuel documenté. La réussite des workflows CI ne constitue pas à elle seule une validation commerciale.
 
 ## Architecture
 
