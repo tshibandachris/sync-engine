@@ -27,3 +27,18 @@ test('validateDeviceToken rejects expired or malformed expiration claims', () =>
   assert.throws(() => validateDeviceToken(jwt({ payload: { exp: 1 } }), 2000), /expiré/);
   assert.throws(() => validateDeviceToken(jwt({ payload: { exp: 'tomorrow' } })), /expiré/);
 });
+
+
+test('extractTenantIdFromDeviceToken reads the signed tenant claim for local continuity', () => {
+  const { extractTenantIdFromDeviceToken } = require('../electron/auth/device-enrollment.cjs');
+  assert.equal(extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', tenantId: 'tenant-a', exp: 4102444800 } })), 'tenant-a');
+  assert.equal(extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', tenant_id: 'tenant-b', exp: 4102444800 } })), 'tenant-b');
+});
+
+test('extractTenantIdFromDeviceToken rejects tokens without a tenant claim', () => {
+  const { extractTenantIdFromDeviceToken } = require('../electron/auth/device-enrollment.cjs');
+  assert.throws(
+    () => extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', exp: 4102444800 } })),
+    /identifiant d’entreprise valide/,
+  );
+});
