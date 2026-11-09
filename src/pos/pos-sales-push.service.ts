@@ -146,8 +146,7 @@ export class PosSalesPushService {
     }
 
     for (const sessionId of touched) {
-      try {
-        await outerTx.execute(sql`UPDATE cash_sessions cs SET
+      await outerTx.execute(sql`UPDATE cash_sessions cs SET
             reconciled_expected_amount = cs.opening_amount + COALESCE((SELECT SUM(s.cash_amount)::integer FROM sales s WHERE s.tenant_id=cs.tenant_id AND s.cash_session_id=cs.id),0),
             reconciled_difference = cs.closing_amount - (cs.opening_amount + COALESCE((SELECT SUM(s.cash_amount)::integer FROM sales s WHERE s.tenant_id=cs.tenant_id AND s.cash_session_id=cs.id),0)),
             reconciled_at = (extract(epoch FROM clock_timestamp())*1000)::bigint,
