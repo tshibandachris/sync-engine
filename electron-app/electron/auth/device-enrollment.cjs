@@ -35,4 +35,16 @@ function validateDeviceToken(value, nowMs = Date.now()) {
   return token;
 }
 
-module.exports = { validateDeviceToken };
+function extractTenantIdFromDeviceToken(value) {
+  const token = validateDeviceToken(value);
+  const payload = decodeJsonSegment(token.split('.')[1], 'payload');
+  const tenantId = payload.tenantId ?? payload.tenant_id;
+  if (typeof tenantId !== 'string' || !tenantId.trim() || tenantId.length > 255) {
+    throw new Error('Le JWT ne contient pas un identifiant d’entreprise valide (tenantId).');
+  }
+  // This claim is used only for local database continuity. The API must still
+  // verify the JWT signature and authorize the tenant on every sync request.
+  return tenantId;
+}
+
+module.exports = { validateDeviceToken, extractTenantIdFromDeviceToken };
