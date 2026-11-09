@@ -81,6 +81,13 @@ describe('POS sales push contract', () => {
       .set('Authorization', 'Bearer ' + authToken).send({ changes: { sales } });
   }
 
+  async function pushWithKey(sales: unknown[], key: string) {
+    return request(app.getHttpServer()).post('/sync/push')
+      .set('Authorization', 'Bearer ' + token)
+      .set('Idempotency-Key', key)
+      .send({ changes: { sales } });
+  }
+
   it('commits valid sale while rolling back invalid sale independently', async () => {
     const good = sale();
     const bad = sale();
@@ -92,6 +99,21 @@ describe('POS sales push contract', () => {
     expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(1);
     expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines')).rows[0].count)).toBe(1);
     expect(Number((await pg.pool.query('SELECT count(*) FROM stock_movements')).rows[0].count)).toBe(1);
+  });
+
+  it('replays the complete sync batch idempotently and never applies fresh sale UUIDs', async () => {
+    const key = randomUUID();
+    const first = sale();
+    const initial = await pushWithKey([first], key);
+    expect(initial.body.results[0].status).toBe('applied');
+
+    const differentSale = sale();
+    const replay = await pushWithKey([differentSale], key);
+    expect(replay.status).toBe(201);
+    expect(replay.body.results).toBeUndefined();
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [first.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [differentSale.id])).rows[0].count)).toBe(0);
   });
 
   it('returns idempotent for a full identical retry without duplicate rows', async () => {
