@@ -715,6 +715,14 @@ export class SyncPushService {
         }
       }
 
+      // POS writes share this transaction with the rest of the sync batch
+      // and the idempotency record. A rollback therefore leaves neither a
+      // partially applied sale nor a consumed key.
+      if (dto.changes.sales !== undefined) {
+        response.results = await new PosSalesPushService(this.db)
+          .pushInTransaction(tenantId, dto.changes.sales, tx);
+      }
+
       if (idempotencyKey) {
         await tx.execute(sql`
           INSERT INTO sync_idempotency_keys (tenant_id, agent_id, idempotency_key)
@@ -724,12 +732,6 @@ export class SyncPushService {
 
       return response;
     }, { write: true });
-      // A replay must stop the entire request, including POS sales. Otherwise a
-      // reused Idempotency-Key with fresh sale UUIDs could create new sales.
-      if (!(response as PushResponse & { [IDEMPOTENCY_REPLAY]?: boolean })[IDEMPOTENCY_REPLAY] &&
-          dto.changes.sales !== undefined) {
-        response.results = await new PosSalesPushService(this.db).push(tenantId, dto.changes.sales);
-      }
       return response;
     } catch (err) {
       const pgError = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
