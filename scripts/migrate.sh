@@ -160,6 +160,8 @@ separation_ok=$(psql_base -tA -c "
           AND granted_role.rolname <> 'device_enrollment_executor'
      )
      AND NOT pg_catalog.has_table_privilege('sync_app', 'public.devices', 'INSERT')
+     AND NOT pg_catalog.has_table_privilege('sync_app', 'public.devices', 'UPDATE')
+     AND NOT pg_catalog.has_table_privilege('sync_app', 'public.devices', 'DELETE')
      AND NOT pg_catalog.has_table_privilege('sync_app', 'public.device_pairing_codes', 'SELECT')
      AND NOT pg_catalog.has_table_privilege('sync_app', 'public.device_pairing_codes', 'UPDATE')
      AND NOT pg_catalog.has_function_privilege('sync_app', 'public.redeem_device_pairing_code(text)', 'EXECUTE')
@@ -169,6 +171,17 @@ separation_ok=$(psql_base -tA -c "
        'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)',
        'EXECUTE'
      )
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.devices', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.devices', 'INSERT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.device_credentials', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.device_credentials', 'INSERT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.device_approval_events', 'INSERT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.device_proof_nonces', 'INSERT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.device_enrollment_attempts', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.device_pairing_codes', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('device_enrollment_executor', 'public.device_pairing_codes', 'UPDATE')
+     AND NOT pg_catalog.has_function_privilege('device_enrollment_executor', 'public.redeem_device_pairing_code(text)', 'EXECUTE')
+     AND NOT pg_catalog.has_function_privilege('device_enrollment_executor', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE')
      AND EXISTS (
        SELECT 1 FROM pg_catalog.pg_roles AS r
         WHERE r.rolname = 'device_enrollment_function_owner'
