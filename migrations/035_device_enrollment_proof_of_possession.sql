@@ -15,13 +15,13 @@ CREATE OR REPLACE FUNCTION public.register_device_enrollment_with_credential(
   p_key_thumbprint varchar
 )
 RETURNS TABLE (
-  device_id uuid,
-  tenant_id uuid,
-  store_id uuid,
-  pos_profile_id uuid,
-  device_name varchar,
-  approval_status varchar,
-  key_thumbprint varchar
+  result_device_id uuid,
+  result_tenant_id uuid,
+  result_store_id uuid,
+  result_pos_profile_id uuid,
+  result_device_name varchar,
+  result_approval_status varchar,
+  result_key_thumbprint varchar
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -43,13 +43,13 @@ BEGIN
   END IF;
 
   -- Atomic one-time pairing redemption, scoped to the authenticated agent's tenant.
-  UPDATE public.device_pairing_codes
+  UPDATE public.device_pairing_codes AS pairing
      SET used_at = clock_timestamp()
-   WHERE code_hash = p_code_hash
-     AND tenant_id = p_expected_tenant_id
-     AND used_at IS NULL
-     AND expires_at > clock_timestamp()
-  RETURNING * INTO v_pairing;
+   WHERE pairing.code_hash = p_code_hash
+     AND pairing.tenant_id = p_expected_tenant_id
+     AND pairing.used_at IS NULL
+     AND pairing.expires_at > clock_timestamp()
+  RETURNING pairing.* INTO v_pairing;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Invalid, expired, consumed or cross-tenant pairing code'
