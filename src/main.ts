@@ -61,7 +61,12 @@ async function bootstrap(): Promise<void> {
   const enrollmentPool = new Pool({ connectionString: enrollmentDatabaseUrl, application_name: 'eden-device-enrollment' });
   const db = drizzle(pool, { schema });
   const enrollmentDb = drizzle(enrollmentPool, { schema });
-  await assertEnrollmentDatabaseIdentity(enrollmentPool);
+  try {
+    await assertEnrollmentDatabaseIdentity(enrollmentPool);
+  } catch (error) {
+    await Promise.all([pool.end(), enrollmentPool.end()]);
+    throw error;
+  }
 
   const bucket = process.env.S3_BUCKET;
   if (!bucket) throw new Error('S3_BUCKET requis.');
