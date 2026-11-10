@@ -9,6 +9,38 @@ Le produit vise les commerces et PME qui doivent continuer à travailler pendant
 - **Backend — Sync Engine :** API NestJS, PostgreSQL, Drizzle ORM, politiques Row-Level Security (RLS), synchronisation push/pull et stockage S3 compatible via SeaweedFS.
 - **Client — Eden Gestion Desktop :** application Electron pour Windows x64, base locale SQLite, catalogue local et file d'attente durable des changements.
 
+
+### Rôle PostgreSQL dédié à l’enrôlement des terminaux
+
+Depuis la migration 036, la fonction privilégiée
+`register_device_enrollment_with_credential` n'est plus exécutable par
+`sync_app`. L'API utilise deux pools distincts :
+
+- `DATABASE_URL` : rôle applicatif `sync_app`, utilisé par la synchronisation et les services métier.
+- `DEVICE_ENROLLMENT_DATABASE_URL` : compte LOGIN dédié, membre de
+  `device_enrollment_executor`, utilisé uniquement par le service d'enrôlement.
+
+Après application des migrations 001–036, un opérateur DBA provisionne le
+login avec un secret généré et stocké dans le gestionnaire de secrets
+(dans une session SQL administrative, jamais dans une migration versionnée) :
+
+```sql
+CREATE ROLE device_enrollment_login LOGIN PASSWORD '<secret-fort>';
+GRANT device_enrollment_executor TO device_enrollment_login;
+```
+
+Le login dédié ne doit **pas** être membre de `sync_app`, ne doit être
+ni superuser ni propriétaire des tables, et ne doit être utilisé par
+aucun autre service. Configurer les deux URL séparément. Au démarrage,
+l'API vérifie que le compte d'enrôlement hérite de
+`device_enrollment_executor` et n'est pas membre de `sync_app` ;
+sinon elle refuse de démarrer.
+
+La séparation protège contre l'utilisation directe de la fonction SQL
+avec les seuls identifiants de synchronisation. Elle ne remplace pas la
+validation cryptographique ES256 dans le service NestJS : la base garantit
+l'atomicité, la consommation unique du code et l'écriture cohérente.
+
 ## Démarrage local
 
 ### Prérequis
