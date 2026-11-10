@@ -16,6 +16,8 @@ import { CourrierController } from './courrier.controller.js';
 import { CourrierService } from './courrier.service.js';
 import { DeviceEnrollmentController } from './device-enrollment.controller.js';
 import { DeviceEnrollmentService } from './device-enrollment.service.js';
+import { DeviceStatusController } from './device-status.controller.js';
+import { DeviceStatusService } from './device-status.service.js';
 import { createDeviceEnrollmentThrottleModule } from './device-enrollment.throttle.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 
@@ -46,7 +48,7 @@ export class AppModule {
         }),
         createDeviceEnrollmentThrottleModule(),
       ],
-      controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController],
+      controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController, DeviceStatusController],
       providers: [
         { provide: 'DRIZZLE_DB', useValue: db },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
@@ -58,6 +60,7 @@ export class AppModule {
         { provide: AttachmentService, useFactory: (d: any, s: any) => new AttachmentService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
         { provide: CourrierService, useFactory: (d: any, s: any) => new CourrierService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
         { provide: DeviceEnrollmentService, useFactory: (d: any) => new DeviceEnrollmentService(d), inject: ['DRIZZLE_DB'] },
+        { provide: DeviceStatusService, useFactory: (d: any) => new DeviceStatusService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
         DeviceApprovalGuard,
         SyncLogService,
