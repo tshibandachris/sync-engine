@@ -80,10 +80,11 @@ BEGIN
 
   -- Lock the pairing-code row before deciding whether this is a first request
   -- or a retry after a lost HTTP response.
-  SELECT id, tenant_id, store_id, pos_profile_id, used_at, expires_at
+  SELECT pairing.id, pairing.tenant_id, pairing.store_id,
+         pairing.pos_profile_id, pairing.used_at, pairing.expires_at
     INTO v_pairing
-    FROM public.device_pairing_codes
-    WHERE code_hash = p_code_hash
+    FROM public.device_pairing_codes AS pairing
+    WHERE pairing.code_hash = p_code_hash
     FOR UPDATE;
 
   IF NOT FOUND THEN
@@ -102,11 +103,11 @@ BEGIN
        AND v_attempt.jti = p_jti
        AND v_attempt.fingerprint = p_fingerprint
        AND v_attempt.key_thumbprint = p_key_thumbprint THEN
-      SELECT *
+      SELECT device.*
         INTO v_device
-        FROM public.devices
-        WHERE tenant_id = v_attempt.tenant_id
-          AND id = v_attempt.device_id;
+        FROM public.devices AS device
+        WHERE device.tenant_id = v_attempt.tenant_id
+          AND device.id = v_attempt.device_id;
 
       IF NOT FOUND THEN
         RAISE EXCEPTION 'ENROLLMENT_RECEIPT_DEVICE_MISSING' USING ERRCODE = 'P1004';
