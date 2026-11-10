@@ -9,7 +9,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
-import { devices } from './schema.js';
 import type { EnrollDeviceDto } from './device-enrollment.dto.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -59,23 +58,25 @@ export class DeviceEnrollmentService {
         // within this transaction before inserting the device record.
         await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${pairing.tenant_id}, true)`);
 
-        const [device] = await tx.insert(devices).values({
-          id: randomUUID(),
-          tenantId: pairing.tenant_id,
-          storeId: pairing.store_id,
-          posProfileId: pairing.pos_profile_id,
-          name: dto.deviceName,
-          fingerprint: hardwareId.trim(),
-          hardwareInfo: { ...dto.hardwareInfo },
-          isActive: true,
-          createdAt: now,
-        }).returning({
-          id: devices.id,
-          tenantId: devices.tenantId,
-          storeId: devices.storeId,
-          posProfileId: devices.posProfileId,
-          name: devices.name,
-        });
+        const enrollment = await tx.execute(sql`
+          SELECT *
+          FROM public.register_device_enrollment(
+            ${randomUUID()}::uuid,
+            ${pairing.tenant_id}::uuid,
+            ${pairing.store_id}::uuid,
+            ${pairing.pos_profile_id}::uuid,
+            ${dto.deviceName}::varchar,
+            ${hardwareId.trim()}::varchar,
+            ${JSON.stringify(dto.hardwareInfo)}::jsonb
+          )
+        `);
+        const device = enrollment.rows[0] as {
+          device_id: string;
+          tenant_id: string;
+          store_id: string;
+          pos_profile_id: string | null;
+          device_name: string;
+        } | undefined;
 
         if (!device) {
           throw new ServiceUnavailableException("L'enregistrement du poste de caisse a échoué.");
@@ -84,11 +85,11 @@ export class DeviceEnrollmentService {
         return {
           success: true,
           data: {
-            deviceId: device.id,
-            tenantId: device.tenantId,
-            store: { id: device.storeId },
-            posProfileId: device.posProfileId,
-            deviceName: device.name,
+            deviceId: device.device_id,
+            tenantId: device.tenant_id,
+            store: { id: device.store_id },
+            posProfileId: device.pos_profile_id,
+            deviceName: device.device_name,
             status: 'enrolled',
           },
         };
