@@ -1,88 +1,88 @@
-# Eden Devs Corp — Sync Engine & Eden Gestion
+# Eden Devs Corp: Sync Engine & Eden Gestion
 
-Dépôt du système de gestion commerciale **Eden Gestion**, composé d'une API backend multi-tenant (Sync Engine) et d'un client de caisse Windows offline-first.
+[![CI](https://github.com/tshibandachris/sync-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/tshibandachris/sync-engine/actions/workflows/ci.yml)
 
-Le produit vise les commerces et PME qui doivent continuer à travailler pendant les coupures d'électricité ou d'accès à Internet, puis synchroniser leurs opérations lorsque la connexion revient.
+An offline-first sync backend and Windows point-of-sale client for shops and small businesses in Sub-Saharan Africa, where power and internet cuts are routine.
+
+**Eden Gestion** is a business management system made of a multi-tenant API (**Sync Engine**) and an offline-first Windows cashier client (**Eden Gestion Desktop**). The cashier keeps working during outages, and operations sync when the connection returns.
+
+## Highlights
+
+- **Multi-tenant isolation** with PostgreSQL Row-Level Security (RLS), covered by PostgreSQL integration tests.
+- **Accounting integrity.** Sales, sale lines and stock movements are protected by database-level controls. A sale is not edited or deleted; corrections use a mirror void sale.
+- **Durable offline queue.** The client keeps pending operations in a local SQLite outbox and retries them with idempotency keys.
+- **Device identity and approval.** Each terminal enrolls with an ES256 cryptographic proof, remains pending until an administrator decision, and can later be revoked. Protected POS synchronization routes verify the terminal identity, approval state and proof of possession.
+- **Least-privilege database access.** The application, device enrollment and device administration use separate PostgreSQL identities and capability roles.
+- **Automated validation.** Backend and Electron tests include PostgreSQL integration coverage and client-side failure simulations. The field-simulation suite is run separately with `npm run test:field`.
+- **CI on pull requests** and versioned PostgreSQL SQL migrations (001–038).
 
 ## Architecture
 
-- **Backend — Sync Engine :** API NestJS, PostgreSQL, Drizzle ORM, politiques Row-Level Security (RLS), synchronisation push/pull et stockage S3 compatible via SeaweedFS.
-- **Client — Eden Gestion Desktop :** application Electron pour Windows x64, base locale SQLite, catalogue local et file d'attente durable des changements.
+- **Backend (Sync Engine).** NestJS API, PostgreSQL, Drizzle ORM, RLS policies, incremental push/pull synchronization, and S3-compatible attachment storage through SeaweedFS.
+- **Client (Eden Gestion Desktop).** Electron app for Windows x64, local SQLite database, local product catalog and a durable outbox.
 
-## Démarrage local
+## Terminal lifecycle
 
-### Prérequis
+1. **Enrollment.** On first run, the client generates its device key material, stores it through Electron secure storage, and sends an enrollment request with a cryptographic proof.
+2. **Pending.** A newly enrolled terminal cannot use protected POS synchronization routes until approved.
+3. **Approval or rejection.** An authorized administrator approves or rejects the terminal through the administration API. Decisions are tenant-scoped and audited.
+4. **Synchronization.** Approved terminals push and pull with their identity and a fresh proof of possession.
+5. **Revocation.** An authorized administrator can revoke an approved terminal. Its active credential is revoked and protected synchronization access is denied.
 
-- Node.js 20 ou supérieur pour le backend.
-- Docker et Docker Compose pour les services locaux.
-- Windows x64 et Node.js 22 pour le client Electron.
-- Visual Studio Build Tools avec les composants C++ peuvent être nécessaires pour les modules natifs.
+The administration API is available. A dedicated graphical interface for administrators is not available yet. See [the device administration contract](docs/device-admin-approval.md).
+
+## Local setup
+
+### Requirements
+
+- Node.js 20+ for the backend.
+- Docker and Docker Compose for local services.
+- Windows x64 and Node.js 22 for the Electron client.
+- Visual Studio Build Tools with C++ components may be needed for native modules.
 
 ### 1. Backend
 
-À la racine du dépôt, configurez les variables requises dans un fichier d'environnement local non versionné. Pour démarrer les services locaux :
+At the repository root, create a local, untracked environment file from `.env.example`, replace the placeholder secrets, then start the local services:
 
 ```powershell
+Copy-Item .env.example .env
 docker compose up -d
 ```
 
-Pour l'environnement de production, utilisez uniquement une configuration de secrets préparée et vérifiée :
+For production, use only a prepared and reviewed secrets configuration:
 
 ```powershell
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 ```
 
-L'API utilise le port 3000 avec la configuration locale par défaut.
+The API listens on port 3000 with the default local configuration. The application, enrollment and device-administration database URLs must use their respective dedicated credentials. Never commit tokens, keys, passwords or environment files containing secrets.
 
-### 2. Client desktop
+### 2. Desktop client
 
 ```powershell
 cd electron-app
 npm ci
 npm run check
 npm test
+npm run test:field
 npm start
 ```
 
-Le client nécessite une URL d'API joignable et un jeton d'appareil valide. En mode développement non empaqueté, `EDEN_SYNC_TOKEN` peut servir au bootstrap local. Les builds empaquetés ne doivent pas utiliser cette variable comme mécanisme d'authentification.
+The client needs a reachable API URL and an enrolled, approved terminal for protected POS synchronization. In unpackaged development mode, `EDEN_SYNC_TOKEN` can bootstrap a local token. Packaged builds do not use this variable as an authentication mechanism.
 
-## Structure du dépôt
+## Repository structure
 
-- `src/` : API NestJS, services métier, synchronisation, sécurité et observabilité.
-- `migrations/` : migrations SQL versionnées pour PostgreSQL (jusqu'à 038).
-- `electron-app/` : client Windows Electron, SQLite, interface, sécurité IPC et synchronisation.
-- `test/` : tests backend et d'intégration.
-- `electron-app/test/` : tests du client desktop et simulations.
-- `docs/` : contrats techniques, architecture, sécurité et plans de validation.
-- `.github/workflows/` : contrôles CI, tests Electron et packaging Windows.
+- `src/`: NestJS API, business services, sync, security and observability.
+- `migrations/`: versioned SQL migrations for PostgreSQL (001–038).
+- `electron-app/`: Windows client (Electron, SQLite, UI, IPC security, sync).
+- `test/`: backend and integration tests.
+- `electron-app/test/`: desktop client tests and field simulations.
+- `docs/`: technical contracts, architecture and validation plans.
+- `.github/workflows/`: server CI, POS migration smoke test, Electron CI and Windows installer build.
 
-## Sécurité et intégrité des données
+## Checks
 
-- **Isolation multi-tenant :** les données sont protégées par tenant, notamment au moyen de PostgreSQL RLS.
-- **Opérations métier :** les ventes et mouvements de stock s'appuient sur des migrations et contrats dédiés.
-- **Synchronisation :** l'outbox locale conserve les opérations en attente et utilise l'idempotence pour limiter les doublons.
-- **Secrets :** ne jamais versionner de jetons, mots de passe, clés ou fichiers d'environnement contenant des secrets.
-- **Client desktop :** le jeton persistant doit être conservé par le stockage sécurisé du processus principal Electron.
-
-## Administration des terminaux
-
-Les terminaux nouvellement enrôlés restent en attente jusqu'à une décision administrative explicite. L'API expose :
-- `GET /api/v1/admin/devices/pending` avec la permission IdP `devices:read` ;
-- `POST /api/v1/admin/devices/:id/approve` avec `devices:approve` ;
-- `POST /api/v1/admin/devices/:id/reject` avec `devices:reject` et une justification obligatoire ;
-- `POST /api/v1/admin/devices/:id/revoke` avec `devices:revoke` et une justification obligatoire.
-
-Les permissions proviennent exclusivement des claims validés du fournisseur d'identité. En mode à secret partagé, les jetons POS ordinaires restent sans permissions administratives ; un opérateur de confiance peut émettre un jeton dédié de 15 minutes avec `scripts/mint-device-admin-token.mjs`. En mode JWKS, l'IdP fournit les claims de permissions. Les transitions sont tenant-scoped, transactionnelles et journalisées dans `device_approval_events`. Une révocation invalide aussi la credential active. Le compte général `sync_app` ne peut ni appeler la fonction d'administration ni modifier directement les tables de terminaux.
-
-La fonction de transition est exposée à un rôle-capacité PostgreSQL distinct, via `DEVICE_ADMIN_DATABASE_URL`. Le login `device_admin_login` doit rester distinct de `sync_app` et de `device_enrollment_login`. Configurez `DEVICE_ADMIN_PASSWORD` et l'URL dédiée avant de lancer les migrations. Le démarrage refuse une identité ou des privilèges non conformes.
-
-## Enrôlement sécurisé des terminaux
-
-Le parcours d'enrôlement initial utilise une connexion PostgreSQL dédiée, distincte du pool applicatif. La migration 036 retire à `sync_app` le droit d'exécuter la fonction atomique, d'insérer des devices, d'accéder aux codes d'activation et d'appeler les helpers d'enrôlement. Ces droits sont réservés au rôle-capacité `device_enrollment_executor` via une connexion dédiée. Le job `migrate` provisionne le login dédié à partir de `DEVICE_ENROLLMENT_PASSWORD`, et le backend refuse de démarrer si l'identité ou les privilèges de cette connexion ne correspondent pas au contrat attendu. Le script suit les migrations dans `schema_migrations` et reprend les migrations manquantes au lieu de s'arrêter au seul constat qu'une table existe. Voir [la procédure de provisionnement et la frontière de sécurité](docs/device-enrollment-db-isolation.md).
-
-## Contrôles
-
-Depuis la racine :
+From the repository root:
 
 ```powershell
 npm ci
@@ -91,28 +91,34 @@ npm test
 npm run build
 ```
 
-Depuis `electron-app/` :
+From `electron-app/`:
 
 ```powershell
 npm ci
 npm run check
 npm test
+npm run test:field
 ```
 
-Le succès de la CI et des tests automatisés ne remplace pas les essais d'installation, de sauvegarde/restauration, de synchronisation et de validation métier sur une machine Windows cible.
+Passing CI does not replace installation, backup/restore, synchronization and business validation tests on a target Windows machine.
 
-## État de préparation
+## Project status
 
-Le backend et le client desktop contiennent déjà des composants fonctionnels importants. Toutefois, le parcours complet de caisse et sa validation terrain, l'intégration bout en bout de l'activation par code, ainsi que les tests d'installation et de mise à jour sur machine Windows propre doivent être vérifiés avant tout usage commercial.
+The backend and desktop client already contain significant working components. Automated checks passing on a commit do not, by themselves, establish production or field readiness. Before commercial use, the full cashier workflow, activation and approval lifecycle, installation and update on a clean Windows machine, backup and restore, and end-to-end synchronization scenarios still need to be verified in the target environment.
 
 ## Documentation
 
-Consulter les documents du dossier `docs/`, en particulier :
+- [Device administration and approval](docs/device-admin-approval.md)
+- [Device enrollment database isolation](docs/device-enrollment-db-isolation.md)
+- [Electron architecture](docs/electron-architecture.md)
+- [Electron packaging](docs/electron-packaging.md)
+- [POS sales push contract](docs/pos-sales-push-contract.md)
+- `HANDOFF.md` and `CONTRIBUTING.md`
 
-- `docs/electron-architecture.md`
-- `docs/electron-packaging.md`
-- `docs/pos-sales-push-contract.md`
-- `docs/courrier-security-audit.md`
+## License
+
+Copyright (c) Eden Devs Corp. All rights reserved. The source is public for review and evaluation. No permission is granted to use, copy, modify or redistribute it without written agreement.
 
 ---
-Eden Devs Corp — Kinshasa, RDC
+
+Eden Devs Corp, Kinshasa, DR Congo. https://edendevscorp.com
