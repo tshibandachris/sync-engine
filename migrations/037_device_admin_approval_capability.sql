@@ -96,6 +96,20 @@ BEGIN
 
   CASE p_action
     WHEN 'approve' THEN
+      IF NOT v_device.is_active THEN
+        RAISE EXCEPTION 'DEVICE_DEACTIVATED: inactive devices cannot be approved'
+          USING ERRCODE = 'P0001';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1
+          FROM public.device_credentials AS credential
+         WHERE credential.tenant_id = p_tenant_id
+           AND credential.device_id = p_device_id
+           AND credential.status = 'active'
+      ) THEN
+        RAISE EXCEPTION 'DEVICE_ACTIVE_CREDENTIAL_REQUIRED: an active ES256 credential is required'
+          USING ERRCODE = 'P0001';
+      END IF;
       IF v_device.approval_status NOT IN ('pending_approval', 'rejected') THEN
         RAISE EXCEPTION 'DEVICE_TRANSITION_CONFLICT: cannot approve from %', v_device.approval_status
           USING ERRCODE = 'P0001';
