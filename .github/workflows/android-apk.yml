@@ -35,6 +35,8 @@ jobs:
           java-version: '21'
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Build web application
