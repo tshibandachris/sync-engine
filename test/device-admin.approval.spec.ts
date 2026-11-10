@@ -20,6 +20,7 @@ describe('Device administration approval workflow', () => {
   const tenantB = crypto.randomUUID();
   const actorA = crypto.randomUUID();
   const pendingA = crypto.randomUUID();
+  const pendingReject = crypto.randomUUID();
   const pendingB = crypto.randomUUID();
   const approvedA = crypto.randomUUID();
 
@@ -61,6 +62,7 @@ describe('Device administration approval workflow', () => {
       [tenantA, tenantB, Date.now()],
     );
     await insertDevice(pendingA, tenantA, 'pending_approval');
+    await insertDevice(pendingReject, tenantA, 'pending_approval');
     await insertDevice(pendingB, tenantB, 'pending_approval');
     await insertDevice(approvedA, tenantA, 'approved', true);
 
@@ -113,6 +115,7 @@ describe('Device administration approval workflow', () => {
       .set('Authorization', 'Bearer ' + auth);
     expect(response.status).toBe(200);
     expect(response.body.map((device: { id: string }) => device.id)).toContain(pendingA);
+    expect(response.body.map((device: { id: string }) => device.id)).toContain(pendingReject);
     expect(response.body.map((device: { id: string }) => device.id)).not.toContain(pendingB);
     expect(response.body.map((device: { id: string }) => device.id)).not.toContain(approvedA);
   });
@@ -144,13 +147,13 @@ describe('Device administration approval workflow', () => {
   it('rejects only pending devices and requires an audit reason', async () => {
     const auth = await token(tenantA, actorA, ['devices:reject']);
     const missingReason = await request(app.getHttpServer())
-      .post('/api/v1/admin/devices/' + pendingA + '/reject')
+      .post('/api/v1/admin/devices/' + pendingReject + '/reject')
       .set('Authorization', 'Bearer ' + auth)
       .send({});
     expect(missingReason.status).toBe(400);
 
     const response = await request(app.getHttpServer())
-      .post('/api/v1/admin/devices/' + pendingA + '/reject')
+      .post('/api/v1/admin/devices/' + pendingReject + '/reject')
       .set('Authorization', 'Bearer ' + auth)
       .send({ reason: 'Dossier de terminal incomplet' });
     expect(response.status).toBe(201);
@@ -194,7 +197,7 @@ describe('Device administration approval workflow', () => {
     await expect(pg.adminPool.query('SELECT id FROM public.devices LIMIT 1')).rejects.toMatchObject({ code: '42501' });
     await expect(pg.appPool.query(
       'SELECT * FROM public.transition_device_approval($1, $2, $3, $4, $5)',
-      [tenantA, pendingA, actorA, 'approve', null],
+      [tenantA, pendingReject, actorA, 'approve', null],
     )).rejects.toMatchObject({ code: '42501' });
   });
 });
