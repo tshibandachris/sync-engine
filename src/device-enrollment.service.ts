@@ -120,6 +120,24 @@ export class DeviceEnrollmentService {
             message: "Code d'activation invalide, expiré ou déjà utilisé.",
           });
         }
+        if (candidate.code === 'P1002') {
+          throw new UnauthorizedException({
+            code: 'CODE_ALREADY_CONSUMED',
+            message: "Ce code a déjà servi à un autre enrôlement.",
+          });
+        }
+        if (candidate.code === 'P1003') {
+          throw new UnauthorizedException({
+            code: 'CODE_EXPIRED',
+            message: "Le code d'activation a expiré.",
+          });
+        }
+        if (candidate.code === 'P1004') {
+          throw new ConflictException({
+            code: 'ENROLLMENT_RECEIPT_INVALID',
+            message: "Le reçu d'enrôlement ne référence plus un terminal valide.",
+          });
+        }
         if (candidate.code === '23505') {
           throw new ConflictException('Ce terminal ou cette credential est déjà enregistré pour ce tenant.');
         }
