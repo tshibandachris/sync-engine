@@ -420,13 +420,24 @@ app.whenReady().then(async () => {
           publicKeyPem: keyPair.publicKeyPem,
           thumbprint: keyPair.thumbprint,
           algorithm: 'ES256',
-          initialProof,
+          jti: crypto.randomUUID(),
         };
         // Persist the exact key, jti and signed request before any network call.
         // A lost response can then be retried idempotently with the same proof.
         await enrollmentAttemptStore.save(attempt);
         pendingEnrollmentAttempt = attempt;
       }
+
+      // Refresh iat on each attempt while preserving the same durable jti/key.
+      // This supports retries after the server's ±60-second proof window.
+      const initialProof = createInitialEnrollmentProof({
+        privateKeyPem: attempt.privateKeyPem,
+        activationCode: attempt.activationCode,
+        fingerprint: attempt.fingerprint,
+        jti: attempt.jti,
+      });
+      // Re-save before network I/O so the exact enrollment identity survives a crash.
+      await enrollmentAttemptStore.save(attempt);
 
       const serverEnrollment = await enrollDeviceWithProof({
         baseUrl: process.env.EDEN_SYNC_URL,
