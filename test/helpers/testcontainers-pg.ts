@@ -18,6 +18,10 @@ export class TestPostgres {
 
   readonly appDb: ReturnType<typeof drizzle<typeof schema>>;
 
+  readonly enrollmentPool: Pool;
+
+  readonly enrollmentDb: ReturnType<typeof drizzle<typeof schema>>;
+
   private constructor(
     container: Awaited<
       ReturnType<PostgreSqlContainer['start']>
@@ -26,12 +30,16 @@ export class TestPostgres {
     db: ReturnType<typeof drizzle<typeof schema>>,
     appPool: Pool,
     appDb: ReturnType<typeof drizzle<typeof schema>>,
+    enrollmentPool: Pool,
+    enrollmentDb: ReturnType<typeof drizzle<typeof schema>>,
   ) {
     this.container = container;
     this.pool = pool;
     this.db = db;
     this.appPool = appPool;
     this.appDb = appDb;
+    this.enrollmentPool = enrollmentPool;
+    this.enrollmentDb = enrollmentDb;
   }
 
   static async start(): Promise<TestPostgres> {
@@ -242,6 +250,7 @@ export class TestPostgres {
     '033_atomic_device_enrollment.sql',
     '034_device_proof_replay_protection.sql',
     '035_device_enrollment_with_credential.sql',
+    '036_device_enrollment_executor_role.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
@@ -308,16 +317,31 @@ export class TestPostgres {
       schema,
     });
 
+    // Dedicated LOGIN used only by the enrollment capability pool.
+    await pool.query("CREATE ROLE device_enrollment_test LOGIN INHERIT PASSWORD 'device_enrollment_test_pw'");
+    await pool.query('GRANT device_enrollment_executor TO device_enrollment_test');
+    const enrollmentPool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: 'device_enrollment_test',
+      password: 'device_enrollment_test_pw',
+    });
+    const enrollmentDb = drizzle(enrollmentPool, { schema });
+
     return new TestPostgres(
       container,
       pool,
       db,
       appPool,
       appDb,
+      enrollmentPool,
+      enrollmentDb,
     );
   }
 
   async stop(): Promise<void> {
+    await this.enrollmentPool.end();
     await this.appPool.end();
     await this.pool.end();
     await this.container.stop();
