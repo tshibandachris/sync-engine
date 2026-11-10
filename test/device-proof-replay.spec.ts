@@ -163,6 +163,30 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
 
   it('purges only expired nonces for the requested tenant in bounded batches', async () => {
     const maintenance = new SyncMaintenanceService(pg.appDb);
+    const owner = await pg.pool.query(`
+      SELECT r.rolcanlogin, r.rolsuper, r.rolbypassrls,
+             pg_catalog.has_table_privilege(r.oid, 'public.device_proof_nonces', 'SELECT') AS can_select,
+             pg_catalog.has_table_privilege(r.oid, 'public.device_proof_nonces', 'DELETE') AS can_delete,
+             EXISTS (
+               SELECT 1 FROM pg_catalog.pg_class c
+               WHERE c.relowner = r.oid AND c.relname = 'device_proof_nonces'
+             ) AS owns_nonce_table,
+             EXISTS (
+               SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member = r.oid
+             ) AS has_memberships
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
+      WHERE p.oid = 'public.purge_expired_device_proof_nonces(uuid,integer)'::regprocedure
+    `);
+    expect(owner.rows[0]).toMatchObject({
+      rolcanlogin: false,
+      rolsuper: false,
+      rolbypassrls: false,
+      can_select: true,
+      can_delete: true,
+      owns_nonce_table: false,
+      has_memberships: false,
+    });
     const expired = randomUUID();
     const live = randomUUID();
     const otherTenantExpired = randomUUID();
