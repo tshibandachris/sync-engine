@@ -2,10 +2,13 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as crypto from 'node:crypto';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from '../schema.js';
 import { DeviceRepository } from '../devices/device.repository.js';
 import { DeviceProofNonceRepository } from './device-proof-nonce.repository.js';
 
@@ -58,10 +61,16 @@ function hasExactKeys(value: object, keys: string[]): boolean {
 
 @Injectable()
 export class DeviceProofGuard implements CanActivate {
-  constructor(
-    private readonly deviceRepo: DeviceRepository,
-    private readonly nonceRepo: DeviceProofNonceRepository,
-  ) {}
+  private readonly deviceRepo: DeviceRepository;
+  private readonly nonceRepo: DeviceProofNonceRepository;
+
+  // Inject the one token shared by all existing HTTP test modules. Constructing
+  // the two thin repositories here avoids forcing every legacy test module to
+  // duplicate new provider registrations merely because it imports SyncController.
+  constructor(@Inject('DRIZZLE_DB') db: NodePgDatabase<typeof schema>) {
+    this.deviceRepo = new DeviceRepository(db);
+    this.nonceRepo = new DeviceProofNonceRepository(db);
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
