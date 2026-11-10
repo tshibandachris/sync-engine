@@ -1,0 +1,1 @@
+The Android Keystore spike plugin is copied into the generated Capacitor Android project by `prepare-android.mjs`. Generated Gradle/Android project files are not committed in this initial scaffold; the workflow generates them reproducibly from the pinned Capacitor packages.
