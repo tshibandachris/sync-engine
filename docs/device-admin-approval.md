@@ -19,7 +19,7 @@ En mode JWKS, le fournisseur d'identité peut émettre les permissions dans les 
 
 ## Transitions
 
-- `pending_approval -> approved` : événement `approved`, horodatage et acteur enregistrés.
+- `pending_approval -> approved` : événement `approved`, horodatage et acteur enregistrés ; le terminal doit être actif et posséder une credential ES256 active.
 - `pending_approval -> rejected` : événement `rejected`, justification obligatoire.
 - `rejected -> approved` : nouvelle décision explicite, événement `approved`.
 - `approved -> revoked` : événement `revoked`, justification obligatoire et révocation de toutes les credentials actives du terminal.
