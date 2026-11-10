@@ -14,6 +14,7 @@ import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
+import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 import { SyncLogService } from '../src/observability/sync-log.service.js';
 import { SyncLogInterceptor } from '../src/observability/sync-log.interceptor.js';
 import { renderMetrics, resetMetrics } from '../src/observability/metrics.js';
@@ -116,7 +117,8 @@ describe('SyncLog interceptor', () => {
         { provide: APP_INTERCEPTOR, useClass: SyncLogInterceptor },
         JwtAuthGuard,
       ],
-    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true }).compile();
+    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true })
+      .overrideGuard(DeviceProofGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
     await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
