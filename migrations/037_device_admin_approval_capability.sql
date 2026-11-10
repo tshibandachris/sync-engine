@@ -67,7 +67,7 @@ DECLARE
   v_to_status varchar(24);
   v_event_type varchar(24);
   v_reason varchar(500);
-  v_changed_at timestamptz := clock_timestamp();
+  v_changed_at timestamptz;
 BEGIN
   IF p_tenant_id IS NULL OR p_device_id IS NULL OR p_actor_id IS NULL
      OR p_action NOT IN ('approve', 'reject', 'revoke')
@@ -122,6 +122,9 @@ BEGIN
     ELSE
       RAISE EXCEPTION 'Unsupported device approval action' USING ERRCODE = '22023';
   END CASE;
+
+  -- Timestamp after acquiring the row lock so concurrent decisions are ordered.
+  v_changed_at := clock_timestamp();
 
   UPDATE public.devices AS d
      SET approval_status = v_to_status,
