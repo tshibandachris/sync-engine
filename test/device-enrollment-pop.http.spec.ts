@@ -174,6 +174,26 @@ describe('Initial ES256 proof enrollment (PostgreSQL HTTP integration)', () => {
     expect(pairing.rows[0].used_at).toBeInstanceOf(Date);
   });
 
+  it('rolls back pairing-code consumption when credential persistence fails', async () => {
+    const rollbackCode = 'JKLM-2468';
+    const rollbackHash = await createPairingCode(rollbackCode);
+    const fingerprint = 'fingerprint-credential-conflict';
+    const response = await enroll({ activationCode: rollbackCode, fingerprint });
+    expect(response.status).toBe(409);
+
+    const pairing = await pg.pool.query(
+      'SELECT used_at FROM public.device_pairing_codes WHERE code_hash = $1',
+      [rollbackHash],
+    );
+    expect(pairing.rows[0].used_at).toBeNull();
+
+    const device = await pg.pool.query(
+      'SELECT id FROM public.devices WHERE tenant_id = $1 AND fingerprint = $2',
+      [tenantId, fingerprint],
+    );
+    expect(device.rows).toHaveLength(0);
+  });
+
   it('rejects immediate reuse of the consumed activation code', async () => {
     const response = await enroll();
     expect(response.status).toBe(401);
