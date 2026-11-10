@@ -193,6 +193,19 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
       appClient.release();
     }
 
+    const mismatchedContext = await pg.appPool.connect();
+    try {
+      await mismatchedContext.query('BEGIN');
+      await mismatchedContext.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantA]);
+      await expect(mismatchedContext.query(
+        'SELECT public.purge_expired_device_proof_nonces($1::uuid, 1)',
+        [tenantB],
+      )).rejects.toMatchObject({ code: '42501' });
+      await mismatchedContext.query('ROLLBACK');
+    } finally {
+      mismatchedContext.release();
+    }
+
     await expect(maintenance.purgeExpiredDeviceProofNonces(tenantA, 1)).resolves.toEqual({ deleted: 1 });
     const remaining = await pg.pool.query(
       'SELECT tenant_id, jti FROM public.device_proof_nonces WHERE jti = ANY($1::uuid[]) ORDER BY jti',
