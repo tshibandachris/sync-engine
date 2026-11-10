@@ -1,6 +1,8 @@
 package corp.edendevs.edengestion.android;
 
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.pm.ActivityInfo;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.security.keystore.KeyGenParameterSpec;
@@ -23,6 +25,19 @@ import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public class EdenFoundationInstrumentedTest {
     private static final String ALIAS = "corp.edendevs.edengestion.device.es256.v1";
+
+    @Test
+    public void mainActivityDoesNotLockOrientationForAdaptiveLargeScreens() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        ActivityInfo activity = context.getPackageManager().getActivityInfo(
+            new ComponentName(context, MainActivity.class),
+            android.content.pm.PackageManager.GET_META_DATA
+        );
+        assertEquals("Android 16 large-screen layouts must remain orientation-adaptive",
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED, activity.screenOrientation);
+        assertNotEquals("MainActivity must remain resizable",
+            ActivityInfo.RESIZE_MODE_UNRESIZEABLE, activity.resizeMode);
+    }
 
     @Test
     public void sqliteRowSurvivesCloseAndReopen() {
@@ -72,6 +87,6 @@ public class EdenFoundationInstrumentedTest {
         verifier.initVerify(reloaded);
         verifier.update(message);
         assertTrue("Signature from reloaded Android Keystore key must verify", verifier.verify(signature));
-        assertEquals("secp256r1", reloaded.getParams().getCurve().getField().getFieldSize() == 256 ? "secp256r1" : "unexpected-curve");
+        assertEquals("P-256 curve field size", 256, reloaded.getParams().getCurve().getField().getFieldSize());
     }
 }
