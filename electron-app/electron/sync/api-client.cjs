@@ -1,3 +1,7 @@
+const { createDeviceProof } = require('../auth/device-crypto.cjs');
+
+const DEVICE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function normalizeBaseUrl(value) {
   if (!value) throw new Error('EDEN_SYNC_URL is required (base URL of the NestJS API).');
   const url = new URL(value);
@@ -35,10 +39,31 @@ async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, 
   return parsed;
 }
 
-async function pullChanges({ baseUrl, token, lastPulledAt = 0, fetchImpl = fetch }) {
+function createProofHeaders({ baseUrl, path, token, deviceCredential }) {
+  if (!deviceCredential || typeof deviceCredential !== 'object' ||
+      !DEVICE_ID_RE.test(deviceCredential.deviceId || '') ||
+      typeof deviceCredential.privateKeyPem !== 'string' ||
+      deviceCredential.algorithm !== 'ES256') {
+    throw new Error('A verified ES256 device credential is required for synchronization.');
+  }
+  const url = `${normalizeBaseUrl(baseUrl)}${path}`;
+  const proof = createDeviceProof({
+    privateKeyPem: deviceCredential.privateKeyPem,
+    token,
+    method: 'POST',
+    url,
+  });
+  return {
+    'x-device-id': deviceCredential.deviceId,
+    'x-device-proof': proof,
+  };
+}
+
+async function pullChanges({ baseUrl, token, deviceCredential, lastPulledAt = 0, fetchImpl = fetch }) {
   const base = normalizeBaseUrl(baseUrl);
+  const headers = createProofHeaders({ baseUrl: base, path: '/sync/pull', token, deviceCredential });
   const body = await requestJson({
-    url: `${base}/sync/pull`, token, fetchImpl, label: 'Pull',
+    url: `${base}/sync/pull`, token, fetchImpl, label: 'Pull', headers,
     body: { last_pulled_at: lastPulledAt, limit: 1000 },
   });
   if (!body || typeof body.timestamp !== 'number' || !body.changes || typeof body.changes !== 'object') {
@@ -47,7 +72,7 @@ async function pullChanges({ baseUrl, token, lastPulledAt = 0, fetchImpl = fetch
   return body;
 }
 
-async function pushChanges({ baseUrl, token, idempotencyKey, payload, fetchImpl = fetch }) {
+async function pushChanges({ baseUrl, token, deviceCredential, idempotencyKey, payload, fetchImpl = fetch }) {
   if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
     throw new Error('A persisted Idempotency-Key is required for sync push.');
   }
@@ -55,9 +80,10 @@ async function pushChanges({ baseUrl, token, idempotencyKey, payload, fetchImpl 
     throw new Error('Push payload does not match the expected sync contract.');
   }
   const base = normalizeBaseUrl(baseUrl);
+  const proofHeaders = createProofHeaders({ baseUrl: base, path: '/sync/push', token, deviceCredential });
   const body = await requestJson({
     url: `${base}/sync/push`, token, fetchImpl, label: 'Push',
-    headers: { 'Idempotency-Key': idempotencyKey },
+    headers: { ...proofHeaders, 'Idempotency-Key': idempotencyKey },
     body: payload,
   });
   if (!body || typeof body !== 'object' || !body.applied || !Array.isArray(body.conflicts)) {
