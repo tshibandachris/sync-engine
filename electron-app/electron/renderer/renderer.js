@@ -210,6 +210,25 @@ function initializeDashboard() {
     state.query = event.target.value;
     await loadProducts();
   });
+  $('device-status-button').addEventListener('click', async () => {
+    const button = $('device-status-button');
+    button.disabled = true;
+    button.textContent = 'Vérification…';
+    try {
+      const result = await window.eden.checkDeviceStatus();
+      if (!result?.success) {
+        setFeedback(result?.error || 'Statut du terminal indisponible. Les opérations locales sont conservées.', 'error');
+      } else {
+        handleStatus(await window.eden.getStatus());
+        setFeedback(`Statut serveur : ${result.approvalStatus}.`, 'success');
+      }
+    } catch (error) {
+      setFeedback(error.message || 'Impossible de vérifier le terminal.', 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Vérifier le terminal';
+    }
+  });
   $('sync-button').addEventListener('click', async () => {
     try { renderStatus(await window.eden.refresh()); }
     catch (error) { setFeedback(error.message || 'Synchronisation impossible.', 'error'); }
