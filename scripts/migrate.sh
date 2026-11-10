@@ -137,7 +137,7 @@ CREATE ROLE device_enrollment_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREA
 EOSQL
 fi
 
-psql_base <<'EOSQL'
+psql_base -v db_name="$DB_NAME" <<'EOSQL'
 REVOKE sync_app FROM device_enrollment_login;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM device_enrollment_login;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_enrollment_login;
@@ -158,7 +158,7 @@ CREATE ROLE device_admin_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB 
 EOSQL
 fi
 
-psql_base <<'EOSQL'
+psql_base -v db_name="$DB_NAME" <<'EOSQL'
 REVOKE sync_app FROM device_admin_login;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM device_admin_login;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_admin_login;
