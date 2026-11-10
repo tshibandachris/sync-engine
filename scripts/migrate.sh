@@ -94,6 +94,9 @@ fi
 
 psql_base <<'EOSQL'
 REVOKE sync_app FROM device_enrollment_login;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM device_enrollment_login;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_enrollment_login;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM device_enrollment_login;
 GRANT device_enrollment_executor TO device_enrollment_login;
 GRANT CONNECT ON DATABASE sync_engine TO device_enrollment_login;
 EOSQL
@@ -107,6 +110,14 @@ separation_ok=$(psql_base -tA -c "
        'device_enrollment_login',
        'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)',
        'EXECUTE'
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_auth_members AS membership
+         JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+         JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+        WHERE member_role.rolname = 'device_enrollment_login'
+          AND granted_role.rolname <> 'device_enrollment_executor'
      )
      AND NOT pg_catalog.has_function_privilege(
        'sync_app',
