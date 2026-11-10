@@ -34,7 +34,8 @@ let deviceCredential = null;
 let deviceCredentialError = null;
 let deviceStatusService = null;
 let serverHasActiveCredential = false;
-// ES256 request signing is intentionally not enabled in this PR yet.
+// True only when DeviceCredentialStore has verified the local P-256 key pair and thumbprint.
+// Server approval and active credential are checked independently before any sync request.
 let deviceProofReady = false;
 let agentAuthState = 'unauthenticated';
 let deviceTrustState = 'unregistered';
