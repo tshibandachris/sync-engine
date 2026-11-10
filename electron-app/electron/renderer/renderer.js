@@ -21,12 +21,15 @@ function renderStatus(value) {
   else if (status.state === 'syncing') dot.classList.add('syncing');
   else if (status.state === 'pending') dot.classList.add('pending');
 
-  const label = status.state === 'syncing' ? 'Synchronisation…'
+  const label = status.syncState === 'blocked_revoked' ? 'Terminal révoqué · local uniquement'
+    : status.syncState === 'blocked_unapproved' ? 'Approbation requise · local uniquement'
+    : status.syncState === 'blocked_unregistered' ? 'Terminal non enregistré · local uniquement'
+    : status.state === 'syncing' ? 'Synchronisation…'
     : status.state === 'synced' ? 'Synchronisé'
     : status.state === 'pending' ? 'En attente / hors ligne' : 'Initialisation…';
   $('sync-label').textContent = label;
   $('sync-pill')?.setAttribute('title', status.message || label);
-  $('sync-button').disabled = status.state === 'syncing';
+  $('sync-button').disabled = status.state === 'syncing' || status.canRunSync === false;
   $('sync-button').textContent = status.state === 'syncing' ? 'Synchronisation…' : '↻ Synchroniser';
   $('metric-pending').textContent = String(status.outboxPending ?? 0);
   $('queue-detail').textContent = `${status.outboxPending ?? 0} opération(s) en attente ; ${status.outboxFailed ?? 0} en erreur.`;
@@ -174,15 +177,16 @@ async function saveProduct(event) {
 
 function renderAuthState(status) {
   const authState = status?.authState || 'storage-error';
-  $('app-shell').hidden = authState !== 'ready';
+  const localAccess = status?.canOperateLocally === true || authState === 'ready';
+  $('app-shell').hidden = !localAccess;
   $('enrollment-screen').hidden = authState !== 'enrollment-required';
-  $('storage-error-screen').hidden = authState !== 'storage-error';
-  if (authState === 'ready') initializeDashboard();
+  $('storage-error-screen').hidden = authState === 'storage-error' && !localAccess;
+  if (localAccess) initializeDashboard();
 }
 
 function handleStatus(status) {
   renderAuthState(status);
-  if (status?.authState === 'ready') renderStatus(status);
+  if (status?.authState === 'ready' || status?.canOperateLocally === true) renderStatus(status);
 }
 
 function initializeDashboard() {
@@ -227,7 +231,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (!result?.success) throw new Error(result?.error || 'Enrôlement impossible.');
       $('device-token').value = '';
       feedback.className = 'feedback success';
-      feedback.textContent = 'Jeton chiffré et vérifié. Ouverture du tableau de bord…';
+      feedback.textContent = 'Session agent chiffrée et vérifiée. La caisse locale est disponible ; la synchronisation attendra l’approbation du terminal.';
       handleStatus(await window.eden.getStatus());
     } catch (error) {
       feedback.className = 'feedback error';
