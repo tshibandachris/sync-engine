@@ -99,11 +99,56 @@ function createDeviceProof({ privateKeyPem, token, method, url, nowMs = Date.now
   return signingInput + '.' + signature.toString('base64url');
 }
 
+
+function createInitialEnrollmentProof({
+  privateKeyPem,
+  activationCode,
+  fingerprint,
+  nowMs = Date.now(),
+  jti = crypto.randomUUID(),
+}) {
+  if (typeof activationCode !== 'string' || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(activationCode)) {
+    throw new TypeError('A normalized activation code is required.');
+  }
+  if (typeof fingerprint !== 'string' || !fingerprint.trim() || fingerprint.length > 255) {
+    throw new TypeError('A valid device fingerprint is required.');
+  }
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new TypeError('nowMs must be a non-negative safe integer.');
+  }
+  if (typeof jti !== 'string' || !UUID_RE.test(jti)) {
+    throw new TypeError('jti must be a UUID.');
+  }
+  assertPem(privateKeyPem, 'Private key', 'BEGIN PRIVATE KEY');
+
+  const header = { alg: 'ES256', typ: 'dpop+jwt' };
+  const payload = {
+    jti,
+    htm: 'POST',
+    htu: '/api/v1/devices/enroll',
+    iat: Math.floor(nowMs / 1000),
+    code_hash: crypto.createHash('sha256').update(activationCode, 'utf8').digest('base64url'),
+    fingerprint: fingerprint.trim(),
+  };
+  const headerB64 = Buffer.from(JSON.stringify(header), 'utf8').toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const signingInput = headerB64 + '.' + payloadB64;
+  const signature = crypto.sign('sha256', Buffer.from(signingInput, 'ascii'), {
+    key: privateKeyPem,
+    dsaEncoding: 'ieee-p1363',
+  });
+  if (signature.length !== SIGNATURE_LENGTH) {
+    throw new Error('Initial ES256 proof must use a 64-byte IEEE P1363 signature.');
+  }
+  return signingInput + '.' + signature.toString('base64url');
+}
+
 module.exports = {
   SIGNATURE_LENGTH,
   assertKeyPair,
   calculateJwkThumbprint,
   createDeviceProof,
+  createInitialEnrollmentProof,
   exportPublicJwk,
   generateDeviceKeyPair,
 };
