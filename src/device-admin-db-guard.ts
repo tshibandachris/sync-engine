@@ -23,6 +23,7 @@ export async function assertDeviceAdminDatabaseIdentity(pool: Pool): Promise<voi
     has_direct_table_privileges: boolean;
     sync_app_can_execute: boolean;
     function_owner_is_safe: boolean;
+    function_owner_can_create_schema: boolean;
     function_owner_has_memberships: boolean;
     function_owner_owns_protected_tables: boolean;
   }>(`
@@ -86,6 +87,10 @@ export async function assertDeviceAdminDatabaseIdentity(pool: Pool): Promise<voi
         JOIN pg_catalog.pg_roles AS r ON r.oid = p.proowner
         WHERE p.oid = $1::regprocedure
       ), false) AS function_owner_is_safe,
+      COALESCE((
+        SELECT pg_catalog.has_schema_privilege(pg_catalog.pg_get_userbyid(p.proowner), 'public', 'CREATE')
+          FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure
+      ), true) AS function_owner_can_create_schema,
       EXISTS (
         SELECT 1 FROM pg_catalog.pg_auth_members AS membership
         JOIN pg_catalog.pg_proc AS p ON p.oid = $1::regprocedure
@@ -108,7 +113,7 @@ export async function assertDeviceAdminDatabaseIdentity(pool: Pool): Promise<voi
       identity.can_set_executor_role || identity.has_unexpected_memberships ||
       identity.owns_database_objects || !identity.can_execute_approval ||
       identity.can_execute_enrollment || identity.has_direct_table_privileges || identity.sync_app_can_execute ||
-      !identity.function_owner_is_safe || identity.function_owner_has_memberships ||
+      !identity.function_owner_is_safe || identity.function_owner_can_create_schema || identity.function_owner_has_memberships ||
       identity.function_owner_owns_protected_tables) {
     throw new Error(
       'BOOTSTRAP_SECURITY_ERROR: DEVICE_ADMIN_DATABASE_URL must use a non-privileged INHERIT login, not a member of sync_app, inheriting device_admin_executor without SET ROLE, with EXECUTE only on the isolated device approval function.',
