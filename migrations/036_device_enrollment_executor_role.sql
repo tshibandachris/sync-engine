@@ -33,6 +33,59 @@ $migration$;
 
 GRANT USAGE ON SCHEMA public TO device_enrollment_executor;
 
+DO $owner_role$
+DECLARE
+  v_role pg_catalog.pg_roles%ROWTYPE;
+BEGIN
+  SELECT * INTO v_role
+    FROM pg_catalog.pg_roles
+   WHERE rolname = 'device_enrollment_function_owner';
+
+  IF NOT FOUND THEN
+    BEGIN
+      CREATE ROLE device_enrollment_function_owner
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+    EXCEPTION
+      WHEN insufficient_privilege THEN
+        RAISE EXCEPTION
+          'MIGRATION_FAILED: pre-provision device_enrollment_function_owner as NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOINHERIT, NOREPLICATION, NOBYPASSRLS, then rerun migration 036.';
+    END;
+  ELSE
+    IF v_role.rolcanlogin OR v_role.rolsuper OR v_role.rolcreatedb
+       OR v_role.rolcreaterole OR v_role.rolinherit OR v_role.rolreplication
+       OR v_role.rolbypassrls THEN
+      RAISE EXCEPTION
+        'MIGRATION_FAILED: device_enrollment_function_owner has unsafe attributes.';
+    END IF;
+  END IF;
+END
+$owner_role$;
+
+GRANT USAGE, CREATE ON SCHEMA public TO device_enrollment_function_owner;
+
+-- The SECURITY DEFINER owner is deliberately distinct from the executor
+-- capability inherited by the API login. It receives only the table rights
+-- required by the atomic function; FORCE RLS remains effective because this
+-- role is neither a superuser nor BYPASSRLS and does not own the protected
+-- tenant tables.
+GRANT SELECT, UPDATE ON TABLE public.device_pairing_codes TO device_enrollment_function_owner;
+GRANT SELECT, INSERT ON TABLE public.tenants TO device_enrollment_function_owner;
+GRANT SELECT, INSERT ON TABLE public.devices TO device_enrollment_function_owner;
+GRANT SELECT, INSERT ON TABLE public.device_credentials TO device_enrollment_function_owner;
+GRANT INSERT ON TABLE public.device_approval_events TO device_enrollment_function_owner;
+GRANT INSERT ON TABLE public.device_proof_nonces TO device_enrollment_function_owner;
+GRANT SELECT, INSERT ON TABLE public.device_enrollment_attempts TO device_enrollment_function_owner;
+
+ALTER FUNCTION public.redeem_device_pairing_code(text)
+  OWNER TO device_enrollment_function_owner;
+ALTER FUNCTION public.register_device_enrollment(
+  uuid, uuid, uuid, uuid, varchar, varchar, jsonb
+) OWNER TO device_enrollment_function_owner;
+ALTER FUNCTION public.register_device_enrollment_with_credential(
+  text, uuid, varchar, varchar, jsonb, text, varchar, uuid
+) OWNER TO device_enrollment_function_owner;
+
+
 -- Remove the legacy direct-write and helper-function paths from the general app role.
 -- Enrollment now enters only through the dedicated executor capability.
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.devices FROM sync_app;
@@ -55,6 +108,34 @@ GRANT EXECUTE ON FUNCTION public.register_device_enrollment_with_credential(
 DO $verification$
 BEGIN
 
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+     WHERE rolname = 'device_enrollment_function_owner'
+       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole
+            OR rolinherit OR rolreplication OR rolbypassrls)
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: function owner role must be non-login, non-superuser, NOINHERIT and must not bypass RLS';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_auth_members
+     WHERE member = 'device_enrollment_function_owner'::regrole
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: function owner role must not inherit any other role';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc AS p
+     WHERE p.oid IN (
+       'public.redeem_device_pairing_code(text)'::regprocedure,
+       'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)'::regprocedure,
+       'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)'::regprocedure
+     )
+       AND pg_catalog.pg_get_userbyid(p.proowner) <> 'device_enrollment_function_owner'
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: every enrollment SECURITY DEFINER function must be owned by device_enrollment_function_owner';
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1
       FROM pg_catalog.pg_proc AS enrollment
@@ -68,6 +149,7 @@ BEGIN
        AND device_creation.prosecdef
        AND enrollment.proowner = redemption.proowner
        AND enrollment.proowner = device_creation.proowner
+       AND NOT (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = pg_catalog.pg_get_userbyid(enrollment.proowner))
        AND pg_catalog.has_function_privilege(
          pg_catalog.pg_get_userbyid(enrollment.proowner),
          redemption.oid,
