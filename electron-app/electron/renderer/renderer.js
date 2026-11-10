@@ -26,7 +26,7 @@ function renderStatus(value) {
     : status.state === 'pending' ? 'En attente / hors ligne' : 'Initialisation…';
   $('sync-label').textContent = label;
   $('sync-pill')?.setAttribute('title', status.message || label);
-  $('sync-button').disabled = status.state === 'syncing';
+  $('sync-button').disabled = status.state === 'syncing' || status.authState !== 'ready';
   $('sync-button').textContent = status.state === 'syncing' ? 'Synchronisation…' : '↻ Synchroniser';
   $('metric-pending').textContent = String(status.outboxPending ?? 0);
   $('queue-detail').textContent = `${status.outboxPending ?? 0} opération(s) en attente ; ${status.outboxFailed ?? 0} en erreur.`;
@@ -174,23 +174,24 @@ async function saveProduct(event) {
 
 function renderAuthState(status) {
   const authState = status?.authState || 'storage-error';
-  $('app-shell').hidden = authState !== 'ready';
+  // The local workspace remains accessible regardless of network or approval state.
+  $('app-shell').hidden = authState === 'checking';
   $('enrollment-screen').hidden = authState !== 'enrollment-required';
   $('approval-screen').hidden = authState !== 'awaiting-approval';
   $('storage-error-screen').hidden = !['storage-error', 'device-blocked'].includes(authState);
   if (authState === 'awaiting-approval') {
     $('approval-message').textContent = status?.authMessage || 'Le terminal attend la validation de votre administrateur.';
   }
-  if (authState === 'device-blocked') {
-    $('storage-error-title').textContent = 'Terminal non autorisé';
-    $('storage-error-message').textContent = status?.authMessage || 'La synchronisation de ce terminal est bloquée.';
+  if (authState === 'device-blocked' || authState === 'storage-error') {
+    $('storage-error-title').textContent = authState === 'device-blocked' ? 'Terminal non autorisé' : 'Stockage sécurisé indisponible';
+    $('storage-error-message').textContent = status?.authMessage || 'La synchronisation est bloquée. Les opérations locales restent disponibles.';
   }
-  if (authState === 'ready') initializeDashboard();
+  if (authState !== 'checking') initializeDashboard();
 }
 
 function handleStatus(status) {
   renderAuthState(status);
-  if (status?.authState === 'ready') renderStatus(status);
+  renderStatus(status);
 }
 
 function initializeDashboard() {
