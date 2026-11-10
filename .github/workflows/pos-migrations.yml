@@ -2,7 +2,7 @@ name: POS migration smoke test
 
 on:
   push:
-    branches: [feature/pos-domain-schema, feat/device-enrollment-db-isolation-clean]
+    branches: [feature/pos-domain-schema, feat/device-enrollment-db-isolation-clean, feat/device-proof-pos-routes]
   pull_request:
     branches: [main]
   workflow_dispatch:
