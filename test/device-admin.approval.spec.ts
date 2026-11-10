@@ -44,9 +44,9 @@ describe('Device administration approval workflow', () => {
       `INSERT INTO public.devices
         (id, tenant_id, store_id, name, fingerprint, hardware_info, is_active,
          approval_status, approved_at, approved_by)
-       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, true, $6,
-         CASE WHEN $6 = 'approved' THEN now() ELSE NULL END,
-         CASE WHEN $6 = 'approved' THEN $7::uuid ELSE NULL END)`,
+       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, true, $6::varchar(24),
+         CASE WHEN $6::varchar(24) = 'approved' THEN now() ELSE NULL END,
+         CASE WHEN $6::varchar(24) = 'approved' THEN $7::uuid ELSE NULL END)`,
       [id, tenantId, crypto.randomUUID(), 'Admin test device ' + id, 'admin-' + id, status, actorA],
     );
     if (withCredential) {
