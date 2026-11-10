@@ -12,7 +12,7 @@ La migration ne crée jamais de compte LOGIN et ne stocke aucun secret.
 
 Dans le déploiement Docker Compose fourni, `scripts/migrate.sh` applique les migrations en attente via `schema_migrations`, puis crée ou fait tourner le login `device_enrollment_login` à partir du secret `DEVICE_ENROLLMENT_PASSWORD`. Il révoque toute appartenance à `sync_app`, lui accorde `device_enrollment_executor`, et vérifie les privilèges effectifs avant de terminer. `docker-compose.prod.yml` construit ensuite `DEVICE_ENROLLMENT_DATABASE_URL` à partir de ce même secret.
 
-Pour un cluster géré ou un déploiement où le compte de migration n'a pas `CREATEROLE`, le DBA doit pré-provisionner le rôle-capacité et le login dédiés dans le gestionnaire de secrets :
+Pour un cluster géré ou un déploiement où le compte de migration n'a pas `CREATEROLE`, le DBA doit pré-provisionner le rôle-capacité et le login dédiés :
 
 ```sql
 CREATE ROLE device_enrollment_login
@@ -24,11 +24,14 @@ GRANT device_enrollment_executor TO device_enrollment_login;
 
 Ne jamais accorder `sync_app` à `device_enrollment_login`, ni accorder `device_enrollment_executor` au compte de synchronisation. Le compte dédié ne doit pas être propriétaire des tables ou de la fonction, ni superutilisateur.
 
+Pour le mode Docker Compose local, copier `.env.example` vers `.env`, remplacer les trois secrets et conserver le hostname `db` dans les deux URLs (le hostname `localhost` ne fonctionne pas depuis le conteneur API). Le job `migrate` crée les deux logins ; le service API ne démarre qu'après son succès.
+
 Configurer les secrets de l'application :
 
-- `DEVICE_ENROLLMENT_PASSWORD` : secret aléatoire fort utilisé par le job de migration pour créer/faire tourner le login dédié (Compose) ;
-
-- `DATABASE_URL` : connexion applicative habituelle ;
+- `POSTGRES_PASSWORD` : mot de passe PostgreSQL utilisé par le service DB ;
+- `SYNC_APP_PASSWORD` : mot de passe du login applicatif `sync_app` ;
+- `DEVICE_ENROLLMENT_PASSWORD` : secret aléatoire fort utilisé par le job de migration pour créer/faire tourner le login dédié ;
+- `DATABASE_URL` : connexion applicative habituelle, avec le même mot de passe que `SYNC_APP_PASSWORD` ;
 - `DEVICE_ENROLLMENT_DATABASE_URL` : connexion du compte `device_enrollment_login`.
 
 Au démarrage, le backend vérifie l'identité réelle de la seconde connexion : `session_user`, absence de superuser, absence d'appartenance à `sync_app`, appartenance effective à `device_enrollment_executor` et privilège `EXECUTE` sur la signature exacte de la fonction. Une configuration invalide arrête le démarrage (fail closed).
@@ -37,7 +40,7 @@ Au démarrage, le backend vérifie l'identité réelle de la seconde connexion :
 
 Le script de déploiement ne se contente plus de tester la présence de `check_ins` : il suit chaque fichier dans `schema_migrations` et applique uniquement les migrations absentes. Pour une ancienne base sans ledger, il vérifie le jalon historique pré-031 (tables `devices` et `device_pairing_codes`, sans `device_credentials`) avant de marquer 001–030 comme déjà appliquées. Si cette empreinte ne correspond pas, il s'arrête plutôt que de deviner l'état du schéma.
 
-Si le compte de migration n'a pas `CREATEROLE`, un DBA doit pré-provisionner `device_enrollment_executor` avec exactement les attributs ci-dessus avant d'exécuter la migration 036. Le login dédié doit aussi être créé et associé à ce rôle. La migration valide les attributs et échoue explicitement si le rôle-capacité existant est plus permissif.
+Si le compte de migration n'a pas `CREATEROLE`, un DBA doit pré-provisionner `device_enrollment_executor` avec exactement les attributs ci-dessus avant d'exécuter la migration 036, puis créer le login dédié, lui accorder l'appartenance au rôle et le connecter à `DEVICE_ENROLLMENT_DATABASE_URL`. La migration valide les attributs et échoue explicitement si le rôle-capacité existant est plus permissif.
 
 ## Frontière de confiance
 
