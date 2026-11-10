@@ -171,6 +171,8 @@ $function$;
 ALTER FUNCTION public.transition_device_approval(uuid, uuid, uuid, text, varchar)
   OWNER TO device_admin_function_owner;
 
+REVOKE CREATE ON SCHEMA public FROM device_admin_function_owner;
+
 REVOKE ALL ON FUNCTION public.transition_device_approval(uuid, uuid, uuid, text, varchar)
   FROM PUBLIC, sync_app;
 GRANT EXECUTE ON FUNCTION public.transition_device_approval(uuid, uuid, uuid, text, varchar)
@@ -199,7 +201,7 @@ BEGIN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: device admin executor privilege boundary is invalid';
   END IF;
 
-  IF EXISTS (
+  IF pg_catalog.has_schema_privilege('device_admin_function_owner', 'public', 'CREATE') OR EXISTS (
     SELECT 1 FROM pg_catalog.pg_class AS c
      WHERE c.relowner = 'device_admin_function_owner'::regrole
        AND c.relname IN ('devices', 'device_credentials', 'device_approval_events')
