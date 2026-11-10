@@ -58,7 +58,7 @@ export class DeviceEnrollmentService {
       throw new UnauthorizedException({ code: 'FINGERPRINT_MISMATCH', message: 'Body fingerprint must match X-Device-Fingerprint.' });
     }
 
-    let publicKey;
+    let publicKey: ReturnType<typeof createPublicKey>;
     try {
       publicKey = createPublicKey(dto.publicKeyPem);
       const jwk = publicKey.export({ format: 'jwk' });
