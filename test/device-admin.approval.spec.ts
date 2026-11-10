@@ -144,6 +144,22 @@ describe('Device administration approval workflow', () => {
     });
   });
 
+  it('rejects a duplicate approval without appending a second decision', async () => {
+    const auth = await token(tenantA, actorA, ['devices:approve']);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/admin/devices/' + pendingA + '/approve')
+      .set('Authorization', 'Bearer ' + auth);
+    expect(response.status).toBe(409);
+
+    const events = await pg.pool.query(
+      `SELECT count(*)::int AS count
+         FROM public.device_approval_events
+        WHERE tenant_id = $1 AND device_id = $2 AND event_type = 'approved'`,
+      [tenantA, pendingA],
+    );
+    expect(events.rows[0].count).toBe(1);
+  });
+
   it('rejects only pending devices and requires an audit reason', async () => {
     const auth = await token(tenantA, actorA, ['devices:reject']);
     const missingReason = await request(app.getHttpServer())
