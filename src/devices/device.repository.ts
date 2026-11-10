@@ -10,7 +10,7 @@ export interface DeviceWithCredential {
   approvalStatus: 'pending_approval' | 'approved' | 'rejected' | 'revoked';
   isActive: boolean;
   publicKeyPem: string | null;
-  credentialStatus: 'active' | null;
+  credentialStatus: 'active' | 'revoked' | null;
   algorithm: 'ES256' | null;
 }
 
@@ -46,10 +46,14 @@ export class DeviceRepository {
           c.status AS "credentialStatus",
           c.algorithm AS "algorithm"
         FROM public.devices d
-        LEFT JOIN public.device_credentials c
-          ON c.tenant_id = d.tenant_id
-         AND c.device_id = d.id
-         AND c.status = 'active'
+        LEFT JOIN LATERAL (
+          SELECT c.public_key_pem, c.status, c.algorithm
+          FROM public.device_credentials c
+          WHERE c.tenant_id = d.tenant_id
+            AND c.device_id = d.id
+          ORDER BY c.created_at DESC, c.id DESC
+          LIMIT 1
+        ) c ON true
         WHERE d.tenant_id = ${tenantId}::uuid
           AND d.id = ${deviceId}::uuid
         LIMIT 1
