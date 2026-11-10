@@ -196,7 +196,7 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     });
   });
 
-  it('keeps sync_app unable to write credentials, approval events or device rows directly', async () => {
+  it('keeps sync_app unable to write credentials/events or set an approval decision directly', async () => {
     const privileges = await pg.pool.query(`
       SELECT
         has_table_privilege('sync_app', 'public.device_credentials', 'INSERT') AS credential_insert,
@@ -206,10 +206,22 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     expect(privileges.rows[0]).toEqual({
       credential_insert: false,
       event_insert: false,
-      device_insert: false,
+      device_insert: true,
     });
   });
 
+
+
+  it('allows sync_app to create only a pending device, never an approved device', async () => {
+    const approvedAttempt = await pg.appPool.query(
+      `INSERT INTO public.devices (
+        id, tenant_id, store_id, name, fingerprint, hardware_info,
+        approval_status, approved_at, approved_by
+      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'approved', now(), $7)`,
+      [randomUUID(), tenantId, storeId, 'Forged approval', 'forged-approved-fingerprint', JSON.stringify({}), randomUUID()],
+    ).catch((error: { code?: string }) => error);
+    expect(approvedAttempt).toMatchObject({ code: '42501' });
+  });
 
   it('applies migration 036 with a pre-provisioned executor and a migration role without CREATEROLE', async () => {
     const client = await pg.pool.connect();
