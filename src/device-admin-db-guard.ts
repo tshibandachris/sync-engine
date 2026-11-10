@@ -19,6 +19,7 @@ export async function assertDeviceAdminDatabaseIdentity(pool: Pool): Promise<voi
     has_unexpected_memberships: boolean;
     owns_database_objects: boolean;
     can_execute_approval: boolean;
+    can_execute_enrollment: boolean;
     has_direct_table_privileges: boolean;
     sync_app_can_execute: boolean;
     function_owner_is_safe: boolean;
@@ -62,6 +63,7 @@ export async function assertDeviceAdminDatabaseIdentity(pool: Pool): Promise<voi
          WHERE d.datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = session_user)
       ) AS owns_database_objects,
       pg_catalog.has_function_privilege(session_user, $1, 'EXECUTE') AS can_execute_approval,
+      pg_catalog.has_function_privilege(session_user, 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)', 'EXECUTE') AS can_execute_enrollment,
       pg_catalog.has_table_privilege(session_user, 'public.devices', 'SELECT')
         OR pg_catalog.has_table_privilege(session_user, 'public.devices', 'INSERT')
         OR pg_catalog.has_table_privilege(session_user, 'public.devices', 'UPDATE')
@@ -105,7 +107,7 @@ export async function assertDeviceAdminDatabaseIdentity(pool: Pool): Promise<voi
       identity.is_sync_app_member || !identity.has_executor_membership ||
       identity.can_set_executor_role || identity.has_unexpected_memberships ||
       identity.owns_database_objects || !identity.can_execute_approval ||
-      identity.has_direct_table_privileges || identity.sync_app_can_execute ||
+      identity.can_execute_enrollment || identity.has_direct_table_privileges || identity.sync_app_can_execute ||
       !identity.function_owner_is_safe || identity.function_owner_has_memberships ||
       identity.function_owner_owns_protected_tables) {
     throw new Error(
