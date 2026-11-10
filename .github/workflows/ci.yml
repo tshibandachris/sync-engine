@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'feat/electron-device-proof-client']
+    branches: [main, 'feat/electron-device-proof-client', 'feat/electron-signed-sync-proof']
   pull_request:
     branches: [main, 'feat/electron-device-proof']
 
