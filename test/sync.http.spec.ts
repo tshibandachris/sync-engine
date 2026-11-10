@@ -117,6 +117,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/pull')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({});
     expect(res.status).toBe(401);
     expect(res.body.code).toBe('DEVICE_IDENTITY_MISSING');
@@ -182,6 +183,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({
         changes: {
           check_ins: {
@@ -202,6 +204,7 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
@@ -209,6 +212,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     expect(res.status).toBe(201);
@@ -221,17 +225,20 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const res = await request(app.getHttpServer())
       .get('/sync/conflicts?status=pending')
-      .set('Authorization', 'Bearer ' + tokenA);
+      .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA);
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
@@ -243,12 +250,14 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     const pushed = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const conflictId = pushed.body.conflicts[0].conflict_id;
@@ -256,6 +265,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/conflicts/' + conflictId + '/resolve')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ resolution: 'server', resolved_by: agentA });
 
     expect(res.status).toBe(201);
@@ -283,6 +293,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenB)
+      .set('X-Device-Id', deviceB)
       .send({
         changes: {
           check_ins: {
@@ -299,12 +310,14 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     const pushed = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const conflictId = pushed.body.conflicts[0].conflict_id;
@@ -313,6 +326,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/conflicts/' + conflictId + '/resolve')
       .set('Authorization', 'Bearer ' + tokenB)
+      .set('X-Device-Id', deviceB)
       .send({ resolution: 'server', resolved_by: agentA });
 
     // Under RLS, another tenant's conflict is invisible to the query, so the
@@ -326,18 +340,21 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const tokenB = signAgentToken(agentA, jwt, tenantB);
     const res = await request(app.getHttpServer())
       .get('/sync/conflicts?status=pending')
-      .set('Authorization', 'Bearer ' + tokenB);
+      .set('Authorization', 'Bearer ' + tokenB)
+      .set('X-Device-Id', deviceB);
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(0);
