@@ -55,7 +55,7 @@ test('device enrollment IPC accepts only activation code and bounded device name
     activationCode: 'ABCD-1234',
     deviceName: 'Caisse principale',
   });
-  assert.throws(() => validateDeviceEnrollmentInput({ activationCode: 'bad', deviceName: 'Caisse' }), /Code d'activation/);
+  assert.throws(() => validateDeviceEnrollmentInput({ activationCode: 'bad', deviceName: 'Caisse' }), /code d'activation/i);
   assert.throws(() => validateDeviceEnrollmentInput({
     activationCode: 'ABCD-1234', deviceName: 'x'.repeat(121),
   }), /nom du terminal/);
