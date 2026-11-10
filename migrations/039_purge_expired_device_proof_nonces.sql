@@ -17,7 +17,7 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
   v_deleted INTEGER := 0;
-  v_previous_tenant TEXT;
+  v_current_tenant UUID;
 BEGIN
   IF p_tenant_id IS NULL THEN
     RAISE EXCEPTION 'tenant id is required';
@@ -26,8 +26,10 @@ BEGIN
     RAISE EXCEPTION 'batch size must be between 1 and 10000';
   END IF;
 
-  v_previous_tenant := current_setting('app.current_tenant_id', true);
-  PERFORM set_config('app.current_tenant_id', p_tenant_id::text, true);
+  v_current_tenant := NULLIF(current_setting('app.current_tenant_id', true), '')::uuid;
+  IF v_current_tenant IS DISTINCT FROM p_tenant_id THEN
+    RAISE EXCEPTION 'tenant context does not match nonce purge tenant' USING ERRCODE = '42501';
+  END IF;
 
   WITH expired AS (
     SELECT ctid
@@ -43,7 +45,6 @@ BEGIN
   WHERE nonce.ctid = expired.ctid;
 
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
-  PERFORM set_config('app.current_tenant_id', COALESCE(v_previous_tenant, ''), true);
   RETURN v_deleted;
 END;
 $$;
