@@ -16,6 +16,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
     is_sync_app_member: boolean;
     has_executor_membership: boolean;
     can_execute_enrollment: boolean;
+    is_function_owner: boolean;
   }>(`
     SELECT
       session_user,
@@ -30,14 +31,16 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
            ELSE pg_catalog.pg_has_role(session_user, 'sync_app', 'MEMBER') END AS is_sync_app_member,
       CASE WHEN pg_catalog.to_regrole('device_enrollment_executor') IS NULL THEN false
            ELSE pg_catalog.pg_has_role(session_user, 'device_enrollment_executor', 'USAGE') END AS has_executor_membership,
-      pg_catalog.has_function_privilege(session_user, $1, 'EXECUTE') AS can_execute_enrollment
+      pg_catalog.has_function_privilege(session_user, $1, 'EXECUTE') AS can_execute_enrollment,
+      COALESCE((SELECT pg_catalog.pg_get_userbyid(p.proowner) = session_user
+                  FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure), true) AS is_function_owner
   `, [ENROLLMENT_FUNCTION]);
   const identity = result.rows[0];
   if (!identity || identity.is_superuser || identity.can_bypass_rls ||
       identity.can_create_db || identity.can_create_role || identity.can_replicate ||
       !identity.can_inherit || identity.session_user !== identity.current_user ||
       identity.is_sync_app_member || !identity.has_executor_membership ||
-      !identity.can_execute_enrollment) {
+      !identity.can_execute_enrollment || identity.is_function_owner) {
     throw new Error(
       'BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL must use a non-privileged INHERIT login, not a member of sync_app, inheriting device_enrollment_executor, with EXECUTE on the exact enrollment function.',
     );
