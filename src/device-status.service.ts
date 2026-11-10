@@ -21,9 +21,10 @@ export class DeviceStatusService {
 
   async getStatus(tenantId: string, deviceId: string) {
     const rows = await this.db.transaction(async (tx) => {
-      // The status endpoint deliberately does not use DeviceApprovalGuard:
-      // pending/rejected devices must be able to discover their server state.
-      // JWT tenant identity remains mandatory and PostgreSQL RLS is still active.
+      // The controller bypasses DeviceApprovalGuard so a terminal can learn
+      // pending/rejected/revoked/deactivated state. DeviceProofGuard still
+      // verifies possession of that terminal's latest key before this query.
+      // JWT tenant identity and PostgreSQL RLS remain mandatory.
       await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`);
       const result = await tx.execute(sql`
         SELECT
