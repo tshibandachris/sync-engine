@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { UnauthorizedException, type INestApplication } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
@@ -45,7 +46,13 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
       // does not prevent Nest from trying to instantiate its JwtService dependency.
       .overrideGuard(JwtAuthGuard)
       .useValue({
-        canActivate: () => {
+        canActivate: (context: any) => {
+          const req = context.switchToHttp().getRequest();
+          if (req.path === '/api/v1/devices/enroll') {
+            req.tenantId = 'd2d0d6c2-84a2-4a83-9f70-1c4a99f2b7a1';
+            req.agentId = 'a2d0d6c2-84a2-4a83-9f70-1c4a99f2b7a1';
+            return true;
+          }
           throw new UnauthorizedException('Authorization required for POS sync.');
         },
       })
@@ -64,7 +71,11 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
   });
 
   const payload = {
+    deviceId: randomUUID(),
     activationCode: 'ABCD-1234',
+    fingerprint: 'fingerprint-1',
+    publicKeyPem: '-----BEGIN PUBLIC KEY-----\\nTEST\\n-----END PUBLIC KEY-----',
+    initialProof: 'header.payload.signature',
     deviceName: 'Caisse test',
     hardwareInfo: {
       hostname: 'pos-test',
@@ -79,6 +90,7 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
 
     const first = await request(server)
       .post('/api/v1/devices/enroll')
+      .set('Authorization', 'Bearer test.jwt.token')
       .set('X-Device-Fingerprint', 'fingerprint-1')
       .send(payload);
     expect(first.status).toBe(201);
@@ -87,14 +99,16 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
     for (let attempt = 2; attempt <= 5; attempt += 1) {
       const response = await request(server)
         .post('/api/v1/devices/enroll')
-        .set('X-Device-Fingerprint', `fingerprint-${attempt}`)
+        .set('Authorization', 'Bearer test.jwt.token')
+        .set('X-Device-Fingerprint', 'fingerprint-1')
         .send(payload);
       expect(response.status).toBe(201);
     }
 
     const sixth = await request(server)
       .post('/api/v1/devices/enroll')
-      .set('X-Device-Fingerprint', 'fingerprint-6')
+      .set('Authorization', 'Bearer test.jwt.token')
+      .set('X-Device-Fingerprint', 'fingerprint-1')
       .send(payload);
     expect(sixth.status).toBe(429);
     expect(enrollmentService.enrollDevice).toHaveBeenCalledTimes(5);
