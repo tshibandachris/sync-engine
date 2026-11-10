@@ -34,6 +34,15 @@ function renderStatus(value) {
   const enrollmentPanel = $('device-enrollment-panel');
   if (enrollmentPanel) {
     enrollmentPanel.hidden = Boolean(status.deviceId) || status.agentAuthState !== 'authenticated';
+    const enrollmentFeedback = $('device-enrollment-feedback');
+    if (status.enrollmentAttemptError) {
+      enrollmentFeedback.textContent = 'Une tentative d’enrôlement chiffrée ne peut pas être lue. Le stockage sécurisé doit être réparé avant toute nouvelle activation.';
+      enrollmentFeedback.className = 'feedback error';
+      $('register-device-button').disabled = true;
+    } else if (status.pendingEnrollment && !enrollmentFeedback.textContent) {
+      enrollmentFeedback.textContent = 'Une tentative précédente est conservée de manière chiffrée. Réutilisez le même code d’activation pour reprendre exactement la même preuve.';
+      enrollmentFeedback.className = 'feedback';
+    }
   }
   $('sync-pill')?.setAttribute('title', status.message || label);
   $('sync-button').disabled = status.state === 'syncing' || status.canRunSync === false;
