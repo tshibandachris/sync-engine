@@ -124,6 +124,10 @@ separation_ok=$(psql_base -tA -c "
         WHERE n.nspowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'device_enrollment_login')
      )
      AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_database AS d
+        WHERE d.datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'device_enrollment_login')
+     )
+     AND NOT EXISTS (
        SELECT 1 FROM pg_catalog.pg_auth_members AS membership
          JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
          JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
