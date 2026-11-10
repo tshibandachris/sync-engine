@@ -33,6 +33,15 @@ $migration$;
 
 GRANT USAGE ON SCHEMA public TO device_enrollment_executor;
 
+-- Remove the legacy direct-write and helper-function paths from the general app role.
+-- Enrollment now enters only through the dedicated executor capability.
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.devices FROM sync_app;
+REVOKE ALL ON TABLE public.device_pairing_codes FROM PUBLIC, sync_app;
+REVOKE ALL ON FUNCTION public.redeem_device_pairing_code(text) FROM PUBLIC, sync_app;
+REVOKE ALL ON FUNCTION public.register_device_enrollment(
+  uuid, uuid, uuid, uuid, varchar, varchar, jsonb
+) FROM PUBLIC, sync_app;
+
 -- Exact signature from migration 035_device_enrollment_with_credential.sql.
 REVOKE ALL ON FUNCTION public.register_device_enrollment_with_credential(
   text, uuid, varchar, varchar, jsonb, text, varchar, uuid
