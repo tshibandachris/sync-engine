@@ -61,9 +61,9 @@ describe('HTTP device proof verification', () => {
     return `${signingInput}.${signature.toString('base64url')}`;
   }
 
-  async function callSync(deviceId: string, proof?: string) {
+  async function callSync(deviceId: string, proof?: string, query = '') {
     let call = request(app.getHttpServer())
-      .post('/sync/pull')
+      .post('/sync/pull' + query)
       .set('Authorization', `Bearer ${token}`)
       .set('X-Device-Id', deviceId);
     if (proof) call = call.set('X-Device-Proof', proof);
@@ -227,6 +227,11 @@ describe('HTTP device proof verification', () => {
     );
     expect(response.status).toBe(401);
     expect(response.body.code).toBe('PROOF_EXPIRED');
+  });
+
+  it('binds htu to the path while excluding query parameters', async () => {
+    const response = await callSync(approvedDeviceId, buildProof(), '?limit=10');
+    expect(response.status).toBe(201);
   });
 
   it('rejects a method/path mismatch', async () => {
