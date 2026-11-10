@@ -20,6 +20,10 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
     can_set_executor_role: boolean;
     can_execute_enrollment: boolean;
     is_function_owner: boolean;
+    function_owner_is_safe: boolean;
+    function_owner_owns_protected_tables: boolean;
+    function_owner_is_sync_member: boolean;
+    function_owner_is_executor_member: boolean;
   }>(`
     SELECT
       session_user,
@@ -59,16 +63,49 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
       ) AS owns_database_objects,
       pg_catalog.has_function_privilege(session_user, $1, 'EXECUTE') AS can_execute_enrollment,
       COALESCE((SELECT pg_catalog.pg_get_userbyid(p.proowner) = session_user
-                  FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure), true) AS is_function_owner
+                  FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure), true) AS is_function_owner,
+      COALESCE((
+        SELECT r.rolname = 'device_enrollment_function_owner'
+           AND NOT r.rolcanlogin
+           AND NOT r.rolsuper
+           AND NOT r.rolcreatedb
+           AND NOT r.rolcreaterole
+           AND NOT r.rolinherit
+           AND NOT r.rolreplication
+           AND NOT r.rolbypassrls
+        FROM pg_catalog.pg_proc AS p
+        JOIN pg_catalog.pg_roles AS r ON r.oid = p.proowner
+        WHERE p.oid = $1::regprocedure
+      ), false) AS function_owner_is_safe,
+      EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_class AS c
+          JOIN pg_catalog.pg_proc AS p ON p.oid = $1::regprocedure
+         WHERE c.relowner = p.proowner
+           AND c.relname IN (
+             'tenants', 'devices', 'device_pairing_codes', 'device_credentials',
+             'device_approval_events', 'device_proof_nonces', 'device_enrollment_attempts'
+           )
+      ) AS function_owner_owns_protected_tables,
+      COALESCE((
+        SELECT pg_catalog.pg_has_role(pg_catalog.pg_get_userbyid(p.proowner), 'sync_app', 'MEMBER')
+          FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure
+      ), true) AS function_owner_is_sync_member,
+      COALESCE((
+        SELECT pg_catalog.pg_has_role(pg_catalog.pg_get_userbyid(p.proowner), 'device_enrollment_executor', 'MEMBER')
+          FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure
+      ), true) AS function_owner_is_executor_member
   `, [ENROLLMENT_FUNCTION]);
   const identity = result.rows[0];
   if (!identity || identity.is_superuser || identity.can_bypass_rls ||
       identity.can_create_db || identity.can_create_role || identity.can_replicate ||
       !identity.can_inherit || identity.session_user !== identity.current_user ||
       identity.is_sync_app_member || identity.has_unexpected_memberships || identity.owns_database_objects || !identity.has_executor_membership || identity.can_set_executor_role ||
-      !identity.can_execute_enrollment || identity.is_function_owner) {
+      !identity.can_execute_enrollment || identity.is_function_owner ||
+      !identity.function_owner_is_safe || identity.function_owner_owns_protected_tables ||
+      identity.function_owner_is_sync_member || identity.function_owner_is_executor_member) {
     throw new Error(
-      'BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL must use a non-privileged INHERIT login, not a member of sync_app, inheriting device_enrollment_executor, with EXECUTE on the exact enrollment function.',
+      'BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL must use a non-privileged INHERIT login, not a member of sync_app, inheriting device_enrollment_executor, with EXECUTE on the exact enrollment function; its SECURITY DEFINER owner must be a separate non-login, non-BYPASSRLS role.',
     );
   }
 }
