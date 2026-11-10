@@ -11,9 +11,9 @@ set -eu
 : "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
 : "${PGPASSWORD:?PGPASSWORD is required}"
 
-DB_HOST=db
-DB_NAME=sync_engine
-DB_USER=postgres
+DB_HOST=${DB_HOST:-db}
+DB_NAME=${DB_NAME:-sync_engine}
+DB_USER=${DB_USER:-postgres}
 
 psql_base() {
   psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" "$@"
