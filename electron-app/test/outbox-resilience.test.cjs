@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { openDatabase } = require('../electron/db/client.cjs');
 const { pushChanges } = require('../electron/sync/api-client.cjs');
 const {
@@ -40,9 +41,9 @@ function enqueueSale(db, id) {
 }
 
 for (const scenario of [
-  { name: '401 authentication refusal', fetchImpl: async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ code: 'AUTH_REJECTED' }) }) },
-  { name: '403 device approval refusal', fetchImpl: async () => ({ ok: false, status: 403, text: async () => JSON.stringify({ code: 'DEVICE_PENDING_APPROVAL' }) }) },
-  { name: 'network failure', fetchImpl: async () => { throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }); } },
+  { name: '401 authentication refusal', expectedStatus: 401, expectedCode: 'AUTH_REJECTED', fetchImpl: async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ code: 'AUTH_REJECTED' }) }) },
+  { name: '403 device approval refusal', expectedStatus: 403, expectedCode: 'DEVICE_PENDING_APPROVAL', fetchImpl: async () => ({ ok: false, status: 403, text: async () => JSON.stringify({ code: 'DEVICE_PENDING_APPROVAL' }) }) },
+  { name: 'network failure', expectedCode: 'ECONNREFUSED', fetchImpl: async () => { throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }); } },
 ]) {
   test('preserves outbox snapshots and idempotency after ' + scenario.name, async () => {
     const f = fixture();
@@ -53,15 +54,33 @@ for (const scenario of [
       const beforeOutbox = f.db.prepare('SELECT id, entity_type, entity_id, operation, payload_json, attempts, last_error FROM outbox').get();
       const beforeBatch = f.db.prepare('SELECT idempotency_key, payload_json, outbox_ids_json, state FROM outbox_batches').get();
 
+      // Supply a real ES256 identity so requestJson passes its local preflight
+      // and reaches fetchImpl. Earlier fixtures omitted these values and only
+      // tested local argument validation, never the simulated HTTP/network error.
+      const pair = crypto.generateKeyPairSync('ec', {
+        namedCurve: 'prime256v1',
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      });
+      let fetchCalls = 0;
+      const fetchImpl = async (...args) => {
+        fetchCalls += 1;
+        return scenario.fetchImpl(...args);
+      };
+
       // Exercise the actual HTTP client. Its rejected promise never reaches
       // the success-only applyPushResponse call in the production coordinator.
-      await assert.rejects(pushChanges({
+      const rejected = assert.rejects(pushChanges({
         baseUrl: 'http://127.0.0.1:3000',
         token: 'test-agent-jwt',
+        deviceId: '00000000-0000-4000-8000-000000000202',
+        privateKeyPem: pair.privateKey,
         idempotencyKey: batch.idempotencyKey,
         payload: batch.payload,
-        fetchImpl: scenario.fetchImpl,
+        fetchImpl,
       }));
+      await rejected;
+      assert.equal(fetchCalls, 1, 'the scenario must reach the injected HTTP transport');
       assert.equal(getOutboxStatus(f.db).pending, 1);
 
       f.reopen();
