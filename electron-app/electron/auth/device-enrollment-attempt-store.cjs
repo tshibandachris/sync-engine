@@ -5,7 +5,7 @@ const path = require('node:path');
 const { assertKeyPair, calculateJwkThumbprint } = require('./device-crypto.cjs');
 
 const ATTEMPT_FILENAME = 'device-enrollment-attempt.enc';
-const CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+const CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class DeviceEnrollmentAttemptStore {
   constructor({ app, safeStorage, fsImpl = fs }) {
@@ -43,7 +43,7 @@ class DeviceEnrollmentAttemptStore {
         typeof value.fingerprint !== 'string' || !value.fingerprint.trim() || value.fingerprint.length > 255 ||
         typeof value.privateKeyPem !== 'string' || typeof value.publicKeyPem !== 'string' ||
         typeof value.thumbprint !== 'string' || value.algorithm !== 'ES256' ||
-        typeof value.initialProof !== 'string' || value.initialProof.split('.').length !== 3) {
+        typeof value.jti !== 'string' || !UUID_RE.test(value.jti)) {
       throw new Error('Pending device enrollment attempt has an invalid shape.');
     }
     assertKeyPair(value.privateKeyPem, value.publicKeyPem);
@@ -59,7 +59,7 @@ class DeviceEnrollmentAttemptStore {
       publicKeyPem: value.publicKeyPem,
       thumbprint: value.thumbprint,
       algorithm: 'ES256',
-      initialProof: value.initialProof,
+      jti: value.jti,
     };
   }
 
