@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'feat/**'
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - 'feat/**'
 
 jobs:
   test:
@@ -63,11 +67,6 @@ jobs:
       - name: Smoke test - node runs in the image
         run: docker run --rm sync-engine:ci node -e "console.log('node ok')"
 
-      # The container must refuse to start without DATABASE_URL: this
-      # proves the entrypoint (dist/main.js) is wired and reaches the
-      # boot guards. If the run exits 0, either the guard is gone or
-      # the entrypoint was replaced by something that swallows the
-      # error.
       - name: Smoke test - the entrypoint reaches the boot guards
         run: |
           set +e
