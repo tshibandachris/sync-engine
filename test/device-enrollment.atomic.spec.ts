@@ -109,7 +109,11 @@ describe('Device enrollment atomic proof-of-possession', () => {
     const code = 'ED26-89AC';
     await createCode(code);
     const request = dto(code, 'hardware-invalid');
-    request.initialProof = request.initialProof.slice(0, -2) + 'aa';
+    const segments = request.initialProof.split('.');
+    const signature = Buffer.from(segments[2], 'base64url');
+    signature[0] ^= 0x01;
+    segments[2] = signature.toString('base64url');
+    request.initialProof = segments.join('.');
 
     await expect(service.enrollDevice(request, 'hardware-invalid', tenantId))
       .rejects.toBeInstanceOf(UnauthorizedException);
