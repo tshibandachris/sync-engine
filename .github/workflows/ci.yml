@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/device-enrollment-db-isolation-clean]
+    branches: [main, feat/device-enrollment-db-isolation-clean, feat/device-proof-pos-routes]
   pull_request:
     branches: [main]
 
