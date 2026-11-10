@@ -214,4 +214,22 @@ describe('Device proof on cash-session and attachment routes', () => {
       .set(headers(approvedDeviceId, proof('GET', path)));
     expect(response.status).toBe(200);
   });
+
+  it('rejects attachment confirmation without a device proof before business logic', async () => {
+    const attachmentId = crypto.randomUUID();
+    const response = await request(app.getHttpServer()).post('/attachments/' + attachmentId + '/confirm')
+      .set(headers(approvedDeviceId))
+      .send({});
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('DEVICE_PROOF_MISSING');
+  });
+
+  it('rejects attachment listing without a device proof', async () => {
+    const path = '/attachments';
+    const response = await request(app.getHttpServer()).get(path + '?check_in_id=' + checkInId)
+      .set(headers(approvedDeviceId));
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('DEVICE_PROOF_MISSING');
+  });
+
 });
