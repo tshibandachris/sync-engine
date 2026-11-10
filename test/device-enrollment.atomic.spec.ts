@@ -124,6 +124,33 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     await expect(assertEnrollmentDatabaseIdentity(pg.enrollmentPool)).resolves.toBeUndefined();
   });
 
+
+  it('rejects an enrollment login that has BYPASSRLS even when it inherits the executor role', async () => {
+    await pg.pool.query(
+      "CREATE ROLE device_enrollment_unsafe LOGIN INHERIT BYPASSRLS PASSWORD 'unsafe_test_pw'",
+    );
+    await pg.pool.query('GRANT device_enrollment_executor TO device_enrollment_unsafe');
+    const connection = await pg.pool.connect();
+    const config = await connection.query('SELECT inet_server_addr()::text AS host, inet_server_port() AS port');
+    connection.release();
+    const { Pool } = await import('pg');
+    const unsafePool = new Pool({
+      host: config.rows[0].host ?? undefined,
+      port: config.rows[0].port ?? undefined,
+      database: 'sync_engine_test',
+      user: 'device_enrollment_unsafe',
+      password: 'unsafe_test_pw',
+    });
+    try {
+      await expect(assertEnrollmentDatabaseIdentity(unsafePool)).rejects.toThrow(
+        /BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL/i,
+      );
+    } finally {
+      await unsafePool.end();
+      await pg.pool.query('DROP ROLE device_enrollment_unsafe');
+    }
+  });
+
   it('denies sync_app EXECUTE while granting the dedicated executor the exact function capability', async () => {
     const signature = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)';
     const privileges = await pg.pool.query(
