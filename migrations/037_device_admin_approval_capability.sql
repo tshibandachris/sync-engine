@@ -178,6 +178,44 @@ REVOKE ALL ON FUNCTION public.transition_device_approval(uuid, uuid, uuid, text,
 GRANT EXECUTE ON FUNCTION public.transition_device_approval(uuid, uuid, uuid, text, varchar)
   TO device_admin_executor;
 
+-- Migration 035's enrollment function comment promises an initial approval
+-- event, but its body did not insert one. Record the request at the device
+-- row boundary so every successful first enrollment is audited atomically.
+-- The trigger runs as the inserting role (the enrollment SECURITY DEFINER
+-- owner in production), which already has INSERT on the event table and has
+-- set app.current_tenant_id before creating the device.
+CREATE OR REPLACE FUNCTION public.trg_record_device_approval_request()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $trigger$
+BEGIN
+  IF NEW.approval_status = 'pending_approval' THEN
+    INSERT INTO public.device_approval_events (
+      tenant_id, device_id, actor_id, event_type,
+      from_status, to_status, reason, metadata
+    )
+    VALUES (
+      NEW.tenant_id,
+      NEW.id,
+      NULL,
+      'requested',
+      NULL,
+      'pending_approval',
+      'Terminal enrolled; awaiting administrative approval',
+      jsonb_build_object('source', 'device_enrollment')
+    );
+  END IF;
+  RETURN NEW;
+END;
+$trigger$;
+
+DROP TRIGGER IF EXISTS trg_devices_record_approval_request ON public.devices;
+CREATE TRIGGER trg_devices_record_approval_request
+  AFTER INSERT ON public.devices
+  FOR EACH ROW
+  EXECUTE FUNCTION public.trg_record_device_approval_request();
+
 DO $verification$
 BEGIN
   IF EXISTS (
