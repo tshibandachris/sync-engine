@@ -26,7 +26,7 @@ export class DeviceRepository {
     private readonly db: NodePgDatabase<typeof schema>,
   ) {}
 
-  async findDeviceWithActiveCredential(
+  async findDeviceWithLatestCredential(
     tenantId: string,
     deviceId: string,
   ): Promise<DeviceWithCredential | null> {
