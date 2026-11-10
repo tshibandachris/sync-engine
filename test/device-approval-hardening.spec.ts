@@ -103,7 +103,18 @@ describe('Device security hardening — migration 032', () => {
     });
   });
 
-  it('T5: a revoked credential cannot be reactivated, even by the owner', async () => {
+  it('T5: sync_app cannot forge approval audit events', async () => {
+    await expect(asTenant(tenantA, (client) =>
+      client.query(
+        `INSERT INTO device_approval_events
+          (tenant_id, device_id, event_type, from_status, to_status, reason)
+         VALUES ($1, $2, 'approved', 'pending_approval', 'approved', 'forged approval')`,
+        [tenantA, deviceA],
+      ),
+    )).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('T6: a revoked credential cannot be reactivated, even by the owner', async () => {
     await expect(pg.pool.query(
       "UPDATE device_credentials SET status = 'active', revoked_at = NULL WHERE id = $1",
       [revokedCredentialId],
@@ -113,7 +124,7 @@ describe('Device security hardening — migration 032', () => {
     });
   });
 
-  it('T6: a revoked credential is immutable history', async () => {
+  it('T7: a revoked credential is immutable history', async () => {
     await expect(pg.pool.query(
       "UPDATE device_credentials SET public_key_pem = 'tampered-key' WHERE id = $1",
       [revokedCredentialId],
@@ -123,7 +134,7 @@ describe('Device security hardening — migration 032', () => {
     });
   });
 
-  it('T7: event type and status transitions must be coherent', async () => {
+  it('T8: event type and status transitions must be coherent', async () => {
     const invalidTransitions = [
       ['approved', 'pending_approval', 'revoked'],
       ['rejected', 'approved', 'rejected'],
@@ -141,14 +152,14 @@ describe('Device security hardening — migration 032', () => {
     }
   });
 
-  it('T8: audit history prevents deletion of its device', async () => {
+  it('T9: audit history prevents deletion of its device', async () => {
     await expect(pg.pool.query(
       'DELETE FROM devices WHERE id = $1',
       [deviceA],
     )).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('T9: sync_app cannot create a device with a forged approved state', async () => {
+  it('T10: sync_app cannot create a device with a forged approved state', async () => {
     await expect(asTenant(tenantA, (client) =>
       client.query(
         `INSERT INTO devices
@@ -161,7 +172,7 @@ describe('Device security hardening — migration 032', () => {
     )).rejects.toMatchObject({ code: '42501' });
   });
 
-  it('T10: an active terminal remains pending, not approved', async () => {
+  it('T11: an active terminal remains pending, not approved', async () => {
     const result = await pg.pool.query(
       'SELECT is_active, approval_status, approved_at, approved_by FROM devices WHERE id = $1',
       [deviceA],
