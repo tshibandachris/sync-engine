@@ -9,11 +9,12 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt.guard.js';
 import { DeviceStatusService } from './device-status.service.js';
+import { DeviceProofGuard } from './auth/device-proof.guard.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Controller('api/v1/devices')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, DeviceProofGuard)
 export class DeviceStatusController {
   constructor(private readonly status: DeviceStatusService) {}
 
