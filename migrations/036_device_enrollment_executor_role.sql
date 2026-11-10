@@ -48,6 +48,33 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1
+      FROM pg_catalog.pg_proc AS enrollment
+      JOIN pg_catalog.pg_proc AS redemption
+        ON redemption.oid = 'public.redeem_device_pairing_code(text)'::regprocedure
+      JOIN pg_catalog.pg_proc AS device_creation
+        ON device_creation.oid = 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)'::regprocedure
+     WHERE enrollment.oid = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)'::regprocedure
+       AND enrollment.prosecdef
+       AND redemption.prosecdef
+       AND device_creation.prosecdef
+       AND enrollment.proowner = redemption.proowner
+       AND enrollment.proowner = device_creation.proowner
+       AND pg_catalog.has_function_privilege(
+         pg_catalog.pg_get_userbyid(enrollment.proowner),
+         redemption.oid,
+         'EXECUTE'
+       )
+       AND pg_catalog.has_function_privilege(
+         pg_catalog.pg_get_userbyid(enrollment.proowner),
+         device_creation.oid,
+         'EXECUTE'
+       )
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: enrollment and its SECURITY DEFINER helper functions must share an owner that can execute both helpers';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
       FROM pg_catalog.pg_proc AS p
      WHERE p.oid = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)'::regprocedure
        AND p.prosecdef
