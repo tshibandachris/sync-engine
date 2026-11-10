@@ -14,7 +14,7 @@ An offline-first sync backend and Windows point-of-sale client for shops and sma
 - **Device identity and approval.** Each terminal enrolls with an ES256 cryptographic proof, remains pending until an administrator decision, and can later be revoked. Protected POS synchronization routes verify the terminal identity, approval state and proof of possession.
 - **Least-privilege database access.** The application, device enrollment and device administration use separate PostgreSQL identities and capability roles.
 - **Automated validation.** Backend and Electron tests include PostgreSQL integration coverage and client-side failure simulations. The field-simulation suite is run separately with `npm run test:field`.
-- **CI on pull requests** and versioned PostgreSQL SQL migrations (001–038).
+- **CI on pull requests** and versioned PostgreSQL SQL migrations (001–039), with atomic migration-ledger updates.
 
 ## Architecture
 
@@ -73,7 +73,7 @@ The client needs a reachable API URL and an enrolled, approved terminal for prot
 ## Repository structure
 
 - `src/`: NestJS API, business services, sync, security and observability.
-- `migrations/`: versioned SQL migrations for PostgreSQL (001–038).
+- `migrations/`: versioned SQL migrations for PostgreSQL (001–039).
 - `electron-app/`: Windows client (Electron, SQLite, UI, IPC security, sync).
 - `test/`: backend and integration tests.
 - `electron-app/test/`: desktop client tests and field simulations.
