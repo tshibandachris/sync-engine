@@ -45,6 +45,16 @@ GRANT EXECUTE ON FUNCTION public.register_device_enrollment_with_credential(
 -- Fail the migration if the capability accidentally inherits the general role.
 DO $verification$
 BEGIN
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_catalog.pg_proc AS p
+     WHERE p.oid = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)'::regprocedure
+       AND p.prosecdef
+       AND pg_catalog.pg_get_userbyid(p.proowner) <> 'sync_app'
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: enrollment function must remain SECURITY DEFINER and must not be owned by sync_app';
+  END IF;
   IF pg_catalog.pg_has_role('device_enrollment_executor', 'sync_app', 'MEMBER') THEN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: executor must not be a member of sync_app';
   END IF;
