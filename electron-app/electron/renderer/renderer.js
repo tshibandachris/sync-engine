@@ -31,6 +31,10 @@ function renderStatus(value) {
     : status.state === 'synced' ? 'Synchronisé'
     : status.state === 'pending' ? 'En attente / hors ligne' : 'Initialisation…';
   $('sync-label').textContent = label;
+  const enrollmentPanel = $('device-enrollment-panel');
+  if (enrollmentPanel) {
+    enrollmentPanel.hidden = Boolean(status.deviceId) || status.agentAuthState !== 'authenticated';
+  }
   $('sync-pill')?.setAttribute('title', status.message || label);
   $('sync-button').disabled = status.state === 'syncing' || status.canRunSync === false;
   $('sync-button').textContent = status.state === 'syncing' ? 'Synchronisation…' : '↻ Synchroniser';
@@ -210,6 +214,34 @@ function initializeDashboard() {
     state.query = event.target.value;
     await loadProducts();
   });
+
+  $('device-enrollment-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = $('register-device-button');
+    const feedback = $('device-enrollment-feedback');
+    button.disabled = true;
+    button.textContent = 'Enrôlement sécurisé…';
+    feedback.className = 'feedback';
+    feedback.textContent = 'Génération de la clé P-256 et vérification du code auprès du serveur…';
+    try {
+      const result = await window.eden.registerDevice({
+        activationCode: $('activation-code').value,
+        deviceName: $('device-name').value,
+      });
+      if (!result?.success) throw new Error(result?.error || 'Enrôlement cryptographique impossible.');
+      $('activation-code').value = '';
+      feedback.className = 'feedback success';
+      feedback.textContent = `Terminal enregistré : ${result.deviceId}. Statut : ${result.approvalStatus}. En attente de l’approbation administrative.`;
+      handleStatus(await window.eden.getStatus());
+    } catch (error) {
+      feedback.className = 'feedback error';
+      feedback.textContent = error.message || 'Enrôlement cryptographique impossible.';
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Enregistrer et sécuriser ce terminal';
+    }
+  });
+
   $('device-status-button').addEventListener('click', async () => {
     const button = $('device-status-button');
     button.disabled = true;
