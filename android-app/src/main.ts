@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { CapacitorSQLite, SQLiteConnection } from '@capacitor-community/sqlite';
 import './style.css';
 
@@ -14,11 +14,7 @@ type NativeDeviceKey = {
 const DeviceKey = registerDeviceKeyPlugin();
 
 function registerDeviceKeyPlugin(): NativeDeviceKey {
-  // The plugin is registered natively by the Android spike bootstrap.
-  return (window as unknown as { EdenDeviceKey?: NativeDeviceKey }).EdenDeviceKey ?? {
-    async getOrCreateKey() { throw new Error('Le module Android Keystore natif n’est pas encore chargé.'); },
-    async sign() { throw new Error('Le module Android Keystore natif n’est pas encore chargé.'); },
-  };
+  return registerPlugin<NativeDeviceKey>('EdenDeviceKey');
 }
 
 function render(message: string, status: 'ok' | 'pending' | 'error' = 'pending') {
