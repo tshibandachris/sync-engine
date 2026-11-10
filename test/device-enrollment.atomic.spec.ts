@@ -268,20 +268,30 @@ describe('Device enrollment atomic pairing-code redemption', () => {
   it('gives the enrollment login no direct table or helper-function access', async () => {
     const privileges = await pg.pool.query(`
       SELECT
+        has_table_privilege('device_enrollment_test', 'public.tenants', 'SELECT') AS can_read_tenants,
         has_table_privilege('device_enrollment_test', 'public.devices', 'SELECT') AS can_read_devices,
         has_table_privilege('device_enrollment_test', 'public.devices', 'INSERT') AS can_insert_devices,
         has_table_privilege('device_enrollment_test', 'public.device_credentials', 'SELECT') AS can_read_credentials,
         has_table_privilege('device_enrollment_test', 'public.device_credentials', 'INSERT') AS can_insert_credentials,
         has_table_privilege('device_enrollment_test', 'public.device_approval_events', 'INSERT') AS can_insert_events,
+        has_table_privilege('device_enrollment_test', 'public.device_proof_nonces', 'SELECT') AS can_read_nonces,
+        has_table_privilege('device_enrollment_test', 'public.device_proof_nonces', 'INSERT') AS can_insert_nonces,
+        has_table_privilege('device_enrollment_test', 'public.device_enrollment_attempts', 'SELECT') AS can_read_attempts,
+        has_table_privilege('device_enrollment_test', 'public.device_enrollment_attempts', 'INSERT') AS can_insert_attempts,
         has_function_privilege('device_enrollment_test', 'public.redeem_device_pairing_code(text)', 'EXECUTE') AS can_redeem_pairing_directly,
         has_function_privilege('device_enrollment_test', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE') AS can_create_device_directly
     `);
     expect(privileges.rows[0]).toEqual({
+      can_read_tenants: false,
       can_read_devices: false,
       can_insert_devices: false,
       can_read_credentials: false,
       can_insert_credentials: false,
       can_insert_events: false,
+      can_read_nonces: false,
+      can_insert_nonces: false,
+      can_read_attempts: false,
+      can_insert_attempts: false,
       can_redeem_pairing_directly: false,
       can_create_device_directly: false,
     });
