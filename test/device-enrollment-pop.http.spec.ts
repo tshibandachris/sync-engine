@@ -195,10 +195,35 @@ describe('Initial ES256 proof enrollment (PostgreSQL HTTP integration)', () => {
     expect(device.rows).toHaveLength(0);
   });
 
+  it('returns the same device and credential when the exact signed enrollment request is retried', async () => {
+    const retryCode = 'MNOP-1357';
+    const retryHash = await createPairingCode(retryCode);
+    const fingerprint = 'fingerprint-exact-retry';
+    const proof = buildProof({ activationCode: retryCode, fingerprint });
+    const first = await enroll({ activationCode: retryCode, fingerprint, proof });
+    const second = await enroll({ activationCode: retryCode, fingerprint, proof });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body.data.deviceId).toBe(first.body.data.deviceId);
+    expect(second.body.data.credentialId).toBe(first.body.data.credentialId);
+
+    const state = await pg.pool.query(
+      `SELECT
+        (SELECT count(*)::int FROM public.devices WHERE tenant_id = $1 AND fingerprint = $2) AS devices,
+        (SELECT count(*)::int FROM public.device_credentials WHERE tenant_id = $1 AND device_id = $3) AS credentials,
+        (SELECT count(*)::int FROM public.device_approval_events WHERE tenant_id = $1 AND device_id = $3 AND event_type = 'requested') AS events,
+        (SELECT count(*)::int FROM public.device_proof_nonces WHERE tenant_id = $1 AND device_id = $3) AS nonces,
+        (SELECT count(*)::int FROM public.device_enrollment_attempts WHERE code_hash = $4) AS receipts`,
+      [tenantId, fingerprint, first.body.data.deviceId, retryHash],
+    );
+    expect(state.rows[0]).toEqual({ devices: 1, credentials: 1, events: 1, nonces: 1, receipts: 1 });
+  });
+
   it('rejects immediate reuse of the consumed activation code', async () => {
     const response = await enroll();
     expect(response.status).toBe(401);
-    expect(response.body.code).toBe('INVALID_ACTIVATION_CODE');
+    expect(response.body.code).toBe('CODE_ALREADY_CONSUMED');
   });
 
   it('rejects an initial proof bound to another method or path', async () => {
