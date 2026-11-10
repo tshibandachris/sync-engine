@@ -1,10 +1,13 @@
 const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('node:path');
 const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
-const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
+const { pullChanges, pushChanges, enrollDevice: enrollDeviceApi, getDeviceStatus } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
-const { validateDeviceToken } = require('./auth/device-enrollment.cjs');
+const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
+const { validateDeviceToken, getMachineFingerprint, getHardwareInfo } = require('./auth/device-enrollment.cjs');
+const { generateDeviceKeyPair, createInitialEnrollmentProof } = require('./auth/device-crypto.cjs');
+const crypto = require('node:crypto');
 const {
   assertTrustedIpcSender,
   validateSearchQuery,
@@ -15,11 +18,20 @@ const {
 let db;
 let windowRef;
 let tokenStore;
+let credentialStore;
 let deviceToken;
+let deviceCredential;
 let tokenStoreError;
 let authState = 'checking';
 let authMessage = 'Vérification du stockage sécurisé…';
 let status = { state: 'starting', message: 'Initialisation…', productCount: 0, lastCursor: 0, outboxPending: 0, outboxFailed: 0 };
+
+function requireApprovedDeviceCredential() {
+  if (authState !== 'ready' || !deviceCredential || deviceCredential.approvalStatus !== 'approved' || deviceCredential.pendingEnrollment) {
+    throw new Error('Terminal non approuvé : synchronisation suspendue, données locales conservées.');
+  }
+  return { deviceId: deviceCredential.deviceId, privateKeyPem: deviceCredential.privateKeyPem };
+}
 
 function requireDeviceToken() {
   if (tokenStoreError) throw tokenStoreError;
@@ -31,27 +43,23 @@ function requireDeviceToken() {
 
 async function initializeDeviceToken() {
   tokenStore = new DeviceTokenStore({ app, safeStorage });
+  credentialStore = new DeviceCredentialStore({ app, safeStorage });
   deviceToken = await tokenStore.load();
+  deviceCredential = await credentialStore.load();
 
-  // Environment-based bootstrap is strictly for unpackaged local development.
-  // Packaged production builds never read EDEN_SYNC_TOKEN from process.env.
-  if (!deviceToken && !app.isPackaged) {
-    const developmentToken = process.env.EDEN_SYNC_TOKEN;
-    if (developmentToken) {
-      const validated = validateDeviceToken(developmentToken);
-      await tokenStore.setToken(validated);
-      deviceToken = await tokenStore.load();
-    }
-  }
-
-  if (deviceToken) {
+  // An agent JWT without a device key is not sufficient for protected sync.
+  if (deviceToken && deviceCredential?.approvalStatus === 'approved' && !deviceCredential.pendingEnrollment) {
     authState = 'ready';
-    authMessage = 'Jeton d’appareil chargé depuis le stockage sécurisé.';
+    authMessage = 'Terminal approuvé ; identité et clé ES256 chargées depuis le stockage sécurisé.';
     return;
   }
-
+  if (deviceToken && deviceCredential?.deviceId && deviceCredential.approvalStatus === 'pending_approval') {
+    authState = 'awaiting-approval';
+    authMessage = 'Terminal enrôlé ; approbation administrative requise.';
+    return;
+  }
   authState = 'enrollment-required';
-  authMessage = 'Cette caisse doit être enrôlée avant de synchroniser.';
+  authMessage = 'Code d’activation et jeton agent requis pour enrôler cette caisse.';
 }
 
 function readStatus() {
@@ -64,6 +72,8 @@ function readStatus() {
     productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL AND is_active = 1').get().n) : 0,
     outboxPending: outbox.pending,
     outboxFailed: outbox.failed,
+    deviceId: deviceCredential?.deviceId ?? null,
+    approvalStatus: deviceCredential?.approvalStatus ?? (deviceCredential?.pendingEnrollment ? 'enrollment_pending' : null),
   };
 }
 
@@ -74,9 +84,11 @@ async function pullAll() {
   let productsProcessed = 0;
   while (true) {
     if (++pages > 1000) throw new Error('Pull stopped after 1000 pages; check API pagination.');
+    const proof = requireApprovedDeviceCredential();
     const response = await pullChanges({
       baseUrl: process.env.EDEN_SYNC_URL,
       token,
+      ...proof,
       lastPulledAt: cursor,
     });
     productsProcessed += applyPulledPage(db, response);
@@ -90,9 +102,11 @@ async function pullAll() {
 async function pushPending() {
   const batch = preparePushBatch(db);
   if (!batch) return { sent: false, acknowledged: 0, retained: 0 };
+  const proof = requireApprovedDeviceCredential();
   const response = await pushChanges({
     baseUrl: process.env.EDEN_SYNC_URL,
     token: requireDeviceToken(),
+    ...proof,
     idempotencyKey: batch.idempotencyKey,
     payload: batch.payload,
   });
@@ -103,6 +117,12 @@ async function pushPending() {
 
 async function doSync() {
   if (status.state === 'syncing') return readStatus();
+  if (authState !== 'ready' || !deviceCredential || deviceCredential.approvalStatus !== 'approved') {
+    const outbox = getOutboxStatus(db);
+    status = { ...status, state: 'pending', message: 'Synchronisation suspendue jusqu’à l’approbation du terminal. ' + outbox.pending + ' opération(s) restent conservées localement.', outboxPending: outbox.pending, outboxFailed: outbox.failed };
+    windowRef?.webContents.send('eden:status', readStatus());
+    return readStatus();
+  }
   status = { ...status, state: 'syncing', message: 'Synchronisation en cours…' };
   windowRef?.webContents.send('eden:status', readStatus());
 
@@ -185,40 +205,137 @@ app.whenReady().then(async () => {
     try {
       credentials = validateEnrollmentCredentials(credentials);
     } catch (error) {
-      return { success: false, error: error.message || 'Identifiants d’enrôlement invalides.' };
+      return { success: false, error: error.message || 'Paramètres d’enrôlement invalides.' };
     }
     if (tokenStoreError || authState === 'storage-error') {
       return { success: false, error: 'Le stockage sécurisé est indisponible. L’enrôlement est bloqué.' };
     }
-    if (deviceToken) return { success: false, error: 'Cette caisse est déjà enrôlée.' };
 
     let token;
-    try {
-      token = validateDeviceToken(credentials?.token);
-    } catch (error) {
-      return { success: false, error: error.message || 'JWT invalide.' };
-    }
+    try { token = validateDeviceToken(credentials.token); }
+    catch (error) { return { success: false, error: error.message || 'JWT agent invalide.' }; }
 
     try {
+      let keyMaterial = deviceCredential;
+      if (!keyMaterial || !keyMaterial.privateKeyPem || !keyMaterial.publicKeyPem) {
+        const pair = generateDeviceKeyPair();
+        keyMaterial = {
+          ...pair,
+          deviceId: crypto.randomUUID(),
+          pendingEnrollment: true,
+        };
+        await credentialStore.savePending(keyMaterial);
+        deviceCredential = await credentialStore.load();
+      }
+
+      const fingerprint = getMachineFingerprint(app);
+      const hardwareInfo = getHardwareInfo();
+      let registration;
+
+      // Recover safely if the server committed enrollment but the response was
+      // lost before the local credential could be upgraded from pending state.
+      if (deviceCredential?.pendingEnrollment && deviceCredential.deviceId) {
+        try {
+          registration = await getDeviceStatus({
+            baseUrl: process.env.EDEN_SYNC_URL,
+            token,
+            deviceId: deviceCredential.deviceId,
+          });
+        } catch (error) {
+          if (error.status !== 403 && error.status !== 404) throw error;
+        }
+      }
+
+      if (!registration) {
+        const initialProof = createInitialEnrollmentProof({
+          privateKeyPem: keyMaterial.privateKeyPem,
+          activationCode: credentials.activationCode.toUpperCase(),
+          fingerprint,
+          deviceId: keyMaterial.deviceId,
+        });
+        registration = await enrollDeviceApi({
+          baseUrl: process.env.EDEN_SYNC_URL,
+          token,
+          activationCode: credentials.activationCode.toUpperCase(),
+          deviceId: keyMaterial.deviceId,
+          deviceName: credentials.deviceName,
+          fingerprint,
+          hardwareInfo,
+          publicKeyPem: keyMaterial.publicKeyPem,
+          initialProof,
+        });
+      }
+
+      if (registration.deviceId !== keyMaterial.deviceId || !registration.tenantId) {
+        throw new Error('Le serveur a retourné une identité de terminal incohérente.');
+      }
+      await credentialStore.save({
+        deviceId: registration.deviceId,
+        tenantId: registration.tenantId,
+        privateKeyPem: keyMaterial.privateKeyPem,
+        publicKeyPem: keyMaterial.publicKeyPem,
+        thumbprint: keyMaterial.thumbprint,
+        algorithm: 'ES256',
+        approvalStatus: registration.approvalStatus || 'pending_approval',
+      });
       await tokenStore.setToken(token);
-      const storedToken = await tokenStore.load();
-      if (storedToken !== token) throw new Error('La vérification du stockage sécurisé a échoué.');
-      deviceToken = storedToken;
-      tokenStoreError = null;
-      authState = 'ready';
-      authMessage = 'Appareil enrôlé et jeton relu depuis le stockage sécurisé.';
-      status = { ...status, state: 'pending', message: 'Caisse enrôlée. Synchronisation en attente du serveur.', lastCursor: getCursor(db) };
+      deviceToken = await tokenStore.load();
+      deviceCredential = await credentialStore.load();
+      if (deviceToken !== token || !deviceCredential?.deviceId) {
+        throw new Error('La relecture des identifiants chiffrés a échoué.');
+      }
+
+      if (registration.approvalStatus === 'approved') {
+        deviceCredential = { ...deviceCredential, approvalStatus: 'approved' };
+        await credentialStore.save(deviceCredential);
+        authState = 'ready';
+        authMessage = 'Terminal approuvé ; synchronisation autorisée.';
+        void doSync();
+      } else {
+        authState = 'awaiting-approval';
+        authMessage = 'Terminal enrôlé. En attente de validation par votre administrateur.';
+      }
+      status = { ...status, state: 'pending', message: authMessage, lastCursor: getCursor(db) };
       windowRef?.webContents.send('eden:status', readStatus());
-      // Enrollment succeeds on verified encrypted persistence; network sync is asynchronous.
-      void doSync();
-      return { success: true };
+      return { success: true, approvalStatus: authState === 'ready' ? 'approved' : 'pending_approval' };
     } catch (error) {
-      tokenStoreError = error;
-      authState = 'storage-error';
-      authMessage = 'Impossible de confirmer le stockage chiffré. La synchronisation reste bloquée.';
+      // Never clear the SQLite database or the Outbox on enrollment/network failure.
+      const outbox = getOutboxStatus(db);
+      status = { ...status, state: 'pending', message: 'Enrôlement non finalisé : ' + error.message + '. ' + outbox.pending + ' opération(s) locales conservées.', outboxPending: outbox.pending };
       windowRef?.webContents.send('eden:status', readStatus());
-      console.error('[auth] enrollment storage failed:', error.message);
-      return { success: false, error: authMessage };
+      console.error('[auth] device enrollment failed:', error.message);
+      return { success: false, error: error.message || 'Enrôlement impossible.' };
+    }
+  });
+
+  registerTrustedHandler('eden:device:check-approval', async () => {
+    try {
+      if (!deviceToken || !deviceCredential?.deviceId) throw new Error('Terminal non enrôlé.');
+      const remote = await getDeviceStatus({
+        baseUrl: process.env.EDEN_SYNC_URL,
+        token: requireDeviceToken(),
+        deviceId: deviceCredential.deviceId,
+      });
+      if (!remote.isActive || ['rejected', 'revoked'].includes(remote.approvalStatus)) {
+        authState = 'device-blocked';
+        authMessage = remote.approvalStatus === 'rejected'
+          ? 'L’enrôlement de ce terminal a été refusé.'
+          : 'L’autorisation de ce terminal a été révoquée ou désactivée.';
+      } else if (remote.approvalStatus === 'approved') {
+        deviceCredential = { ...deviceCredential, approvalStatus: 'approved' };
+        await credentialStore.save(deviceCredential);
+        authState = 'ready';
+        authMessage = 'Terminal approuvé. La synchronisation sécurisée peut reprendre.';
+      } else {
+        authState = 'awaiting-approval';
+        authMessage = 'Le terminal est toujours en attente d’approbation.';
+      }
+      status = { ...status, state: 'pending', message: authMessage };
+      windowRef?.webContents.send('eden:status', readStatus());
+      if (authState === 'ready') void doSync();
+      return { success: true, approvalStatus: remote.approvalStatus, authState };
+    } catch (error) {
+      return { success: false, error: error.message || 'Impossible de vérifier le statut du terminal.' };
     }
   });
   registerTrustedHandler('eden:refresh', () => doSync());
