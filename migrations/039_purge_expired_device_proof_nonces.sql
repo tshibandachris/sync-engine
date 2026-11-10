@@ -6,7 +6,7 @@ BEGIN;
 CREATE INDEX IF NOT EXISTS idx_device_proof_nonces_tenant_expiry
   ON public.device_proof_nonces (tenant_id, expires_at);
 
-DO $
+DO $role$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles
@@ -16,7 +16,7 @@ BEGIN
       NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
 END;
-$;
+$role$;
 
 GRANT USAGE, CREATE ON SCHEMA public TO device_proof_maintenance_function_owner;
 GRANT SELECT, DELETE ON TABLE public.device_proof_nonces TO device_proof_maintenance_function_owner;
