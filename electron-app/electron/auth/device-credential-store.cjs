@@ -43,7 +43,7 @@ class DeviceCredentialStore {
         typeof value.thumbprint !== 'string' ||
         value.algorithm !== 'ES256' ||
         (value.tenantId !== undefined && !UUID_RE.test(value.tenantId)) ||
-        (value.approvalStatus !== undefined && !['pending_approval', 'approved', 'rejected', 'revoked'].includes(value.approvalStatus)) ||
+        (value.approvalStatus !== undefined && (!['pending_approval', 'approved', 'rejected', 'revoked'].includes(value.approvalStatus) || !UUID_RE.test(value.tenantId || ''))) ||
         (value.pendingEnrollment !== undefined && typeof value.pendingEnrollment !== 'boolean')) {
       throw new Error('Stored device credential has an invalid shape.');
     }
