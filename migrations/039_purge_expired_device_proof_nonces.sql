@@ -3,6 +3,9 @@
 -- exposes only the narrow operation needed by the maintenance cycle.
 BEGIN;
 
+CREATE INDEX IF NOT EXISTS idx_device_proof_nonces_tenant_expiry
+  ON public.device_proof_nonces (tenant_id, expires_at);
+
 CREATE OR REPLACE FUNCTION public.purge_expired_device_proof_nonces(
   p_tenant_id UUID,
   p_batch_size INTEGER DEFAULT 5000
