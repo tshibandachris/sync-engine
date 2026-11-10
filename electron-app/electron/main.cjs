@@ -6,6 +6,7 @@ const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
 const { deriveDeviceTrustState, canAccessLocalPOS, canRunSync } = require('./auth/device-state.cjs');
+const { DeviceStatusService } = require('./auth/device-status.cjs');
 const { validateDeviceToken } = require('./auth/device-enrollment.cjs');
 const {
   assertTrustedIpcSender,
@@ -22,6 +23,10 @@ let tokenStoreError;
 let credentialStore;
 let deviceCredential = null;
 let deviceCredentialError = null;
+let deviceStatusService = null;
+let serverHasActiveCredential = false;
+// ES256 request signing is intentionally not enabled in this PR yet.
+let deviceProofReady = false;
 let agentAuthState = 'unauthenticated';
 let deviceTrustState = 'unregistered';
 let syncState = 'blocked_unregistered';
@@ -87,7 +92,9 @@ function readStatus() {
     deviceThumbprint: deviceCredential?.thumbprint || null,
     deviceCredentialError: deviceCredentialError?.message || null,
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
-    canRunSync: canRunSync(agentAuthState, deviceTrustState),
+    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady),
+    serverHasActiveCredential,
+    deviceProofReady,
     lastCursor: db ? getCursor(db) : status.lastCursor,
     productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL AND is_active = 1').get().n) : 0,
     outboxPending: outbox.pending,
@@ -130,14 +137,25 @@ async function pushPending() {
 }
 
 async function doSync() {
-  if (!canRunSync(agentAuthState, deviceTrustState)) {
+  if (!canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) {
     syncState = deviceTrustState === 'revoked' ? 'blocked_revoked'
-      : deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved' : 'blocked_unregistered';
-    status = { ...status, state: 'pending', message: deviceTrustState === 'revoked'
+      : deviceTrustState === 'rejected' ? 'blocked_rejected'
+      : deviceTrustState === 'deactivated' ? 'blocked_deactivated'
+      : deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved'
+      : deviceTrustState === 'approved' ? 'blocked_proof_unavailable'
+      : 'blocked_unregistered';
+    const message = deviceTrustState === 'revoked'
       ? 'Terminal révoqué : synchronisation désactivée. Les opérations locales sont conservées.'
-      : deviceTrustState === 'awaiting_approval'
-        ? 'Terminal en attente d’approbation : synchronisation suspendue. La caisse locale reste disponible.'
-        : 'Terminal non enregistré : synchronisation suspendue. La caisse locale reste disponible.' };
+      : deviceTrustState === 'rejected'
+        ? 'Enrôlement du terminal rejeté : synchronisation désactivée. Les opérations locales sont conservées.'
+        : deviceTrustState === 'deactivated'
+          ? 'Terminal désactivé : synchronisation suspendue. Les opérations locales sont conservées.'
+          : deviceTrustState === 'awaiting_approval'
+            ? 'Terminal en attente d’approbation : synchronisation suspendue. La caisse locale reste disponible.'
+            : deviceTrustState === 'approved'
+              ? 'Terminal approuvé par le serveur, mais la preuve ES256 côté client n’est pas encore activée. Synchronisation suspendue.'
+              : 'Terminal non enregistré : synchronisation suspendue. La caisse locale reste disponible.';
+    status = { ...status, state: 'pending', message };
     windowRef?.webContents.send('eden:status', readStatus());
     return readStatus();
   }
@@ -178,6 +196,40 @@ async function doSync() {
 
   windowRef?.webContents.send('eden:status', readStatus());
   return readStatus();
+}
+
+function startDeviceStatusPolling() {
+  if (!deviceToken || !deviceCredential?.deviceId) return;
+  if (!deviceStatusService) {
+    deviceStatusService = new DeviceStatusService({
+      baseUrl: process.env.EDEN_SYNC_URL,
+      getAgentToken: () => deviceToken,
+      getDeviceId: () => deviceCredential?.deviceId || null,
+      onStatus: (serverStatus) => {
+        serverHasActiveCredential = serverStatus.hasActiveCredential;
+        deviceTrustState = !serverStatus.isActive ? 'deactivated' : serverStatus.approvalStatus === 'pending_approval'
+          ? 'awaiting_approval' : serverStatus.approvalStatus;
+        syncState = deviceTrustState === 'revoked' ? 'blocked_revoked'
+          : deviceTrustState === 'rejected' ? 'blocked_rejected'
+          : deviceTrustState === 'deactivated' ? 'blocked_deactivated'
+          : deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved'
+          : deviceTrustState === 'approved' ? 'blocked_proof_unavailable'
+          : 'blocked_unregistered';
+        status = {
+          ...status,
+          state: 'pending',
+          message: deviceTrustState === 'approved'
+            ? 'Approbation serveur confirmée. La synchronisation attend l’activation du protocole de preuve ES256.'
+            : `Statut serveur du terminal : ${serverStatus.approvalStatus}.`,
+        };
+        windowRef?.webContents.send('eden:status', readStatus());
+        if (canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) {
+          void doSync();
+        }
+      },
+    });
+  }
+  deviceStatusService.startPolling(30000);
 }
 
 function registerTrustedHandler(channel, handler) {
@@ -231,8 +283,14 @@ app.whenReady().then(async () => {
     trustState: deviceTrustState,
     syncState,
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
-    canRunSync: canRunSync(agentAuthState, deviceTrustState),
+    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady),
+    serverHasActiveCredential,
+    deviceProofReady,
   }));
+  registerTrustedHandler('eden:device:check-status', async () => {
+    if (!deviceStatusService) return { success: false, reason: 'DEVICE_STATUS_NOT_CONFIGURED' };
+    return deviceStatusService.checkStatus();
+  });
   registerTrustedHandler('eden:device:enroll', async (credentials) => {
     try {
       credentials = validateEnrollmentCredentials(credentials);
@@ -262,7 +320,8 @@ app.whenReady().then(async () => {
       authMessage = 'Session agent chargée depuis le stockage sécurisé.';
       status = { ...status, state: 'pending', message: 'Session agent ouverte. La caisse locale est disponible ; le terminal doit encore être enregistré et approuvé pour synchroniser.', lastCursor: getCursor(db) };
       windowRef?.webContents.send('eden:status', readStatus());
-      // Local POS is available; sync remains blocked until a server-backed device credential is approved.
+      startDeviceStatusPolling();
+      // Local POS is available; sync remains blocked until server approval and the ES256 client proof protocol are ready.
       return { success: true };
     } catch (error) {
       tokenStoreError = error;
@@ -284,6 +343,7 @@ app.whenReady().then(async () => {
     return product;
   });
   createWindow();
+  startDeviceStatusPolling();
   await doSync();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
