@@ -18,9 +18,14 @@ permissions:
 
 jobs:
   android-emulator:
-    name: Android 13 emulator - SQLite and ES256
+    name: Android API ${{ matrix.api-level }} emulator - SQLite and ES256
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        api-level: [33, 34, 35, 36]
     defaults:
       run:
         working-directory: android-app
@@ -43,10 +48,10 @@ jobs:
         run: node scripts/prepare-android.mjs
       - name: Sync Capacitor plugins
         run: npx cap sync android
-      - name: Run Android 13 instrumentation tests
+      - name: Run Android ${{ matrix.api-level }} instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 33
+          api-level: ${{ matrix.api-level }}
           arch: x86_64
           profile: pixel_2
           emulator-options: "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect"
@@ -55,7 +60,7 @@ jobs:
       - name: Publish debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: eden-gestion-android-debug
+          name: eden-gestion-android-api-${{ matrix.api-level }}-debug
           path: android-app/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
