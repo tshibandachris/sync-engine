@@ -1,5 +1,7 @@
 'use strict';
 
+const { createDeviceProof } = require('./device-crypto.cjs');
+
 const APPROVAL_STATES = new Set([
   'pending_approval', 'approved', 'rejected', 'revoked',
 ]);
@@ -19,6 +21,7 @@ class DeviceStatusService {
     baseUrl,
     getAgentToken,
     getDeviceId,
+    getPrivateKeyPem,
     fetchImpl = fetch,
     onStatus = () => {},
     timeoutMs = 10000,
@@ -26,6 +29,7 @@ class DeviceStatusService {
     this.baseUrl = baseUrl;
     this.getAgentToken = getAgentToken;
     this.getDeviceId = getDeviceId;
+    this.getPrivateKeyPem = getPrivateKeyPem;
     this.fetchImpl = fetchImpl;
     this.onStatus = onStatus;
     this.timeoutMs = timeoutMs;
@@ -37,18 +41,25 @@ class DeviceStatusService {
     if (this.checkInProgress) return { success: false, reason: 'CHECK_ALREADY_RUNNING' };
     const token = this.getAgentToken?.();
     const deviceId = this.getDeviceId?.();
+    const privateKeyPem = this.getPrivateKeyPem?.();
     if (!token || !deviceId) {
       return { success: false, reason: 'NOT_ENROLLED_OR_UNAUTHENTICATED' };
+    }
+    if (typeof privateKeyPem !== 'string' || !privateKeyPem.includes('BEGIN PRIVATE KEY')) {
+      return { success: false, reason: 'DEVICE_PROOF_NOT_READY' };
     }
 
     this.checkInProgress = true;
     try {
       const base = normalizeBaseUrl(this.baseUrl);
-      const response = await this.fetchImpl(`${base}/api/v1/devices/status`, {
+      const url = `${base}/api/v1/devices/status`;
+      const deviceProof = createDeviceProof({ privateKeyPem, token, method: 'GET', url });
+      const response = await this.fetchImpl(url, {
         method: 'GET',
         headers: {
           authorization: `Bearer ${token}`,
           'x-device-id': deviceId,
+          'x-device-proof': deviceProof,
           accept: 'application/json',
         },
         signal: AbortSignal.timeout(this.timeoutMs),
