@@ -119,16 +119,16 @@ echo "[migrate] restricting migration ledger and enabling application login"
 psql_base <<'EOSQL'
 REVOKE ALL ON TABLE public.schema_migrations FROM PUBLIC, sync_app;
 EOSQL
-psql_base -v pw="$SYNC_APP_PASSWORD" <<'EOSQL'
+psql_base -v pw="$SYNC_APP_PASSWORD" -v db_name="$DB_NAME" <<'EOSQL'
 ALTER ROLE sync_app LOGIN INHERIT PASSWORD :'pw';
 ALTER ROLE sync_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
-GRANT CONNECT ON DATABASE sync_engine TO sync_app;
+GRANT CONNECT ON DATABASE :"db_name" TO sync_app;
 EOSQL
 
 echo "[migrate] provisioning isolated enrollment login"
 enrollment_role_exists=$(psql_base -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'device_enrollment_login') THEN 1 ELSE 0 END")
 if [ "$enrollment_role_exists" = "1" ]; then
-  psql_base -v pw="$DEVICE_ENROLLMENT_PASSWORD" <<'EOSQL'
+  psql_base -v pw="$DEVICE_ENROLLMENT_PASSWORD" -v db_name="$DB_NAME" <<'EOSQL'
 ALTER ROLE device_enrollment_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
 EOSQL
 else
@@ -143,13 +143,13 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM device_enrollment_login;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_enrollment_login;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM device_enrollment_login;
 GRANT device_enrollment_executor TO device_enrollment_login WITH INHERIT TRUE, SET FALSE;
-GRANT CONNECT ON DATABASE sync_engine TO device_enrollment_login;
+GRANT CONNECT ON DATABASE :"db_name" TO device_enrollment_login;
 EOSQL
 
 echo "[migrate] provisioning isolated device admin login"
 admin_role_exists=$(psql_base -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'device_admin_login') THEN 1 ELSE 0 END")
 if [ "$admin_role_exists" = "1" ]; then
-  psql_base -v pw="$DEVICE_ADMIN_PASSWORD" <<'EOSQL'
+  psql_base -v pw="$DEVICE_ADMIN_PASSWORD" -v db_name="$DB_NAME" <<'EOSQL'
 ALTER ROLE device_admin_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
 EOSQL
 else
@@ -164,7 +164,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM device_admin_login;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_admin_login;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM device_admin_login;
 GRANT device_admin_executor TO device_admin_login WITH INHERIT TRUE, SET FALSE;
-GRANT CONNECT ON DATABASE sync_engine TO device_admin_login;
+GRANT CONNECT ON DATABASE :"db_name" TO device_admin_login;
 EOSQL
 
 echo "[migrate] verifying login separation"
