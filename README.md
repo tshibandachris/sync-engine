@@ -64,6 +64,10 @@ Le client nécessite une URL d'API joignable et un jeton d'appareil valide. En m
 - **Secrets :** ne jamais versionner de jetons, mots de passe, clés ou fichiers d'environnement contenant des secrets.
 - **Client desktop :** le jeton persistant doit être conservé par le stockage sécurisé du processus principal Electron.
 
+## Enrôlement sécurisé des terminaux
+
+Le parcours d'enrôlement initial utilise une connexion PostgreSQL dédiée, distincte du pool applicatif. La migration 036 retire à `sync_app` le droit d'exécuter la fonction atomique d'enrôlement et réserve ce droit au rôle-capacité `device_enrollment_executor`. Le compte LOGIN dédié doit être provisionné par un DBA et configuré via `DEVICE_ENROLLMENT_DATABASE_URL`. Le backend refuse de démarrer si l'identité ou les privilèges de cette connexion ne correspondent pas au contrat attendu. Voir [la procédure de provisionnement et la frontière de sécurité](docs/device-enrollment-db-isolation.md).
+
 ## Contrôles
 
 Depuis la racine :
