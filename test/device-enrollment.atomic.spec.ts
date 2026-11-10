@@ -62,6 +62,14 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     );
     expect(codes.rows[0].used_at).not.toBeNull();
     expect(devices.rows[0].count).toBe(1);
+    const audit = await pg.pool.query(
+      `SELECT count(*)::int AS count
+       FROM device_approval_events
+       WHERE tenant_id = $1 AND event_type = 'requested'
+         AND to_status = 'pending_approval' AND from_status IS NULL`,
+      [tenantId],
+    );
+    expect(audit.rows[0].count).toBe(1);
   }, 120_000);
 
   it('rolls back code consumption when device insertion fails', async () => {
