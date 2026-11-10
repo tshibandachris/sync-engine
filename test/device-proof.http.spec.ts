@@ -234,6 +234,12 @@ describe('HTTP device proof verification', () => {
     expect(response.status).toBe(201);
   });
 
+  it('rejects an HTTP method mismatch', async () => {
+    const response = await callSync(approvedDeviceId, buildProof({ method: 'GET' }));
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('HTM_HTU_MISMATCH');
+  });
+
   it('rejects a method/path mismatch', async () => {
     const response = await callSync(approvedDeviceId, buildProof({ path: '/sync/push' }));
     expect(response.status).toBe(403);
