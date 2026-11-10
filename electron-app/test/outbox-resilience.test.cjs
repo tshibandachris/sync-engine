@@ -70,15 +70,26 @@ for (const scenario of [
 
       // Exercise the actual HTTP client. Its rejected promise never reaches
       // the success-only applyPushResponse call in the production coordinator.
-      const rejected = assert.rejects(pushChanges({
-        baseUrl: 'http://127.0.0.1:3000',
-        token: 'test-agent-jwt',
-        deviceId: '00000000-0000-4000-8000-000000000202',
-        privateKeyPem: pair.privateKey,
-        idempotencyKey: batch.idempotencyKey,
-        payload: batch.payload,
-        fetchImpl,
-      }));
+      const rejected = assert.rejects(
+        pushChanges({
+          baseUrl: 'http://127.0.0.1:3000',
+          token: 'test-agent-jwt',
+          deviceId: '00000000-0000-4000-8000-000000000202',
+          privateKeyPem: pair.privateKey,
+          idempotencyKey: batch.idempotencyKey,
+          payload: batch.payload,
+          fetchImpl,
+        }),
+        (error) => {
+          if (scenario.expectedStatus !== undefined) {
+            assert.equal(error.status, scenario.expectedStatus);
+            assert.equal(error.code, scenario.expectedCode);
+          } else {
+            assert.equal(error.code, scenario.expectedCode);
+          }
+          return true;
+        },
+      );
       await rejected;
       assert.equal(fetchCalls, 1, 'the scenario must reach the injected HTTP transport');
       assert.equal(getOutboxStatus(f.db).pending, 1);
