@@ -17,6 +17,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
     has_unexpected_memberships: boolean;
     owns_database_objects: boolean;
     has_executor_membership: boolean;
+    can_set_executor_role: boolean;
     can_execute_enrollment: boolean;
     is_function_owner: boolean;
   }>(`
@@ -33,6 +34,8 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
            ELSE pg_catalog.pg_has_role(session_user, 'sync_app', 'MEMBER') END AS is_sync_app_member,
       CASE WHEN pg_catalog.to_regrole('device_enrollment_executor') IS NULL THEN false
            ELSE pg_catalog.pg_has_role(session_user, 'device_enrollment_executor', 'USAGE') END AS has_executor_membership,
+      CASE WHEN pg_catalog.to_regrole('device_enrollment_executor') IS NULL THEN true
+           ELSE pg_catalog.pg_has_role(session_user, 'device_enrollment_executor', 'SET') END AS can_set_executor_role,
       EXISTS (
         SELECT 1
           FROM pg_catalog.pg_auth_members AS membership
@@ -62,7 +65,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
   if (!identity || identity.is_superuser || identity.can_bypass_rls ||
       identity.can_create_db || identity.can_create_role || identity.can_replicate ||
       !identity.can_inherit || identity.session_user !== identity.current_user ||
-      identity.is_sync_app_member || identity.has_unexpected_memberships || identity.owns_database_objects || !identity.has_executor_membership ||
+      identity.is_sync_app_member || identity.has_unexpected_memberships || identity.owns_database_objects || !identity.has_executor_membership || identity.can_set_executor_role ||
       !identity.can_execute_enrollment || identity.is_function_owner) {
     throw new Error(
       'BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL must use a non-privileged INHERIT login, not a member of sync_app, inheriting device_enrollment_executor, with EXECUTE on the exact enrollment function.',
