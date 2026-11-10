@@ -7,20 +7,53 @@ BEGIN;
 -- 1. Least-privilege writes for devices and credentials
 -- ---------------------------------------------------------------------------
 
--- Device enrollment is the only current write path. It may create operational
--- fields, but it must not choose approval state or approval decision metadata.
+-- Device enrollment is the only current write path. Drizzle emits explicit
+-- INSERT column lists (including DEFAULT-valued approval columns), so use a
+-- table-level INSERT grant and enforce the approval boundary in a trigger.
 REVOKE INSERT, UPDATE, DELETE ON TABLE devices FROM sync_app;
-GRANT INSERT (
-  id,
-  tenant_id,
-  store_id,
-  pos_profile_id,
-  name,
-  fingerprint,
-  hardware_info,
-  is_active,
-  created_at
-) ON TABLE devices TO sync_app;
+GRANT INSERT ON TABLE devices TO sync_app;
+
+CREATE OR REPLACE FUNCTION public.trg_enforce_device_enrollment_security()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $function$
+BEGIN
+  -- SECURITY INVOKER is the default: CURRENT_USER is the role executing the
+  -- INSERT, not the function owner.
+  IF CURRENT_USER = 'sync_app' THEN
+    IF NEW.approval_status IS NOT NULL
+       AND NEW.approval_status <> 'pending_approval' THEN
+      RAISE EXCEPTION
+        'SECURITY_VIOLATION: sync_app can only enroll devices with pending_approval status (attempted: %)',
+        NEW.approval_status
+        USING ERRCODE = '42501';
+    END IF;
+
+    IF NEW.approved_at IS NOT NULL
+       OR NEW.approved_by IS NOT NULL
+       OR NEW.approval_note IS NOT NULL THEN
+      RAISE EXCEPTION
+        'SECURITY_VIOLATION: sync_app cannot supply approval decision metadata on enrollment'
+        USING ERRCODE = '42501';
+    END IF;
+
+    -- Enforce the canonical initial state even when a caller supplies NULL.
+    NEW.approval_status := 'pending_approval';
+    NEW.approved_at := NULL;
+    NEW.approved_by := NULL;
+    NEW.approval_note := NULL;
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS trg_devices_enrollment_security ON public.devices;
+CREATE TRIGGER trg_devices_enrollment_security
+  BEFORE INSERT ON public.devices
+  FOR EACH ROW
+  EXECUTE FUNCTION public.trg_enforce_device_enrollment_security();
 
 -- SELECT remains granted by the existing role setup and is still RLS-scoped.
 -- No credential service with cryptographic proof-of-possession exists yet.
