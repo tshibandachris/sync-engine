@@ -83,8 +83,8 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
           JOIN pg_catalog.pg_proc AS p ON p.oid = $1::regprocedure
          WHERE c.relowner = p.proowner
            AND c.relname IN (
-             'devices', 'device_credentials', 'device_approval_events',
-             'device_proof_nonces', 'device_enrollment_attempts'
+             'tenants', 'devices', 'device_pairing_codes', 'device_credentials',
+             'device_approval_events', 'device_proof_nonces', 'device_enrollment_attempts'
            )
       ) AS function_owner_owns_protected_tables,
       COALESCE((
