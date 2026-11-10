@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/electron-device-proof-client']
   pull_request:
-    branches: [main]
+    branches: [main, 'feat/electron-device-proof']
 
 jobs:
   test:
