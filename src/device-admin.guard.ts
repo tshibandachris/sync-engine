@@ -14,8 +14,9 @@ export class DeviceAdminPermissionGuard implements CanActivate {
     );
     const request = context.switchToHttp().getRequest();
     const permissions: unknown = request.permissions;
+    const sharedSecretTokenIsScoped = request.authMode !== 'dev-secret' || request.tokenUse === 'device_admin';
 
-    if (!required || !Array.isArray(permissions) ||
+    if (!required || !sharedSecretTokenIsScoped || !Array.isArray(permissions) ||
         !permissions.some((permission) => permission === required)) {
       throw new ForbiddenException({
         code: 'DEVICE_ADMIN_PERMISSION_REQUIRED',
