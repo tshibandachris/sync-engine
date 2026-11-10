@@ -117,7 +117,6 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/pull')
       .set('Authorization', 'Bearer ' + tokenA)
-      .set('X-Device-Id', deviceA)
       .send({});
     expect(res.status).toBe(401);
     expect(res.body.code).toBe('DEVICE_IDENTITY_MISSING');
