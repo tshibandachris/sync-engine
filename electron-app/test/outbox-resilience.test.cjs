@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { openDatabase } = require('../electron/db/client.cjs');
 const { pushChanges } = require('../electron/sync/api-client.cjs');
+const { generateDeviceKeyPair } = require('../electron/auth/device-crypto.cjs');
 const {
   enqueueOutbox, preparePushBatch, getOutboxStatus,
 } = require('../electron/sync/outbox.cjs');
@@ -26,6 +27,17 @@ function fixture() {
       if (db?.open) db.close();
       fs.rmSync(root, { recursive: true, force: true });
     },
+  };
+}
+
+function createDeviceCredential() {
+  const pair = generateDeviceKeyPair();
+  return {
+    deviceId: '00000000-0000-4000-8000-000000000101',
+    privateKeyPem: pair.privateKeyPem,
+    publicKeyPem: pair.publicKeyPem,
+    thumbprint: pair.thumbprint,
+    algorithm: 'ES256',
   };
 }
 
@@ -58,6 +70,7 @@ for (const scenario of [
       await assert.rejects(pushChanges({
         baseUrl: 'http://127.0.0.1:3000',
         token: 'test-agent-jwt',
+        deviceCredential: createDeviceCredential(),
         idempotencyKey: batch.idempotencyKey,
         payload: batch.payload,
         fetchImpl: scenario.fetchImpl,
