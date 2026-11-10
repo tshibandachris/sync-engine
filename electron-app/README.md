@@ -19,6 +19,7 @@ Application Windows de gestion commerciale hors ligne d’Eden Devs Corp. Le cli
 - Ajustements et mouvements de stock, inventaire initial et validation de leur contrat de synchronisation côté serveur.
 - Ouverture et clôture de caisse, rapprochement et reçus imprimables.
 - Intégration complète dans le client du parcours d’activation par code : le backend expose un endpoint de redemption, tandis que l’interface desktop doit encore être raccordée à ce flux pour obtenir le jeton sans saisie manuelle d’un JWT.
+- Authentification de production : aucun fournisseur d’identité (IdP) n’est encore intégré au client. Le JWT agent doit être provisionné hors de l’application ; `/auth/token` est une route de développement, désactivée par défaut. Ne pas activer `AUTH_ALLOW_DEV_TOKEN` en production.
 - Sauvegarde/restauration vérifiée, tests sur un Windows propre et essais métier de bout en bout.
 
 Ne pas utiliser cette version pour enregistrer des ventes réelles tant que ces points ne sont pas validés.
