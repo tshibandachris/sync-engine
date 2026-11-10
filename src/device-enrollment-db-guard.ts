@@ -24,6 +24,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
     function_owner_owns_protected_tables: boolean;
     function_owner_is_sync_member: boolean;
     function_owner_is_executor_member: boolean;
+    function_owner_has_memberships: boolean;
   }>(`
     SELECT
       session_user,
@@ -94,7 +95,12 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
       COALESCE((
         SELECT pg_catalog.pg_has_role(pg_catalog.pg_get_userbyid(p.proowner), 'device_enrollment_executor', 'MEMBER')
           FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure
-      ), true) AS function_owner_is_executor_member
+      ), true) AS function_owner_is_executor_member,
+      EXISTS (
+        SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_proc AS p ON p.oid = $1::regprocedure
+        WHERE membership.member = p.proowner
+      ) AS function_owner_has_memberships
   `, [ENROLLMENT_FUNCTION]);
   const identity = result.rows[0];
   if (!identity || identity.is_superuser || identity.can_bypass_rls ||
@@ -103,7 +109,8 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
       identity.is_sync_app_member || identity.has_unexpected_memberships || identity.owns_database_objects || !identity.has_executor_membership || identity.can_set_executor_role ||
       !identity.can_execute_enrollment || identity.is_function_owner ||
       !identity.function_owner_is_safe || identity.function_owner_owns_protected_tables ||
-      identity.function_owner_is_sync_member || identity.function_owner_is_executor_member) {
+      identity.function_owner_is_sync_member || identity.function_owner_is_executor_member ||
+      identity.function_owner_has_memberships) {
     throw new Error(
       'BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL must use a non-privileged INHERIT login, not a member of sync_app, inheriting device_enrollment_executor, with EXECUTE on the exact enrollment function; its SECURITY DEFINER owner must be a separate non-login, non-BYPASSRLS role.',
     );
