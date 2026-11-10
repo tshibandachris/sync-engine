@@ -29,7 +29,9 @@ psql_base -c "
   )
 " > /dev/null
 
-if [ "$ledger_before" = "0" ] && [ "$legacy_schema" = "1" ]; then
+ledger_entries=$(psql_base -tA -c "SELECT count(*) FROM public.schema_migrations")
+
+if [ "$legacy_schema" = "1" ] && [ "$ledger_entries" = "0" ]; then
   echo "[migrate] legacy pre-ledger database detected; verifying migration-030 baseline"
   baseline_ok=$(psql_base -tA -c "
     SELECT CASE
@@ -57,16 +59,25 @@ if [ "$ledger_before" = "0" ] && [ "$legacy_schema" = "1" ]; then
     exit 1
   fi
 
+  baseline_values=""
   for f in /migrations/*.sql; do
     name=$(basename "$f")
     version=$(printf '%s' "$name" | cut -d_ -f1)
     version_number=$(printf '%s' "$version" | sed 's/^0*//')
     [ -n "$version_number" ] || version_number=0
     if [ "$version_number" -le 30 ]; then
-      psql_base -c "INSERT INTO public.schema_migrations (filename) VALUES ('$name') ON CONFLICT (filename) DO NOTHING" > /dev/null
+      baseline_values="$baseline_values('$name'),"
     fi
   done
-  echo "[migrate] baseline 001-030 recorded"
+  baseline_values=${baseline_values%,}
+  psql_base -c "
+    BEGIN;
+    INSERT INTO public.schema_migrations (filename)
+    VALUES $baseline_values
+    ON CONFLICT (filename) DO NOTHING;
+    COMMIT;
+  " > /dev/null
+  echo "[migrate] baseline 001-030 recorded atomically"
 fi
 
 echo "[migrate] applying pending migrations"
