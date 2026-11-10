@@ -142,6 +142,7 @@ describe('Device enrollment atomic pairing-code redemption', () => {
       );
     } finally {
       await unsafePool.end();
+      await pg.pool.query('REVOKE device_enrollment_executor FROM device_enrollment_unsafe');
       await pg.pool.query('DROP ROLE device_enrollment_unsafe');
     }
   });
