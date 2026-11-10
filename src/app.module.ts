@@ -23,6 +23,9 @@ export const ATTACHMENT_STORAGE = 'ATTACHMENT_STORAGE';
 import { AuthController } from './auth.controller.js';
 import { JwtAuthGuard } from './jwt.guard.js';
 import { DeviceApprovalGuard } from './device-approval.guard.js';
+import { DeviceProofGuard } from './auth/device-proof.guard.js';
+import { DeviceProofNonceRepository } from './auth/device-proof-nonce.repository.js';
+import { DeviceRepository } from './devices/device.repository.js';
 import { SyncLogService } from './observability/sync-log.service.js';
 import { SyncLogInterceptor } from './observability/sync-log.interceptor.js';
 
@@ -60,6 +63,9 @@ export class AppModule {
         { provide: DeviceEnrollmentService, useFactory: (d: any) => new DeviceEnrollmentService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
         DeviceApprovalGuard,
+        DeviceProofGuard,
+        DeviceProofNonceRepository,
+        DeviceRepository,
         SyncLogService,
         { provide: APP_INTERCEPTOR, useClass: SyncLogInterceptor },
       ],
