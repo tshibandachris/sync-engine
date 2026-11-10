@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
+const { generateDeviceKeyPair } = require('../electron/auth/device-crypto.cjs');
 
 const { openDatabase, applyPulledPage, getCursor } = require('../electron/db/client.cjs');
 const { pullChanges, pushChanges } = require('../electron/sync/api-client.cjs');
@@ -91,6 +93,9 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
   const f = fixture();
   try {
     const page = fieldPullPage(40);
+    const deviceKey = generateDeviceKeyPair();
+    const deviceId = crypto.randomUUID();
+    const proofCredentials = { deviceId, privateKeyPem: deviceKey.privateKeyPem };
     let calls = 0;
     const fetchImpl = async (_url, options) => {
       calls++;
@@ -103,7 +108,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
 
     const pulled = await pullChanges({
       baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
-      lastPulledAt: 0, fetchImpl,
+      ...proofCredentials, lastPulledAt: 0, fetchImpl,
     });
     applyPulledPage(f.db, pulled);
 
@@ -119,7 +124,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
     await assert.rejects(
       pushChanges({
         baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
-        idempotencyKey: batch.idempotencyKey, payload: batch.payload, fetchImpl,
+        ...proofCredentials, idempotencyKey: batch.idempotencyKey, payload: batch.payload, fetchImpl,
       }),
       /Simulated network cut/,
     );
@@ -133,7 +138,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
     await assert.rejects(
       pullChanges({
         baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
-        lastPulledAt: 40, fetchImpl: async () => { throw new TypeError('Simulated pull disconnect'); },
+        ...proofCredentials, lastPulledAt: 40, fetchImpl: async () => { throw new TypeError('Simulated pull disconnect'); },
       }),
       /Simulated pull disconnect/,
     );
