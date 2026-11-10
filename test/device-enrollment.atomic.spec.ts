@@ -152,13 +152,15 @@ describe('Device enrollment atomic pairing-code redemption', () => {
       `SELECT
         has_function_privilege('sync_app', $1, 'EXECUTE') AS sync_allowed,
         has_function_privilege('device_enrollment_test', $1, 'EXECUTE') AS executor_allowed,
-        pg_has_role('device_enrollment_test', 'sync_app', 'MEMBER') AS executor_is_sync_member`,
+        pg_has_role('device_enrollment_test', 'sync_app', 'MEMBER') AS executor_is_sync_member,
+        pg_has_role('device_enrollment_test', 'device_enrollment_executor', 'SET') AS can_set_executor_role`,
       [signature],
     );
     expect(privileges.rows[0]).toEqual({
       sync_allowed: false,
       executor_allowed: true,
       executor_is_sync_member: false,
+      can_set_executor_role: false,
     });
   });
 
