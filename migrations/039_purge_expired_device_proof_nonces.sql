@@ -53,7 +53,6 @@ BEGIN
       AND expires_at <= clock_timestamp()
     ORDER BY expires_at
     LIMIT p_batch_size
-    FOR UPDATE SKIP LOCKED
   )
   DELETE FROM public.device_proof_nonces AS nonce
   USING expired
