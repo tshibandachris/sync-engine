@@ -172,6 +172,49 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     });
   });
 
+
+  it('keeps the executor capability free of direct table and helper privileges', async () => {
+    const result = await pg.pool.query(`
+      SELECT
+        has_table_privilege('device_enrollment_executor', 'public.devices', 'SELECT') AS devices_select,
+        has_table_privilege('device_enrollment_executor', 'public.devices', 'INSERT') AS devices_insert,
+        has_table_privilege('device_enrollment_executor', 'public.device_credentials', 'SELECT') AS credentials_select,
+        has_table_privilege('device_enrollment_executor', 'public.device_credentials', 'INSERT') AS credentials_insert,
+        has_table_privilege('device_enrollment_executor', 'public.device_approval_events', 'INSERT') AS events_insert,
+        has_table_privilege('device_enrollment_executor', 'public.device_proof_nonces', 'INSERT') AS nonces_insert,
+        has_table_privilege('device_enrollment_executor', 'public.device_enrollment_attempts', 'SELECT') AS attempts_select,
+        has_table_privilege('device_enrollment_executor', 'public.device_pairing_codes', 'SELECT') AS pairing_select,
+        has_function_privilege('device_enrollment_executor', 'public.redeem_device_pairing_code(text)', 'EXECUTE') AS redeem_execute,
+        has_function_privilege('device_enrollment_executor', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE') AS create_device_execute
+    `);
+    expect(result.rows[0]).toEqual({
+      devices_select: false,
+      devices_insert: false,
+      credentials_select: false,
+      credentials_insert: false,
+      events_insert: false,
+      nonces_insert: false,
+      attempts_select: false,
+      pairing_select: false,
+      redeem_execute: false,
+      create_device_execute: false,
+    });
+  });
+
+  it('enforces FORCE RLS for the non-bypass SECURITY DEFINER owner', async () => {
+    const client = await pg.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE device_enrollment_function_owner');
+      const visible = await client.query('SELECT count(*)::int AS count FROM public.devices');
+      expect(visible.rows[0].count).toBe(0);
+      await client.query('ROLLBACK');
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
+
   it('rejects an enrollment login that has BYPASSRLS even when it inherits the executor role', async () => {
     await pg.pool.query(
       "CREATE ROLE device_enrollment_unsafe LOGIN INHERIT BYPASSRLS PASSWORD 'unsafe_test_pw'",
@@ -284,7 +327,7 @@ describe('Device enrollment atomic pairing-code redemption', () => {
         CREATE ROLE device_enrollment_migration_test
           NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS
       `);
-      await client.query('GRANT device_enrollment_function_owner TO device_enrollment_migration_test');
+      await client.query('GRANT device_enrollment_function_owner TO device_enrollment_migration_test WITH INHERIT TRUE, SET TRUE');
       await client.query('ALTER SCHEMA public OWNER TO device_enrollment_migration_test');
       for (const table of [
         'tenants',
