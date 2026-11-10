@@ -44,7 +44,7 @@ for (const scenario of [
   { name: '403 device approval refusal', fetchImpl: async () => ({ ok: false, status: 403, text: async () => JSON.stringify({ code: 'DEVICE_PENDING_APPROVAL' }) }) },
   { name: 'network failure', fetchImpl: async () => { throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }); } },
 ]) {
-  test('preserves outbox snapshots and idempotency after ' + scenario.name, () => {
+  test('preserves outbox snapshots and idempotency after ' + scenario.name, async () => {
     const f = fixture();
     try {
       const id = '00000000-0000-4000-8000-000000000101';
