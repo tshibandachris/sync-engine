@@ -237,6 +237,8 @@ describe('Device enrollment atomic pairing-code redemption', () => {
           NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS
       `);
       await client.query('ALTER SCHEMA public OWNER TO device_enrollment_migration_test');
+      await client.query('ALTER TABLE public.devices OWNER TO device_enrollment_migration_test');
+      await client.query('ALTER TABLE public.device_pairing_codes OWNER TO device_enrollment_migration_test');
       await client.query(`
         ALTER FUNCTION public.register_device_enrollment_with_credential(
           text, uuid, varchar, varchar, jsonb, text, varchar, uuid
