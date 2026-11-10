@@ -34,7 +34,6 @@ export class DeviceEnrollmentService {
     // The issuer that creates pairing codes must persist this exact SHA-256
     // digest of the normalized XXXX-XXXX value in device_pairing_codes.code_hash.
     const codeHash = createHash('sha256').update(dto.activationCode, 'utf8').digest('hex');
-    const now = new Date();
 
     try {
       return await this.db.transaction(async (tx) => {
