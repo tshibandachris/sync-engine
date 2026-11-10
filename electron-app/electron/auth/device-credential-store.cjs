@@ -41,7 +41,10 @@ class DeviceCredentialStore {
         typeof value.privateKeyPem !== 'string' ||
         typeof value.publicKeyPem !== 'string' ||
         typeof value.thumbprint !== 'string' ||
-        value.algorithm !== 'ES256') {
+        value.algorithm !== 'ES256' ||
+        (value.tenantId !== undefined && !UUID_RE.test(value.tenantId)) ||
+        (value.approvalStatus !== undefined && !['pending_approval', 'approved', 'rejected', 'revoked'].includes(value.approvalStatus)) ||
+        (value.pendingEnrollment !== undefined && typeof value.pendingEnrollment !== 'boolean')) {
       throw new Error('Stored device credential has an invalid shape.');
     }
     assertKeyPair(value.privateKeyPem, value.publicKeyPem);
@@ -54,6 +57,9 @@ class DeviceCredentialStore {
       publicKeyPem: value.publicKeyPem,
       thumbprint: value.thumbprint,
       algorithm: 'ES256',
+      ...(value.tenantId ? { tenantId: value.tenantId } : {}),
+      ...(value.approvalStatus ? { approvalStatus: value.approvalStatus } : {}),
+      ...(value.pendingEnrollment === true ? { pendingEnrollment: true } : {}),
     };
   }
 
@@ -71,6 +77,10 @@ class DeviceCredentialStore {
     } catch (error) {
       throw new Error('Unable to decrypt or validate the stored device credential; refusing plaintext fallback.', { cause: error });
     }
+  }
+
+  async savePending(credential) {
+    return this.save({ ...credential, pendingEnrollment: true });
   }
 
   async save(credential) {
