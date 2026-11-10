@@ -16,6 +16,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: android-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-emulator:
     name: Android API ${{ matrix.api-level }} ${{ matrix.memory-profile }} - SQLite and ES256
