@@ -199,9 +199,12 @@ describe('Initial ES256 proof enrollment (PostgreSQL HTTP integration)', () => {
     const retryCode = 'MNOP-1357';
     const retryHash = await createPairingCode(retryCode);
     const fingerprint = 'fingerprint-exact-retry';
-    const proof = buildProof({ activationCode: retryCode, fingerprint });
-    const first = await enroll({ activationCode: retryCode, fingerprint, proof });
-    const second = await enroll({ activationCode: retryCode, fingerprint, proof });
+    const retryPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const retryPublicKeyPem = retryPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const retryPrivateKeyPem = retryPair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const proof = buildProof({ activationCode: retryCode, fingerprint, privateKeyPem: retryPrivateKeyPem });
+    const first = await enroll({ activationCode: retryCode, fingerprint, proof, keyPem: retryPublicKeyPem });
+    const second = await enroll({ activationCode: retryCode, fingerprint, proof, keyPem: retryPublicKeyPem });
 
     expect(first.status).toBe(201);
     expect(second.status).toBe(201);
