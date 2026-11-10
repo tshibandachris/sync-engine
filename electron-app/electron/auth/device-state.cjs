@@ -16,8 +16,8 @@ function canAccessLocalPOS(agentAuthState, _deviceTrustState) {
 }
 
 function canRunSync(agentAuthState, deviceTrustState, deviceProofReady = false) {
-  // Approval is necessary but not sufficient. The ES256 request-signing client
-  // is deliberately not enabled until its server enrollment/PoP contract ships.
+  // Approval is necessary but not sufficient. The caller must also have a locally
+  // verified ES256 key and a server-confirmed active credential.
   return agentAuthState === 'authenticated' &&
     deviceTrustState === 'approved' &&
     deviceProofReady === true;
