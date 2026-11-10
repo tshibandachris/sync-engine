@@ -176,7 +176,15 @@ function renderAuthState(status) {
   const authState = status?.authState || 'storage-error';
   $('app-shell').hidden = authState !== 'ready';
   $('enrollment-screen').hidden = authState !== 'enrollment-required';
-  $('storage-error-screen').hidden = authState !== 'storage-error';
+  $('approval-screen').hidden = authState !== 'awaiting-approval';
+  $('storage-error-screen').hidden = !['storage-error', 'device-blocked'].includes(authState);
+  if (authState === 'awaiting-approval') {
+    $('approval-message').textContent = status?.authMessage || 'Le terminal attend la validation de votre administrateur.';
+  }
+  if (authState === 'device-blocked') {
+    $('storage-error-title').textContent = 'Terminal non autorisé';
+    $('storage-error-message').textContent = status?.authMessage || 'La synchronisation de ce terminal est bloquée.';
+  }
   if (authState === 'ready') initializeDashboard();
 }
 
@@ -219,19 +227,43 @@ window.addEventListener('DOMContentLoaded', async () => {
     const button = $('enroll-button');
     const feedback = $('enrollment-feedback');
     const token = $('device-token').value.trim();
+    const activationCode = $('activation-code').value.trim().toUpperCase();
+    const deviceName = $('device-name').value.trim();
     button.disabled = true;
     feedback.className = 'feedback';
-    feedback.textContent = 'Validation et chiffrement du jeton…';
+    feedback.textContent = 'Création de la clé, preuve de possession et enrôlement sécurisé…';
     try {
-      const result = await window.eden.enrollDevice({ token });
+      const result = await window.eden.enrollDevice({ token, activationCode, deviceName });
       if (!result?.success) throw new Error(result?.error || 'Enrôlement impossible.');
       $('device-token').value = '';
+      $('activation-code').value = '';
       feedback.className = 'feedback success';
-      feedback.textContent = 'Jeton chiffré et vérifié. Ouverture du tableau de bord…';
+      feedback.textContent = 'Terminal enrôlé. En attente de l’approbation administrative…';
       handleStatus(await window.eden.getStatus());
     } catch (error) {
       feedback.className = 'feedback error';
       feedback.textContent = error.message || 'Enrôlement impossible.';
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $('check-approval').addEventListener('click', async () => {
+    const button = $('check-approval');
+    const feedback = $('approval-feedback');
+    button.disabled = true;
+    feedback.className = 'feedback';
+    feedback.textContent = 'Vérification auprès du serveur…';
+    try {
+      const result = await window.eden.checkDeviceApproval();
+      if (!result?.success) throw new Error(result?.error || 'Vérification impossible.');
+      feedback.className = 'feedback success';
+      feedback.textContent = result.approvalStatus === 'approved'
+        ? 'Terminal approuvé. Activation de la synchronisation sécurisée…'
+        : 'Le terminal attend toujours l’approbation.';
+      handleStatus(await window.eden.getStatus());
+    } catch (error) {
+      feedback.className = 'feedback error';
+      feedback.textContent = error.message || 'Impossible de vérifier le statut.';
     } finally {
       button.disabled = false;
     }
