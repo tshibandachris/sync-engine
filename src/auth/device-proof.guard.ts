@@ -140,6 +140,10 @@ export class DeviceProofGuard implements CanActivate {
       });
     }
 
+    if (proofHeader.length > 8192) {
+      throw new UnauthorizedException({ code: 'PROOF_TOO_LARGE', message: 'Device proof exceeds the 8 KiB limit' });
+    }
+
     const segments = proofHeader.split('.');
     if (segments.length !== 3) {
       throw new UnauthorizedException({
