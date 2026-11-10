@@ -79,9 +79,11 @@ describe('POS sales push contract', () => {
     };
   }
 
-  async function push(sales: unknown[], authToken = token) {
-    return request(app.getHttpServer()).post('/sync/push')
-      .set('Authorization', 'Bearer ' + authToken).send({ changes: { sales } });
+  async function push(sales: unknown[], authToken = token, idempotencyKey?: string) {
+    const call = request(app.getHttpServer()).post('/sync/push')
+      .set('Authorization', 'Bearer ' + authToken);
+    if (idempotencyKey) call.set('Idempotency-Key', idempotencyKey);
+    return call.send({ changes: { sales } });
   }
 
   it('commits valid sale while rolling back invalid sale independently', async () => {
@@ -104,6 +106,20 @@ describe('POS sales push contract', () => {
     expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(1);
     expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines')).rows[0].count)).toBe(1);
     expect(Number((await pg.pool.query('SELECT count(*) FROM stock_movements')).rows[0].count)).toBe(1);
+  });
+
+  it('replays POS sales even when the enclosing sync idempotency key was already recorded', async () => {
+    const item = sale();
+    const key = randomUUID();
+    const first = await push([item], token, key);
+    expect(first.body.results[0].status).toBe('applied');
+
+    const replay = await push([item], token, key);
+    expect(replay.status).toBe(201);
+    expect(replay.body.results[0].status).toBe('idempotent');
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM stock_movements WHERE reference_id=$1', [item.id])).rows[0].count)).toBe(1);
   });
 
   it('returns conflict for the same sale UUID with changed total', async () => {
