@@ -108,8 +108,6 @@ for (const scenario of scenarios) {
         token: 'test-agent-jwt',
         deviceId,
         privateKeyPem: privateKey,
-        idempotencyKey: batch.idempotencyKey,
-        payload: batch.payload,
         fetchImpl,
       });
 
