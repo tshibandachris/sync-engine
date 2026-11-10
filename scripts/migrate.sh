@@ -26,7 +26,8 @@ psql_base -c "
   CREATE TABLE IF NOT EXISTS public.schema_migrations (
     filename text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT clock_timestamp()
-  )
+  );
+  REVOKE ALL ON TABLE public.schema_migrations FROM PUBLIC, sync_app
 " > /dev/null
 
 if [ "$ledger_before" = "0" ] && [ "$legacy_schema" = "1" ]; then
