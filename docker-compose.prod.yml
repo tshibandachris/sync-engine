@@ -3,9 +3,9 @@
 # Differences from docker-compose.yml (local):
 #   - No build context: the image comes from the registry or is
 #     pre-built locally.
-#   - A one-shot 'migrate' service applies migrations/ before the app
-#     starts, then sets sync_app LOGIN with a real password. It runs
-#     once: subsequent 'up' calls short-circuit on a marker table.
+#   - A one-shot 'migrate' service applies pending migrations from the
+#     schema_migrations ledger, then provisions the sync_app and dedicated
+#     device_enrollment_login credentials from deployment secrets.
 #   - The app connects as sync_app (not postgres), so RLS applies.
 #   - The db port is not published. Only the app reaches it, over the
 #     compose network.
@@ -39,6 +39,7 @@ services:
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?}
       SYNC_APP_PASSWORD: ${SYNC_APP_PASSWORD:?}
+      DEVICE_ENROLLMENT_PASSWORD: ${DEVICE_ENROLLMENT_PASSWORD:?}
     volumes:
       - ./migrations:/migrations:ro
       - ./scripts/migrate.sh:/migrate.sh:ro
@@ -60,6 +61,7 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgres://sync_app:${SYNC_APP_PASSWORD:?}@db:5432/sync_engine
+      DEVICE_ENROLLMENT_DATABASE_URL: postgres://device_enrollment_login:${DEVICE_ENROLLMENT_PASSWORD:?}@db:5432/sync_engine
             # Shared-secret mode: no external IdP. Opt in explicitly and
       # accept the tradeoff (see HANDOFF.md, "Auth modes").
       AUTH_ALLOW_SHARED_SECRET: "true"
