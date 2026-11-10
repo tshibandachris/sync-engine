@@ -169,7 +169,26 @@ describe('Device security hardening — migration 032', () => {
                  '{}'::jsonb, true, 'approved', now(), $4)`,
         [randomUUID(), tenantA, randomUUID(), randomUUID()],
       ),
-    )).rejects.toMatchObject({ code: '42501' });
+    )).rejects.toMatchObject({
+      code: '42501',
+      message: expect.stringContaining('SECURITY_VIOLATION'),
+    });
+  });
+
+  it('T12: sync_app cannot inject approval decision metadata during enrollment', async () => {
+    await expect(asTenant(tenantA, (client) =>
+      client.query(
+        `INSERT INTO devices
+          (id, tenant_id, store_id, name, fingerprint, hardware_info, is_active,
+           approval_status, approved_at)
+         VALUES ($1, $2, $3, 'Forged metadata terminal', 'forged-metadata',
+                 '{}'::jsonb, true, 'pending_approval', now())`,
+        [randomUUID(), tenantA, randomUUID()],
+      ),
+    )).rejects.toMatchObject({
+      code: '42501',
+      message: expect.stringContaining('SECURITY_VIOLATION'),
+    });
   });
 
   it('T11: an active terminal remains pending, not approved', async () => {
