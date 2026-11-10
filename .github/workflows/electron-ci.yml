@@ -2,13 +2,13 @@ name: Electron client CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'feat/electron-device-proof-client']
     paths:
       - 'electron-app/**'
       - 'docs/electron-architecture.md'
       - '.github/workflows/electron-ci.yml'
   push:
-    branches: [main]
+    branches: [main, 'feat/electron-device-proof']
     paths:
       - 'electron-app/**'
       - 'docs/electron-architecture.md'
