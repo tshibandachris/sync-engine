@@ -93,10 +93,22 @@ export class DeviceAdminService {
           error instanceof ConflictException ||
           error instanceof NotFoundException) throw error;
 
-      const code = (error as { code?: string }).code;
-      if (code === 'P0002') throw new NotFoundException('Terminal introuvable pour ce tenant.');
-      if (code === 'P0001') throw new ConflictException('Transition de terminal impossible depuis son état actuel.');
-      if (code === '22023') throw new BadRequestException('Paramètres de transition de terminal invalides.');
+      let current: unknown = error;
+      const seen = new Set<unknown>();
+      while (current && typeof current === 'object' && !seen.has(current)) {
+        seen.add(current);
+        const candidate = current as { code?: unknown; cause?: unknown };
+        if (candidate.code === 'P0002') {
+          throw new NotFoundException('Terminal introuvable pour ce tenant.');
+        }
+        if (candidate.code === 'P0001') {
+          throw new ConflictException('Transition de terminal impossible depuis son état actuel.');
+        }
+        if (candidate.code === '22023') {
+          throw new BadRequestException('Paramètres de transition de terminal invalides.');
+        }
+        current = candidate.cause;
+      }
       throw error;
     }
   }
