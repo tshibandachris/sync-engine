@@ -8,7 +8,7 @@ on:
       - 'docs/electron-architecture.md'
       - '.github/workflows/electron-ci.yml'
   push:
-    branches: [main, 'feat/electron-device-proof-client']
+    branches: [main, 'feat/electron-device-proof-client', 'feat/electron-signed-sync-proof']
     paths:
       - 'electron-app/**'
       - 'docs/electron-architecture.md'
