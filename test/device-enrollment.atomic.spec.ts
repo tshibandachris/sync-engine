@@ -237,9 +237,19 @@ describe('Device enrollment atomic pairing-code redemption', () => {
         CREATE ROLE device_enrollment_migration_test
           NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS
       `);
+      await client.query('GRANT device_enrollment_function_owner TO device_enrollment_migration_test');
       await client.query('ALTER SCHEMA public OWNER TO device_enrollment_migration_test');
-      await client.query('ALTER TABLE public.devices OWNER TO device_enrollment_migration_test');
-      await client.query('ALTER TABLE public.device_pairing_codes OWNER TO device_enrollment_migration_test');
+      for (const table of [
+        'tenants',
+        'devices',
+        'device_pairing_codes',
+        'device_credentials',
+        'device_approval_events',
+        'device_proof_nonces',
+        'device_enrollment_attempts',
+      ]) {
+        await client.query(`ALTER TABLE public.${table} OWNER TO device_enrollment_migration_test`);
+      }
       await client.query(`
         ALTER FUNCTION public.register_device_enrollment_with_credential(
           text, uuid, varchar, varchar, jsonb, text, varchar, uuid
@@ -270,6 +280,7 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     } finally {
       await client.query('RESET ROLE').catch(() => undefined);
       client.release();
+      await pg.pool.query('REVOKE device_enrollment_function_owner FROM device_enrollment_migration_test').catch(() => undefined);
     }
   });
 
