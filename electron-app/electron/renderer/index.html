@@ -13,8 +13,8 @@
     button { cursor:pointer; }
     button:disabled { opacity:.55; cursor:wait; }
     .shell { display:grid; grid-template-columns:230px minmax(0,1fr); min-height:100vh; }
-    .shell[hidden], #enrollment-screen[hidden], #storage-error-screen[hidden] { display:none !important; }
-    #enrollment-screen, #storage-error-screen { min-height:100vh; padding:24px; display:flex; align-items:center; justify-content:center; }
+    .shell[hidden], #enrollment-screen[hidden], #approval-screen[hidden], #storage-error-screen[hidden] { display:none !important; }
+    #enrollment-screen, #approval-screen, #storage-error-screen { min-height:100vh; padding:24px; display:flex; align-items:center; justify-content:center; }
     .auth-card { width:min(520px,100%); border:1px solid var(--line); border-radius:18px; background:linear-gradient(145deg,#171b23,#11141a); padding:clamp(22px,5vw,38px); box-shadow:0 24px 80px #0005; }
     .auth-brand { display:flex; align-items:center; gap:12px; margin-bottom:28px; }
     .auth-card h1 { font-size:28px; margin:0 0 12px; }
@@ -89,13 +89,25 @@
     <div class="auth-card">
       <div class="auth-brand"><div class="mark">E</div><div><strong>Eden Gestion</strong><small class="subtext">CONFIGURATION INITIALE</small></div></div>
       <h1 id="enrollment-title">Connecter cette caisse</h1>
-      <p>Cette installation n’a pas encore de jeton d’appareil chiffré. Collez le JWT fourni par votre administrateur. Il sera enregistré uniquement après chiffrement par le stockage sécurisé du système.</p>
+      <p>Associez cette caisse à votre tenant avec le JWT de votre compte agent et le code d’activation à usage unique fourni par l’administrateur. Une clé ES256 propre à ce terminal sera créée et protégée par le stockage sécurisé du système.</p>
       <form id="enrollment-form">
-        <div class="field"><label for="device-token">Jeton d’appareil (JWT)</label><textarea id="device-token" name="token" required maxlength="16384" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="eyJ..." aria-describedby="enrollment-help"></textarea></div>
-        <p class="form-help" id="enrollment-help">Le serveur actuel ne fournit pas encore de route d’échange pour un code d’activation. Utilisez un JWT d’appareil émis par votre administrateur. Sa signature et ses autorisations seront vérifiées par le serveur lors de la synchronisation.</p>
+        <div class="field"><label for="device-token">Jeton agent (JWT)</label><textarea id="device-token" name="token" required maxlength="16384" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="eyJ..." aria-describedby="enrollment-help"></textarea></div>
+        <div class="field"><label for="activation-code">Code d’activation</label><input id="activation-code" name="activationCode" required maxlength="9" autocomplete="off" autocapitalize="characters" placeholder="AB12-CD34"></div>
+        <div class="field"><label for="device-name">Nom de cette caisse</label><input id="device-name" name="deviceName" required maxlength="120" value="Caisse principale" autocomplete="off"></div>
+        <p class="form-help" id="enrollment-help">Le JWT agent rattache l’enrôlement au tenant autorisé. Le code à usage unique, l’empreinte d’installation et la clé publique sont liés par une preuve ES256. Le terminal restera bloqué pour la synchronisation jusqu’à son approbation.</p>
         <p class="feedback" id="enrollment-feedback" role="status" aria-live="polite"></p>
-        <button class="btn primary" id="enroll-button" type="submit">Chiffrer et connecter la caisse</button>
+        <button class="btn primary" id="enroll-button" type="submit">Enrôler cette caisse</button>
       </form>
+    </div>
+  </section>
+  <section id="approval-screen" hidden aria-labelledby="approval-title">
+    <div class="auth-card">
+      <div class="auth-brand"><div class="mark">E</div><div><strong>Eden Gestion</strong><small class="subtext">APPROBATION DU TERMINAL</small></div></div>
+      <h1 id="approval-title">En attente d’approbation</h1>
+      <p id="approval-message">Le terminal est enrôlé et sa clé cryptographique est enregistrée. Un administrateur doit approuver ce poste avant toute synchronisation.</p>
+      <p class="form-help">La caisse locale reste utilisable. Les ventes et opérations en attente restent conservées sur cet ordinateur ; aucun envoi serveur n’est effectué avant approbation.</p>
+      <p class="feedback" id="approval-feedback" role="status" aria-live="polite"></p>
+      <button class="btn primary" id="check-approval" type="button">Vérifier le statut</button>
     </div>
   </section>
   <section id="storage-error-screen" hidden aria-labelledby="storage-error-title">
