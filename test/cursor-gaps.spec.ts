@@ -43,6 +43,7 @@ import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
+import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
 
 const GATE_KEY = 424242;
 const GATE_ROW_ID = '00000000-0000-4000-8000-00000000a11e';
@@ -216,7 +217,7 @@ describe('sync cursor gaps (out-of-order commit)', () => {
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
       ],
-    }).compile();
+    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
 
