@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TestPostgres } from './helpers/testcontainers-pg.js';
 import { startTestPostgres } from './helpers/testcontainers-pg.js';
 import { DeviceProofNonceRepository } from '../src/auth/device-proof-nonce.repository.js';
+import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 
 describe('Device proof replay registry (PostgreSQL / RLS)', () => {
   let pg: TestPostgres;
@@ -158,6 +159,54 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
     } finally {
       client.release();
     }
+  });
+
+  it('purges only expired nonces for the requested tenant in bounded batches', async () => {
+    const maintenance = new SyncMaintenanceService(pg.appDb);
+    const expired = randomUUID();
+    const live = randomUUID();
+    const otherTenantExpired = randomUUID();
+
+    await repository.recordNonceIfUnseen(tenantA, deviceA, expired, new Date(Date.now() - 60_000));
+    await repository.recordNonceIfUnseen(tenantA, deviceA, live, new Date(Date.now() + 120_000));
+
+    const otherDevice = randomUUID();
+    await pg.pool.query(
+      `INSERT INTO devices (
+         id, tenant_id, store_id, name, fingerprint, hardware_info,
+         is_active, approval_status
+       ) VALUES ($1, $2, $3, 'Other tenant replay test', $4, '{}'::jsonb, true, 'pending_approval')`,
+      [otherDevice, tenantB, randomUUID(), `replay-test-${otherDevice}`],
+    );
+    await repository.recordNonceIfUnseen(tenantB, otherDevice, otherTenantExpired, new Date(Date.now() - 60_000));
+
+    const appClient = await pg.appPool.connect();
+    try {
+      await appClient.query('BEGIN');
+      await appClient.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantA]);
+      await expect(appClient.query(
+        'DELETE FROM public.device_proof_nonces WHERE tenant_id = $1',
+        [tenantA],
+      )).rejects.toMatchObject({ code: '42501' });
+      await appClient.query('ROLLBACK');
+    } finally {
+      appClient.release();
+    }
+
+    await expect(maintenance.purgeExpiredDeviceProofNonces(tenantA, 1)).resolves.toEqual({ deleted: 1 });
+    const remaining = await pg.pool.query(
+      'SELECT tenant_id, jti FROM public.device_proof_nonces WHERE jti = ANY($1::uuid[]) ORDER BY jti',
+      [[expired, live, otherTenantExpired]],
+    );
+    expect(remaining.rows).toHaveLength(2);
+    expect(remaining.rows.map((row) => row.jti)).toContain(live);
+    expect(remaining.rows.map((row) => row.jti)).toContain(otherTenantExpired);
+  });
+
+  it('rejects unsafe nonce purge batch sizes', async () => {
+    const maintenance = new SyncMaintenanceService(pg.appDb);
+    await expect(maintenance.purgeExpiredDeviceProofNonces(tenantA, 0)).rejects.toThrow(/batchSize/);
+    await expect(maintenance.purgeExpiredDeviceProofNonces(tenantA, 10001)).rejects.toThrow(/batchSize/);
   });
 
   it('rejects malformed UUID inputs before reaching PostgreSQL', async () => {
