@@ -1,13 +1,12 @@
 import {
   Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, Req, UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { DeviceEnrollmentService } from './device-enrollment.service.js';
 import { parseEnrollDeviceDto } from './device-enrollment.dto.js';
 import { JwtAuthGuard } from './jwt.guard.js';
 
-interface AuthenticatedRequest extends Request { tenantId: string; }
+interface AuthenticatedRequest { tenantId?: string; }
 
 @Controller('api/v1/devices')
 export class DeviceEnrollmentController {
@@ -22,7 +21,7 @@ export class DeviceEnrollmentController {
     @Req() request: AuthenticatedRequest,
   ) {
     const dto = parseEnrollDeviceDto(body);
-    return this.enrollment.enrollDevice(dto, hardwareId ?? '', request.tenantId);
+    return this.enrollment.enrollDevice(dto, hardwareId ?? '', request.tenantId ?? '');
   }
 
   @Get('status')
@@ -31,6 +30,6 @@ export class DeviceEnrollmentController {
     @Headers('x-device-id') deviceId: string | undefined,
     @Req() request: AuthenticatedRequest,
   ) {
-    return this.enrollment.getDeviceStatus(request.tenantId, deviceId ?? '');
+    return this.enrollment.getDeviceStatus(request.tenantId ?? '', deviceId ?? '');
   }
 }
