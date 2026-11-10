@@ -327,7 +327,7 @@ describe('Device enrollment atomic pairing-code redemption', () => {
         CREATE ROLE device_enrollment_migration_test
           NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS
       `);
-      await client.query('GRANT device_enrollment_function_owner TO device_enrollment_migration_test');
+      await client.query('GRANT device_enrollment_function_owner TO device_enrollment_migration_test WITH INHERIT TRUE, SET TRUE');
       await client.query('ALTER SCHEMA public OWNER TO device_enrollment_migration_test');
       for (const table of [
         'tenants',
