@@ -92,7 +92,7 @@ function readStatus() {
     deviceThumbprint: deviceCredential?.thumbprint || null,
     deviceCredentialError: deviceCredentialError?.message || null,
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
-    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady),
+    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
     serverHasActiveCredential,
     deviceProofReady,
     lastCursor: db ? getCursor(db) : status.lastCursor,
