@@ -36,6 +36,7 @@ if [ "$ledger_before" = "0" ] && [ "$legacy_schema" = "1" ]; then
       WHEN to_regclass('public.products') IS NOT NULL
        AND to_regclass('public.staff') IS NOT NULL
        AND to_regclass('public.cash_sessions') IS NOT NULL
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'cash_sessions' AND column_name = 'reconciliation_alert_reason')
        AND to_regclass('public.sales') IS NOT NULL
        AND to_regclass('public.sale_lines') IS NOT NULL
        AND to_regclass('public.stock_movements') IS NOT NULL
