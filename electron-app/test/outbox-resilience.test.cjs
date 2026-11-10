@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { openDatabase } = require('../electron/db/client.cjs');
-const { pushChanges } = require('../electron/sync/api-client.cjs');
+const { pushPendingBatch } = require('../electron/sync/sync-coordinator.cjs');
 const {
   enqueueOutbox, preparePushBatch, getOutboxStatus,
 } = require('../electron/sync/outbox.cjs');
@@ -102,7 +102,8 @@ for (const scenario of scenarios) {
         return scenario.fetchImpl(url, options);
       };
 
-      const request = pushChanges({
+      const request = pushPendingBatch({
+        db: f.db,
         baseUrl: 'http://127.0.0.1:3000',
         token: 'test-agent-jwt',
         deviceId,
