@@ -250,6 +250,7 @@ function startDeviceStatusPolling() {
       baseUrl: process.env.EDEN_SYNC_URL,
       getAgentToken: () => deviceToken,
       getDeviceId: () => deviceCredential?.deviceId || null,
+      getPrivateKeyPem: () => deviceCredential?.privateKeyPem || null,
       onStatus: (serverStatus) => {
         serverHasActiveCredential = serverStatus.hasActiveCredential;
         deviceTrustState = !serverStatus.isActive ? 'deactivated' : serverStatus.approvalStatus === 'pending_approval'
