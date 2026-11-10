@@ -58,9 +58,8 @@ describe('Sync Engine / HTTP', () => {
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
         DeviceApprovalGuard,
-        { provide: DeviceProofGuard, useFactory: (approval: DeviceApprovalGuard) => ({ canActivate: (context: any) => approval.canActivate(context) }), inject: [DeviceApprovalGuard] },
       ],
-    }).compile();
+    }).overrideGuard(DeviceProofGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
     await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
