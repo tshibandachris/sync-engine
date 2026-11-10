@@ -4,8 +4,8 @@
 #   - No build context: the image comes from the registry or is
 #     pre-built locally.
 #   - A one-shot 'migrate' service applies pending migrations from the
-#     schema_migrations ledger, then provisions the sync_app and dedicated
-#     device_enrollment_login credentials from deployment secrets.
+#     schema_migrations ledger, then provisions sync_app plus separate enrollment and device-admin
+#     credentials from deployment secrets.
 #   - The app connects as sync_app (not postgres), so RLS applies.
 #   - The db port is not published. Only the app reaches it, over the
 #     compose network.
