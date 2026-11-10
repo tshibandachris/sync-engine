@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, validation/device-enrollment-db-isolation-base]
+    branches: [main, validation/device-enrollment-ci-2]
 
 jobs:
   test:
