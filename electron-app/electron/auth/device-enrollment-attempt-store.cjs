@@ -5,7 +5,8 @@ const path = require('node:path');
 const { assertKeyPair, calculateJwkThumbprint } = require('./device-crypto.cjs');
 
 const ATTEMPT_FILENAME = 'device-enrollment-attempt.enc';
-const CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;\nconst UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class DeviceEnrollmentAttemptStore {
   constructor({ app, safeStorage, fsImpl = fs }) {
