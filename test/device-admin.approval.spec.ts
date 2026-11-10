@@ -120,6 +120,22 @@ describe('Device administration approval workflow', () => {
     expect(response.body.map((device: { id: string }) => device.id)).not.toContain(approvedA);
   });
 
+  it('records the initial pending request when a device is enrolled', async () => {
+    const event = await pg.pool.query(
+      `SELECT event_type, from_status, to_status, actor_id
+         FROM public.device_approval_events
+        WHERE tenant_id = $1 AND device_id = $2
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [tenantB, pendingB],
+    );
+    expect(event.rows[0]).toEqual({
+      event_type: 'requested',
+      from_status: null,
+      to_status: 'pending_approval',
+      actor_id: null,
+    });
+  });
+
   it('approves a pending device and appends the decision event atomically', async () => {
     const auth = await token(tenantA, actorA, ['devices:approve']);
     const response = await request(app.getHttpServer())
