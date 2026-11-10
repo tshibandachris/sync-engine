@@ -74,6 +74,7 @@ function validateProductInput(value) {
 
 const api = Object.freeze({
   getStatus: () => ipcRenderer.invoke('eden:get-status'),
+  getDeviceStatus: () => ipcRenderer.invoke('eden:device:get-status'),
   refresh: () => ipcRenderer.invoke('eden:refresh'),
   getDashboard: () => ipcRenderer.invoke('eden:dashboard'),
   listProducts: (search = '') => ipcRenderer.invoke('eden:products:list', validateSearchQuery(search)),
