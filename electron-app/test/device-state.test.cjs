@@ -7,10 +7,10 @@ const {
 } = require('../electron/auth/device-state.cjs');
 
 test('agent session grants local POS independently of device approval', () => {
-  assert.equal(canAccessLocalPOS('authenticated'), true);
-  assert.equal(canAccessLocalPOS('unauthenticated'), false);
+  assert.equal(canAccessLocalPOS('authenticated', 'unregistered'), true);
+  assert.equal(canAccessLocalPOS('unauthenticated', 'approved'), false);
   for (const trust of ['unregistered', 'awaiting_approval', 'approved', 'revoked']) {
-    assert.equal(canAccessLocalPOS('authenticated'), true, trust);
+    assert.equal(canAccessLocalPOS('authenticated', trust), true, trust);
   }
 });
 
