@@ -55,7 +55,7 @@ function exactKeys(value: object, expected: string[]): boolean {
 @Injectable()
 export class DeviceEnrollmentService {
   constructor(
-    @Inject('DRIZZLE_DB')
+    @Inject('DEVICE_ENROLLMENT_DB')
     private readonly db: NodePgDatabase<typeof schema>,
   ) {}
 
