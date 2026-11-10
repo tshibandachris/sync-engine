@@ -29,8 +29,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: android-app/package-lock.json
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -43,6 +41,8 @@ jobs:
         run: npm run build
       - name: Generate Android project
         run: npx cap add android
+      - name: Register native Android Keystore plugin
+        run: node scripts/prepare-android.mjs
       - name: Sync Capacitor plugins
         run: npx cap sync android
       - name: Build debug APK
