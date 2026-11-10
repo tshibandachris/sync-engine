@@ -154,4 +154,51 @@ for (const scenario of scenarios) {
       f.cleanup();
     }
   });
+
+test('acknowledges the Outbox only after a valid successful HTTP response', async () => {
+  const f = fixture();
+  try {
+    const id = '00000000-0000-4000-8000-000000000303';
+    const deviceId = '00000000-0000-4000-8000-000000000404';
+    const { privateKey } = createDeviceKeyPair();
+    enqueueSale(f.db, id);
+    const batch = preparePushBatch(f.db, { now: 1700000001000 });
+    let fetchCalls = 0;
+
+    const result = await pushPendingBatch({
+      db: f.db,
+      baseUrl: 'http://127.0.0.1:3000',
+      token: 'test-agent-jwt',
+      deviceId,
+      privateKeyPem: privateKey,
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        return {
+          ok: true,
+          status: 201,
+          text: async () => JSON.stringify({
+            applied: true,
+            conflicts: [],
+            products: [{ entity_id: id, status: 'applied' }],
+          }),
+        };
+      },
+    });
+
+    assert.equal(fetchCalls, 1);
+    assert.deepEqual(result, { sent: true, acknowledged: 1, retained: 0, replay: false });
+    assert.equal(getOutboxStatus(f.db).pending, 0);
+
+    f.reopen();
+    assert.equal(getOutboxStatus(f.db).pending, 0);
+    const completed = f.db.prepare(
+      'SELECT state, idempotency_key FROM outbox_batches WHERE idempotency_key = ?',
+    ).get(batch.idempotencyKey);
+    assert.equal(completed.state, 'completed');
+    assert.equal(completed.idempotency_key, batch.idempotencyKey);
+  } finally {
+    f.cleanup();
+  }
+});
+
 }
