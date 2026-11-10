@@ -159,7 +159,7 @@ describe('Device security hardening — migration 032', () => {
     )).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('T10: sync_app cannot create a device with a forged approved state', async () => {
+  it('T10: sync_app cannot insert a device directly after migration 035', async () => {
     await expect(asTenant(tenantA, (client) =>
       client.query(
         `INSERT INTO devices
@@ -169,13 +169,10 @@ describe('Device security hardening — migration 032', () => {
                  '{}'::jsonb, true, 'approved', now(), $4)`,
         [randomUUID(), tenantA, randomUUID(), randomUUID()],
       ),
-    )).rejects.toMatchObject({
-      code: '42501',
-      message: expect.stringContaining('SECURITY_VIOLATION'),
-    });
+    )).rejects.toMatchObject({ code: '42501' });
   });
 
-  it('T12: sync_app cannot inject approval decision metadata during enrollment', async () => {
+  it('T12: sync_app cannot insert enrollment metadata directly after migration 035', async () => {
     await expect(asTenant(tenantA, (client) =>
       client.query(
         `INSERT INTO devices
