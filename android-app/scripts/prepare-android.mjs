@@ -82,6 +82,11 @@ let gradle = fs.readFileSync(gradlePath, 'utf8');
 if (!gradle.includes('testInstrumentationRunner')) {
   gradle = gradle.replace(/defaultConfig\s*\{/, 'defaultConfig {\n        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"');
 }
+
+// Give ADB more time to respond on cold-booted hosted emulators.
+if (!gradle.includes('timeOutInMs')) {
+  gradle = gradle.replace(/android\s*\{/, 'android {\n    adbOptions { timeOutInMs = 60000 }');
+}
 if (!gradle.includes('androidx.test:runner')) {
   gradle = gradle.replace(/dependencies\s*\{/, 'dependencies {\n    androidTestImplementation "androidx.test:runner:1.6.2"\n    androidTestImplementation "androidx.test:rules:1.6.1"\n    androidTestImplementation "androidx.test.ext:junit:1.2.1"');
 }
