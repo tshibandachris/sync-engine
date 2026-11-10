@@ -2,9 +2,11 @@
 
 ## Principe
 
-L'enrôlement initial est la seule opération backend qui utilise une connexion PostgreSQL dédiée. La connexion générale (`DATABASE_URL`) reste affectée aux opérations applicatives et de synchronisation. Elle ne reçoit aucun droit `EXECUTE` sur `public.register_device_enrollment_with_credential(...)`.
+L'enrôlement initial est la seule opération backend qui utilise une connexion PostgreSQL dédiée. La connexion générale (`DATABASE_URL`) reste affectée aux opérations applicatives et de synchronisation. Elle ne reçoit aucun droit `EXECUTE` sur `public.register_device_enrollment_with_credential(...)`, aucun droit d'écriture sur `devices`, aucun accès aux codes d'activation et aucun droit d'exécution sur les deux helpers SECURITY DEFINER historiques.
 
-La migration `036_device_enrollment_executor_role.sql` crée (ou valide) le rôle-capacité `device_enrollment_executor` avec les attributs suivants : `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `NOREPLICATION`, `NOBYPASSRLS`. Elle révoque le privilège de la fonction d'enrôlement à `PUBLIC` et `sync_app`, puis le donne uniquement à ce rôle.
+La migration `036_device_enrollment_executor_role.sql` retire aussi à `sync_app` les privilèges historiques d'insertion de devices, de lecture/consommation des codes d'activation et d'appel direct aux helpers. Le trigger pending-only reste une défense en profondeur, mais la connexion générale n'a plus le droit d'insérer un device. Elle conserve les lectures nécessaires au contrôle d'approbation et à la preuve de terminal.
+
+La migration crée (ou valide) le rôle-capacité `device_enrollment_executor` avec les attributs suivants : `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `NOREPLICATION`, `NOBYPASSRLS`. Elle révoque le privilège de la fonction d'enrôlement à `PUBLIC` et `sync_app`, puis le donne uniquement à ce rôle.
 
 La migration ne crée jamais de compte LOGIN et ne stocke aucun secret.
 
@@ -48,6 +50,6 @@ Si le compte de migration n'a pas `CREATEROLE`, un DBA doit pré-provisionner `d
 - Le pool dédié ne peut appeler que les opérations explicitement accordées à son rôle, notamment la fonction atomique d'enrôlement.
 - La fonction SECURITY DEFINER conserve l'atomicité de consommation du code, création du terminal pending, credential, événement d'audit, nonce et reçu d'idempotence.
 - L'approbation reste une décision serveur distincte ; ce privilège ne permet pas d'approuver un terminal.
-- Le pool général continue de porter les routes métier et la synchronisation ; aucun changement n'est apporté à l'Outbox Electron.
+- Le pool général continue de porter les routes métier et la synchronisation en lecture/écriture sur leurs domaines autorisés ; il ne peut ni créer un terminal, ni consommer un code d'activation, ni écrire credential/événement d'approbation. Aucun changement n'est apporté à l'Outbox Electron.
 
 Le succès des tests de privilèges prouve la séparation dans la base de test. Il ne dispense pas de vérifier les rôles, secrets et memberships du cluster de production après déploiement.
