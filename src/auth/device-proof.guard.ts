@@ -125,27 +125,38 @@ export class DeviceProofGuard implements CanActivate {
     if (!device) {
       throw new ForbiddenException({ code: 'DEVICE_NOT_FOUND', message: 'Unknown device for tenant' });
     }
-    if (!device.isActive) {
-      throw new ForbiddenException({ code: 'DEVICE_DEACTIVATED', message: 'Device has been disabled' });
+    const originalUrlForTrust = typeof request.originalUrl === 'string' ? request.originalUrl : '';
+    const isDeviceStatusRequest = request.method === 'GET' &&
+      originalUrlForTrust.split('?', 1)[0] === '/api/v1/devices/status';
+
+    // The status endpoint is the one exception to approval/activation gating:
+    // it still requires possession of this device's key, but must remain
+    // reachable by pending, rejected, revoked and deactivated devices.
+    if (!isDeviceStatusRequest) {
+      if (!device.isActive) {
+        throw new ForbiddenException({ code: 'DEVICE_DEACTIVATED', message: 'Device has been disabled' });
+      }
+
+      switch (device.approvalStatus) {
+        case 'pending_approval':
+          throw new ForbiddenException({ code: 'DEVICE_PENDING_APPROVAL', message: 'Device is awaiting approval' });
+        case 'rejected':
+          throw new ForbiddenException({ code: 'DEVICE_REJECTED', message: 'Device enrollment was rejected' });
+        case 'revoked':
+          throw new ForbiddenException({ code: 'DEVICE_REVOKED', message: 'Device authorization was revoked' });
+        case 'approved':
+          break;
+        default:
+          throw new ForbiddenException({ code: 'DEVICE_UNAUTHORIZED', message: 'Device is not approved' });
+      }
     }
 
-    switch (device.approvalStatus) {
-      case 'pending_approval':
-        throw new ForbiddenException({ code: 'DEVICE_PENDING_APPROVAL', message: 'Device is awaiting approval' });
-      case 'rejected':
-        throw new ForbiddenException({ code: 'DEVICE_REJECTED', message: 'Device enrollment was rejected' });
-      case 'revoked':
-        throw new ForbiddenException({ code: 'DEVICE_REVOKED', message: 'Device authorization was revoked' });
-      case 'approved':
-        break;
-      default:
-        throw new ForbiddenException({ code: 'DEVICE_UNAUTHORIZED', message: 'Device is not approved' });
-    }
-
-    if (!device.publicKeyPem || device.credentialStatus !== 'active' || device.algorithm !== 'ES256') {
+    if (!device.publicKeyPem || !device.credentialStatus ||
+        (!isDeviceStatusRequest && device.credentialStatus !== 'active') ||
+        device.algorithm !== 'ES256') {
       throw new ForbiddenException({
         code: 'NO_ACTIVE_CREDENTIAL',
-        message: 'Approved device has no active ES256 credential',
+        message: 'A usable ES256 device credential is required for this request',
       });
     }
 
