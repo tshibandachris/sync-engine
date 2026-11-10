@@ -12,7 +12,7 @@ describe('Device enrollment atomic proof-of-possession', () => {
 
   beforeAll(async () => {
     pg = await startTestPostgres();
-    service = new DeviceEnrollmentService(pg.appDb as any);
+    service = new DeviceEnrollmentService(pg.appDb as any, pg.enrollmentDb as any);
     await pg.pool.query(
       'INSERT INTO tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
       [tenantId, Date.now()],
@@ -160,6 +160,21 @@ describe('Device enrollment atomic proof-of-possession', () => {
     );
     expect(state.rows[0].used_at).toBeNull();
   }, 120_000);
+
+  it('isolates the SECURITY DEFINER enrollment capability from sync_app', async () => {
+    const syncExecute = await pg.pool.query(
+      `SELECT has_function_privilege('sync_app', 'public.register_device_enrollment_with_credential(text,uuid,uuid,character varying,character varying,jsonb,text,character varying)', 'EXECUTE') AS allowed`,
+    );
+    const enrollmentExecute = await pg.pool.query(
+      `SELECT has_function_privilege('device_enrollment_test', 'public.register_device_enrollment_with_credential(text,uuid,uuid,character varying,character varying,jsonb,text,character varying)', 'EXECUTE') AS allowed`,
+    );
+    const membership = await pg.pool.query(
+      `SELECT pg_has_role('device_enrollment_test', 'sync_app', 'MEMBER') AS is_sync_app_member`,
+    );
+    expect(syncExecute.rows[0].allowed).toBe(false);
+    expect(enrollmentExecute.rows[0].allowed).toBe(true);
+    expect(membership.rows[0].is_sync_app_member).toBe(false);
+  });
 
   it('does not grant sync_app direct credential or approval-event writes', async () => {
     const credentialPrivilege = await pg.pool.query(
