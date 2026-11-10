@@ -41,8 +41,10 @@ if (!activity.includes('EdenDeviceKeyPlugin.class')) {
 
 const manifestPath = path.join(root, 'app', 'src', 'main', 'AndroidManifest.xml');
 let manifest = fs.readFileSync(manifestPath, 'utf8');
+// Do not lock orientation: Android 16 ignores orientation restrictions on large screens.
+manifest = manifest.replace(/(<activity\b[^>]*?)\s+android:screenOrientation="[^"]*"/s, '$1');
 manifest = manifest.replace(/(<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*)(>)/s, (all, before, close) =>
-  before.includes('android:screenOrientation') ? all : before + ' android:screenOrientation="landscape"' + close);
+  before.includes('android:resizeableActivity') ? all : before + ' android:resizeableActivity="true"' + close);
 manifest = manifest.replace(/(<application\b[^>]*)(>)/s, (all, before, close) => {
   let updated = before;
   if (!updated.includes('android:allowBackup')) updated += ' android:allowBackup="false"';
@@ -50,6 +52,17 @@ manifest = manifest.replace(/(<application\b[^>]*)(>)/s, (all, before, close) =>
   return updated + close;
 });
 fs.writeFileSync(manifestPath, manifest);
+
+// Pin the Android 16 SDK contract explicitly for Capacitor 8.x.
+const variablesPath = path.join(root, 'variables.gradle');
+if (!fs.existsSync(variablesPath)) throw new Error('Capacitor variables.gradle was not generated.');
+let variables = fs.readFileSync(variablesPath, 'utf8');
+for (const setting of ['compileSdkVersion', 'targetSdkVersion']) {
+  const pattern = new RegExp('(' + setting + '\\s*=\\s*)\\d+');
+  if (!pattern.test(variables)) throw new Error('Missing ' + setting + ' in variables.gradle.');
+  variables = variables.replace(pattern, '$1' + '36');
+}
+fs.writeFileSync(variablesPath, variables);
 
 const xmlDirectory = path.join(root, 'app', 'src', 'main', 'res', 'xml');
 fs.mkdirSync(xmlDirectory, { recursive: true });
@@ -84,4 +97,4 @@ fs.mkdirSync(testPackageDir, { recursive: true });
 const test = fs.readFileSync(testSource, 'utf8').replace(/^package\s+[\w.]+;/m, `package ${packageName};`);
 fs.writeFileSync(path.join(testPackageDir, 'EdenFoundationInstrumentedTest.java'), test);
 
-console.log('Registered native ES256 plugin, Android instrumentation tests, landscape and backup protections.');
+console.log('Registered native ES256 plugin, Android instrumentation tests, adaptive orientation, API 36 SDK and backup protections.');
