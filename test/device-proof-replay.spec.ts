@@ -167,6 +167,7 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
       SELECT r.rolcanlogin, r.rolsuper, r.rolbypassrls,
              pg_catalog.has_table_privilege(r.oid, 'public.device_proof_nonces', 'SELECT') AS can_select,
              pg_catalog.has_table_privilege(r.oid, 'public.device_proof_nonces', 'DELETE') AS can_delete,
+             pg_catalog.has_table_privilege(r.oid, 'public.device_proof_nonces', 'UPDATE') AS can_update,
              EXISTS (
                SELECT 1 FROM pg_catalog.pg_class c
                WHERE c.relowner = r.oid AND c.relname = 'device_proof_nonces'
@@ -184,6 +185,7 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
       rolbypassrls: false,
       can_select: true,
       can_delete: true,
+      can_update: false,
       owns_nonce_table: false,
       has_memberships: false,
     });
