@@ -55,6 +55,12 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: enrollment function must remain SECURITY DEFINER and must not be owned by sync_app';
   END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_auth_members
+    WHERE member = 'device_enrollment_executor'::regrole
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: executor capability role must not inherit any other role';
+  END IF;
   IF pg_catalog.pg_has_role('device_enrollment_executor', 'sync_app', 'MEMBER') THEN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: executor must not be a member of sync_app';
   END IF;
