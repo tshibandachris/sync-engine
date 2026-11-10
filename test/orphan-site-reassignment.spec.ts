@@ -24,6 +24,7 @@ import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
+import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 
 let pg: TestPostgres;
 
@@ -137,7 +138,8 @@ describe('Bug 1 : site orphelin après réaffectation de mission', () => {
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
       ],
-    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true }).compile();
+    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true })
+      .overrideGuard(DeviceProofGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
     await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
