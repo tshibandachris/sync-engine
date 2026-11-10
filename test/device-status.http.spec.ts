@@ -2,13 +2,19 @@ import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import request from 'supertest';
-import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { DeviceStatusController } from '../src/device-status.controller.js';
 import { DeviceStatusService } from '../src/device-status.service.js';
 import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 import { TEST_JWT_SECRET, createTestJwtService, signAgentToken } from './helpers/jwt.js';
+
+const require = createRequire(import.meta.url);
+const { createDeviceProof } = require('../electron-app/electron/auth/device-crypto.cjs') as {
+  createDeviceProof(input: { privateKeyPem: string; token: string; method: string; url: string }): string;
+};
 
 describe('GET /api/v1/devices/status — proof of possession', () => {
   let pg: TestPostgres;
@@ -34,21 +40,13 @@ describe('GET /api/v1/devices/status — proof of possession', () => {
     });
   }
 
-  function makeProof(deviceId: string, privateKey: string, token = tokenA) {
-    const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'dpop+jwt' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({
-      jti: randomUUID(),
-      htm: 'GET',
-      htu: '/api/v1/devices/status',
-      iat: Math.floor(Date.now() / 1000),
-      ath: createHash('sha256').update(token, 'utf8').digest('base64url'),
-    })).toString('base64url');
-    const signingInput = header + '.' + payload;
-    const signature = sign('sha256', Buffer.from(signingInput, 'ascii'), {
-      key: privateKey,
-      dsaEncoding: 'ieee-p1363',
+  function makeProof(_deviceId: string, privateKey: string, token = tokenA) {
+    return createDeviceProof({
+      privateKeyPem: privateKey,
+      token,
+      method: 'GET',
+      url: 'https://sync.example.test/api/v1/devices/status',
     });
-    return signingInput + '.' + signature.toString('base64url');
   }
 
   function headers(deviceId: string, token = tokenA, privateKey = keys.get(deviceId)!.privateKey) {
