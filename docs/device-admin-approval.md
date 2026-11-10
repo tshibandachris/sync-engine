@@ -13,6 +13,8 @@ Toutes les routes sont protégées par un JWT validé par le mode JWKS/IdP confi
 
 Les claims `permissions` ou `scope` sont extraits par `JwtAuthGuard` après validation de la signature du JWT. Le service refuse les appels sans la permission exacte. Les jetons de développement sans permission n'accordent aucun accès administratif.
 
+Le mode de production à secret partagé (`AUTH_ALLOW_SHARED_SECRET=true`) ne fournit pas de permissions administratives dans les jetons émis par `scripts/mint-token.mjs`. Les routes d'administration restent donc volontairement fermées dans ce mode. Pour activer l'administration des terminaux, utiliser un IdP/JWKS qui signe des claims `permissions` explicitement attribués aux administrateurs. Ne pas ajouter une permission administrative à un jeton POS ordinaire.
+
 ## Transitions
 
 - `pending_approval -> approved` : événement `approved`, horodatage et acteur enregistrés.
