@@ -6,6 +6,8 @@ const HOSTNAME_MAX = 255;
 const PLATFORM_MAX = 40;
 const ARCH_MAX = 40;
 const OS_RELEASE_MAX = 100;
+const PUBLIC_KEY_MAX = 16384;
+const INITIAL_PROOF_MAX = 8192;
 
 export interface HardwareInfoDto {
   hostname: string;
@@ -18,6 +20,8 @@ export interface EnrollDeviceDto {
   activationCode: string;
   deviceName: string;
   hardwareInfo: HardwareInfoDto;
+  publicKeyPem: string;
+  initialProof: string;
 }
 
 /** Runtime validation without adding a second validation framework to the API. */
@@ -32,6 +36,8 @@ export function parseEnrollDeviceDto(input: unknown): EnrollDeviceDto {
     : '';
   const deviceName = typeof value.deviceName === 'string' ? value.deviceName.trim() : '';
   const hardware = value.hardwareInfo;
+  const publicKeyPem = typeof value.publicKeyPem === 'string' ? value.publicKeyPem.trim() : '';
+  const initialProof = typeof value.initialProof === 'string' ? value.initialProof : '';
 
   if (!ACTIVATION_CODE_RE.test(activationCode)) {
     throw new BadRequestException("Le code d'activation doit respecter le format XXXX-XXXX.");
@@ -41,6 +47,12 @@ export function parseEnrollDeviceDto(input: unknown): EnrollDeviceDto {
   }
   if (!hardware || typeof hardware !== 'object' || Array.isArray(hardware)) {
     throw new BadRequestException('hardwareInfo est requis.');
+  }
+  if (!publicKeyPem.startsWith('-----BEGIN PUBLIC KEY-----') || publicKeyPem.length > PUBLIC_KEY_MAX) {
+    throw new BadRequestException('publicKeyPem doit être une clé publique SPKI PEM valide (maximum 16 KiB).');
+  }
+  if (!initialProof || initialProof.length > INITIAL_PROOF_MAX) {
+    throw new BadRequestException('initialProof est requis et ne peut dépasser 8 KiB.');
   }
 
   const info = hardware as Record<string, unknown>;
@@ -71,5 +83,7 @@ export function parseEnrollDeviceDto(input: unknown): EnrollDeviceDto {
         ? { osRelease: info.osRelease.trim() }
         : {}),
     },
+    publicKeyPem,
+    initialProof,
   };
 }
