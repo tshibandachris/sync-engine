@@ -80,8 +80,8 @@ describe('HTTP device proof verification', () => {
         (id, tenant_id, store_id, name, fingerprint, hardware_info, is_active,
          approval_status, approved_at, approved_by)
        VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, $6, $7,
-         CASE WHEN $7 IN ('approved', 'revoked') THEN now() ELSE NULL END,
-         CASE WHEN $7 IN ('approved', 'revoked') THEN $8::uuid ELSE NULL END)`,
+         CASE WHEN $7::varchar(24) IN ('approved', 'revoked') THEN now() ELSE NULL END,
+         CASE WHEN $7::varchar(24) IN ('approved', 'revoked') THEN $8::uuid ELSE NULL END)`,
       [id, tenantId, crypto.randomUUID(), `Proof device ${id}`, `proof-${id}`, active, status, agentId],
     );
     if (withCredential) {
