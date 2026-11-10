@@ -221,7 +221,15 @@ BEGIN
      OR pg_catalog.has_function_privilege('sync_app', 'public.transition_device_approval(uuid,uuid,uuid,text,character varying)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('device_admin_executor', 'public.transition_device_approval(uuid,uuid,uuid,text,character varying)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('device_admin_executor', 'public.redeem_device_pairing_code(text)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('device_admin_executor', 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)', 'EXECUTE') THEN
+     OR pg_catalog.has_function_privilege('device_admin_executor', 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)', 'EXECUTE')
+     OR EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_proc AS p
+        WHERE p.pronamespace = 'public'::regnamespace
+          AND p.prosecdef
+          AND p.oid <> 'public.transition_device_approval(uuid,uuid,uuid,text,character varying)'::regprocedure
+          AND pg_catalog.has_function_privilege('device_admin_executor', p.oid, 'EXECUTE')
+     ) THEN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: device admin executor privilege boundary is invalid';
   END IF;
 
