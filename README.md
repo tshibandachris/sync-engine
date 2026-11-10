@@ -49,7 +49,7 @@ Le client nécessite une URL d'API joignable et un jeton d'appareil valide. En m
 ## Structure du dépôt
 
 - `src/` : API NestJS, services métier, synchronisation, sécurité et observabilité.
-- `migrations/` : migrations SQL versionnées pour PostgreSQL (jusqu'à 037).
+- `migrations/` : migrations SQL versionnées pour PostgreSQL (jusqu'à 038).
 - `electron-app/` : client Windows Electron, SQLite, interface, sécurité IPC et synchronisation.
 - `test/` : tests backend et d'intégration.
 - `electron-app/test/` : tests du client desktop et simulations.
