@@ -360,10 +360,27 @@ export const devices = pgTable(
     fingerprint: varchar('fingerprint', { length: 255 }).notNull(),
     hardwareInfo: jsonb('hardware_info').$type<Record<string, string>>().notNull(),
     isActive: boolean('is_active').notNull().default(true),
+    approvalStatus: varchar('approval_status', { length: 24 })
+      .$type<'pending_approval' | 'approved' | 'rejected' | 'revoked'>()
+      .notNull()
+      .default('pending_approval'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    approvedBy: uuid('approved_by'),
+    approvalNote: varchar('approval_note', { length: 500 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     tenantFingerprintUnique: unique('devices_tenant_fingerprint_unique').on(table.tenantId, table.fingerprint),
+    tenantIdUnique: unique('devices_tenant_id_unique').on(table.tenantId, table.id),
+    approvalStatusCheck: check(
+      'devices_approval_status_check',
+      sql\`\${table.approvalStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked')\`,
+    ),
+    approvalDecisionConsistency: check(
+      'devices_approval_decision_consistency',
+      sql\`(\${table.approvalStatus} IN ('approved', 'revoked') AND \${table.approvedAt} IS NOT NULL AND \${table.approvedBy} IS NOT NULL) OR (\${table.approvalStatus} IN ('pending_approval', 'rejected') AND \${table.approvedAt} IS NULL AND \${table.approvedBy} IS NULL)\`,
+    ),
+    tenantApprovalStatusIdx: index('idx_devices_tenant_approval_status').on(table.tenantId, table.approvalStatus, table.createdAt),
     tenantStoreIdx: index('idx_devices_tenant_store').on(table.tenantId, table.storeId),
     tenantActiveIdx: index('idx_devices_tenant_active').on(table.tenantId, table.isActive),
   }),
@@ -371,3 +388,82 @@ export const devices = pgTable(
 
 export type Device = typeof devices.$inferSelect;
 export type NewDevice = typeof devices.$inferInsert;
+
+
+export const deviceCredentials = pgTable(
+  'device_credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    deviceId: uuid('device_id').notNull(),
+    algorithm: varchar('algorithm', { length: 16 }).notNull().default('ES256'),
+    publicKeyPem: text('public_key_pem').notNull(),
+    keyThumbprint: varchar('key_thumbprint', { length: 128 }).notNull(),
+    status: varchar('status', { length: 16 })
+      .$type<'active' | 'revoked'>()
+      .notNull()
+      .default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  },
+  (table) => ({
+    fkDeviceTenant: foreignKey({
+      columns: [table.tenantId, table.deviceId],
+      foreignColumns: [devices.tenantId, devices.id],
+      name: 'fk_device_credentials_device_tenant',
+    }).onDelete('cascade'),
+    oneActivePerDevice: uniqueIndex('device_credentials_one_active_per_device')
+      .on(table.tenantId, table.deviceId)
+      .where(sql`\${table.status} = 'active'`),
+    tenantThumbprintUnique: unique('device_credentials_tenant_thumbprint_unique')
+      .on(table.tenantId, table.keyThumbprint),
+    tenantDeviceIdx: index('idx_device_credentials_tenant_device')
+      .on(table.tenantId, table.deviceId, table.createdAt),
+    algorithmCheck: check('device_credentials_algorithm_check', sql`\${table.algorithm} = 'ES256'`),
+    statusCheck: check('device_credentials_status_check', sql`\${table.status} IN ('active', 'revoked')`),
+    revocationConsistency: check(
+      'device_credentials_revocation_consistency',
+      sql`(\${table.status} = 'active' AND \${table.revokedAt} IS NULL) OR (\${table.status} = 'revoked' AND \${table.revokedAt} IS NOT NULL)`,
+    ),
+  }),
+);
+
+export type DeviceCredential = typeof deviceCredentials.$inferSelect;
+export type NewDeviceCredential = typeof deviceCredentials.$inferInsert;
+
+export const deviceApprovalEvents = pgTable(
+  'device_approval_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    deviceId: uuid('device_id').notNull(),
+    actorId: uuid('actor_id'),
+    eventType: varchar('event_type', { length: 24 }).notNull(),
+    fromStatus: varchar('from_status', { length: 24 }),
+    toStatus: varchar('to_status', { length: 24 }).notNull(),
+    reason: varchar('reason', { length: 500 }),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    fkDeviceTenant: foreignKey({
+      columns: [table.tenantId, table.deviceId],
+      foreignColumns: [devices.tenantId, devices.id],
+      name: 'fk_device_approval_events_device_tenant',
+    }).onDelete('cascade'),
+    tenantDeviceIdx: index('idx_device_approval_events_tenant_device')
+      .on(table.tenantId, table.deviceId, table.createdAt),
+    eventTypeCheck: check(
+      'device_approval_events_type_check',
+      sql`\${table.eventType} IN ('requested', 'approved', 'rejected', 'revoked', 'reactivated')`,
+    ),
+    statusCheck: check(
+      'device_approval_events_status_check',
+      sql`\${table.toStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked') AND (\${table.fromStatus} IS NULL OR \${table.fromStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked'))`,
+    ),
+  }),
+);
+
+export type DeviceApprovalEvent = typeof deviceApprovalEvents.$inferSelect;
+export type NewDeviceApprovalEvent = typeof deviceApprovalEvents.$inferInsert;
