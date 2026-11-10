@@ -33,6 +33,8 @@ describe('HTTP device proof verification', () => {
   const token = signAgentToken(agentId, jwt, tenantId);
   let privateKeyPem: string;
   let publicKeyPem: string;
+  let foreignPrivateKeyPem: string;
+  let foreignPublicKeyPem: string;
 
   function buildProof(options: {
     jti?: string;
@@ -78,6 +80,7 @@ describe('HTTP device proof verification', () => {
     active = true,
     withCredential = false,
     deviceTenantId = tenantId,
+    devicePublicKeyPem = publicKeyPem,
   ) {
     await pg.pool.query(
       `INSERT INTO public.devices
@@ -93,7 +96,7 @@ describe('HTTP device proof verification', () => {
         `INSERT INTO public.device_credentials
           (id, tenant_id, device_id, public_key_pem, key_thumbprint, algorithm, status)
          VALUES ($1, $2, $3, $4, $5, 'ES256', 'active')`,
-        [crypto.randomUUID(), deviceTenantId, id, publicKeyPem, `thumb-${id}`],
+        [crypto.randomUUID(), deviceTenantId, id, devicePublicKeyPem, `thumb-${id}`],
       );
     }
   }
@@ -107,6 +110,13 @@ describe('HTTP device proof verification', () => {
     });
     privateKeyPem = pair.privateKey;
     publicKeyPem = pair.publicKey;
+    const foreignPair = crypto.generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1',
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    foreignPrivateKeyPem = foreignPair.privateKey;
+    foreignPublicKeyPem = foreignPair.publicKey;
 
     await pg.pool.query(
       'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
@@ -122,7 +132,7 @@ describe('HTTP device proof verification', () => {
     await insertDevice(inactiveDeviceId, 'approved', false, true);
     await insertDevice(rejectedDeviceId, 'rejected');
     await insertDevice(noCredentialDeviceId, 'approved');
-    await insertDevice(foreignDeviceId, 'approved', true, true, foreignTenantId);
+    await insertDevice(foreignDeviceId, 'approved', true, true, foreignTenantId, foreignPublicKeyPem);
 
     const moduleRef = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '30d' } })],
@@ -196,7 +206,7 @@ describe('HTTP device proof verification', () => {
   });
 
   it('rejects a tenant A JWT paired with a device registered to tenant B', async () => {
-    const response = await callSync(foreignDeviceId, buildProof());
+    const response = await callSync(foreignDeviceId, buildProof({ privateKey: foreignPrivateKeyPem }));
     expect(response.status).toBe(403);
     expect(response.body.code).toBe('DEVICE_NOT_FOUND');
   });
