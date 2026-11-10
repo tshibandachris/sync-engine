@@ -121,7 +121,7 @@ export class DeviceProofGuard implements CanActivate {
     }
     const rawJwt = bearerMatch[1];
 
-    const device = await this.deviceRepo.findDeviceWithActiveCredential(tenantId, deviceId);
+    const device = await this.deviceRepo.findDeviceWithLatestCredential(tenantId, deviceId);
     if (!device) {
       throw new ForbiddenException({ code: 'DEVICE_NOT_FOUND', message: 'Unknown device for tenant' });
     }
