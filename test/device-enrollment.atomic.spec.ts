@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { DeviceEnrollmentService } from '../src/device-enrollment.service.js';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 
@@ -9,6 +9,9 @@ describe('Device enrollment atomic pairing-code redemption', () => {
   let service: DeviceEnrollmentService;
   const tenantId = randomUUID();
   const storeId = randomUUID();
+  const keyPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const privateKeyPem = keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 
   beforeAll(async () => {
     pg = await startTestPostgres();
@@ -31,26 +34,44 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     );
   }
 
-  const dto = (activationCode: string, deviceName = 'Caisse test') => ({
-    activationCode,
-    deviceName,
-    hardwareInfo: { hostname: 'pos-01', platform: 'win32', arch: 'x64', osRelease: '10.0' },
-  });
+  function dto(activationCode: string, fingerprint: string, deviceName = 'Caisse test') {
+    const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'dpop+jwt' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({
+      jti: randomUUID(),
+      htm: 'POST',
+      htu: '/api/v1/devices/enroll',
+      iat: Math.floor(Date.now() / 1000),
+      code_hash: createHash('sha256').update(activationCode).digest('base64url'),
+      fingerprint,
+    })).toString('base64url');
+    const signingInput = `${header}.${payload}`;
+    const signature = sign('sha256', Buffer.from(signingInput, 'ascii'), {
+      key: privateKeyPem,
+      dsaEncoding: 'ieee-p1363',
+    });
+    return {
+      activationCode,
+      deviceName,
+      hardwareInfo: { hostname: 'pos-01', platform: 'win32', arch: 'x64', osRelease: '10.0' },
+      publicKeyPem,
+      initialProof: `${signingInput}.${signature.toString('base64url')}`,
+    };
+  }
 
   it('allows exactly one of two concurrent enrollments to consume a code', async () => {
     const code = 'ED26-89AB';
     await createCode(code);
 
     const results = await Promise.allSettled([
-      service.enrollDevice(dto(code), 'hardware-a'),
-      service.enrollDevice(dto(code), 'hardware-b'),
+      service.enrollDevice(dto(code, 'hardware-a'), 'hardware-a'),
+      service.enrollDevice(dto(code, 'hardware-b'), 'hardware-b'),
     ]);
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     const rejected = results.filter((r) => r.status === 'rejected');
 
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
-    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(BadRequestException);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(UnauthorizedException);
 
     const codes = await pg.pool.query(
       'SELECT used_at FROM device_pairing_codes WHERE code_hash = $1',
@@ -75,12 +96,12 @@ describe('Device enrollment atomic pairing-code redemption', () => {
   it('rolls back code consumption when device insertion fails', async () => {
     const code = 'ED26-89AC';
     await createCode(code);
-    await service.enrollDevice(dto(code), 'same-hardware');
+    await service.enrollDevice(dto(code, 'same-hardware'), 'same-hardware');
 
     // A second, valid code cannot create a duplicate device fingerprint.
     const secondCode = 'ED26-89AD';
     await createCode(secondCode);
-    await expect(service.enrollDevice(dto(secondCode), 'same-hardware'))
+    await expect(service.enrollDevice(dto(secondCode, 'same-hardware'), 'same-hardware'))
       .rejects.toBeInstanceOf(ConflictException);
 
     const state = await pg.pool.query(
