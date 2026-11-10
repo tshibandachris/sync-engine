@@ -240,7 +240,7 @@ function initializeDashboard() {
       if (!result?.success) throw new Error(result?.error || 'Enrôlement cryptographique impossible.');
       $('activation-code').value = '';
       feedback.className = 'feedback success';
-      feedback.textContent = `Terminal enregistré : ${result.deviceId}. Statut : ${result.approvalStatus}. En attente de l’approbation administrative.`;
+      feedback.textContent = `Terminal enregistré : ${result.deviceId}. Statut initial renvoyé par le serveur : ${result.approvalStatus}. Vérification du statut serveur en cours.`;
       handleStatus(await window.eden.getStatus());
     } catch (error) {
       feedback.className = 'feedback error';
