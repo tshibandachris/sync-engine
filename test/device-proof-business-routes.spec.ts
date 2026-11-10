@@ -25,6 +25,7 @@ describe('Device proof on POS cash-session route', () => {
   let publicKeyPem: string;
   let cashSessionId: string;
 
+  // Server-route tests generate an independent ES256 fixture; Electron signer interoperability is covered by the Electron client suite.
   function proof(method: string, path: string, privateKey = privateKeyPem) {
     const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'dpop+jwt' })).toString('base64url');
     const payload = Buffer.from(JSON.stringify({
