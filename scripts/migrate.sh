@@ -97,7 +97,7 @@ REVOKE sync_app FROM device_enrollment_login;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM device_enrollment_login;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_enrollment_login;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM device_enrollment_login;
-GRANT device_enrollment_executor TO device_enrollment_login;
+GRANT device_enrollment_executor TO device_enrollment_login WITH INHERIT TRUE, SET FALSE;
 GRANT CONNECT ON DATABASE sync_engine TO device_enrollment_login;
 EOSQL
 
@@ -106,6 +106,7 @@ separation_ok=$(psql_base -tA -c "
   SELECT CASE
     WHEN NOT pg_catalog.pg_has_role('device_enrollment_login', 'sync_app', 'MEMBER')
      AND pg_catalog.pg_has_role('device_enrollment_login', 'device_enrollment_executor', 'USAGE')
+     AND NOT pg_catalog.pg_has_role('device_enrollment_login', 'device_enrollment_executor', 'SET')
      AND pg_catalog.has_function_privilege(
        'device_enrollment_login',
        'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)',
