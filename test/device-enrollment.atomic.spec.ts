@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { DeviceEnrollmentService } from '../src/device-enrollment.service.js';
+import { assertEnrollmentDatabaseIdentity } from '../src/device-enrollment-db-guard.js';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 
 describe('Device enrollment atomic pairing-code redemption', () => {
@@ -12,7 +13,7 @@ describe('Device enrollment atomic pairing-code redemption', () => {
 
   beforeAll(async () => {
     pg = await startTestPostgres();
-    service = new DeviceEnrollmentService(pg.appDb as any);
+    service = new DeviceEnrollmentService(pg.enrollmentDb as any);
     await pg.pool.query(
       'INSERT INTO tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
       [tenantId, Date.now()],
