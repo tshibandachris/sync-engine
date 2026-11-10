@@ -41,4 +41,4 @@ The preload exposes read-only metadata through `getDeviceStatus()` and a status-
 - The status poller starts after the encrypted credential has been verified. The server remains the sole authority for later approval transitions.
 - The Renderer never receives the private key, the signed proof, or the public-key persistence envelope.
 
-The client still deliberately keeps `deviceProofReady` false. Enrollment and approval do not enable synchronization: the existing sync transport must be upgraded to sign each request and send the server-verified proof before `/sync/*` can be used. The SQLite Outbox and local POS path are unchanged.
+After this tranche, `deviceProofReady` reflects the presence of a successfully loaded or saved encrypted ES256 credential. Enrollment alone still does not enable synchronization: the server must independently report that the terminal is active, approved, and has an active credential. Each pull and push then carries a fresh request-bound proof. The SQLite Outbox and local POS path remain unchanged.
