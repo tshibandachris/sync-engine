@@ -54,12 +54,16 @@ describe('Device proof on POS cash-session route', () => {
       `INSERT INTO public.devices
         (id, tenant_id, store_id, name, fingerprint, hardware_info, is_active,
          approval_status, approved_at, approved_by)
-       VALUES (
-         $1, $2, $3, 'Proof test device', $4, '{}'::jsonb, true, $5,
-         CASE WHEN $5 = 'approved' THEN now() ELSE NULL END,
-         CASE WHEN $5 = 'approved' THEN $6::uuid ELSE NULL END
-       )`,
-      [id, tenantId, crypto.randomUUID(), 'proof-' + id, status, agentId],
+       VALUES ($1, $2, $3, 'Proof test device', $4, '{}'::jsonb, true, $5, $6, $7)`,
+      [
+        id,
+        tenantId,
+        crypto.randomUUID(),
+        'proof-' + id,
+        status,
+        status === 'approved' ? new Date() : null,
+        status === 'approved' ? agentId : null,
+      ],
     );
     if (withCredential) {
       await pg.pool.query(
