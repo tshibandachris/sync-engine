@@ -1,7 +1,38 @@
--- 035: cryptographically bound, atomic device enrollment.
+-- 035: cryptographically bound, atomic and retry-safe device enrollment.
 -- Pairing-code consumption, device creation, credential insertion, approval
--- event and initial proof jti are one PostgreSQL statement/transaction.
+-- event, proof nonce and idempotency receipt commit in one transaction.
 BEGIN;
+
+CREATE TABLE public.device_enrollment_attempts (
+  code_hash text PRIMARY KEY,
+  tenant_id uuid NOT NULL,
+  device_id uuid NOT NULL,
+  credential_id uuid NOT NULL,
+  jti uuid NOT NULL UNIQUE,
+  fingerprint varchar(255) NOT NULL,
+  key_thumbprint varchar(128) NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  CONSTRAINT device_enrollment_attempts_code_hash_check
+    CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT fk_device_enrollment_attempts_device
+    FOREIGN KEY (tenant_id, device_id)
+    REFERENCES public.devices (tenant_id, id)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_device_enrollment_attempts_credential
+    FOREIGN KEY (credential_id)
+    REFERENCES public.device_credentials (id)
+    ON DELETE RESTRICT
+);
+
+ALTER TABLE public.device_enrollment_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.device_enrollment_attempts FORCE ROW LEVEL SECURITY;
+CREATE POLICY device_enrollment_attempts_tenant_isolation
+  ON public.device_enrollment_attempts
+  FOR ALL
+  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+REVOKE ALL ON TABLE public.device_enrollment_attempts FROM PUBLIC, sync_app;
 
 CREATE OR REPLACE FUNCTION public.register_device_enrollment_with_credential(
   p_code_hash text,
@@ -29,10 +60,12 @@ SET row_security = on
 AS $function$
 DECLARE
   v_pairing RECORD;
+  v_redeemed RECORD;
+  v_attempt RECORD;
   v_device RECORD;
   v_credential_id uuid;
 BEGIN
-  IF p_code_hash IS NULL OR length(p_code_hash) <> 64
+  IF p_code_hash IS NULL OR p_code_hash !~ '^[0-9a-f]{64}$'
      OR p_device_id IS NULL OR p_jti IS NULL
      OR p_name IS NULL OR length(trim(p_name)) = 0 OR length(p_name) > 120
      OR p_fingerprint IS NULL OR length(trim(p_fingerprint)) = 0 OR length(p_fingerprint) > 255
@@ -45,28 +78,72 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- This conditional UPDATE is the one-time pairing-code lock. It is rolled
-  -- back automatically if any subsequent write in this function fails.
-  SELECT *
+  -- Lock the pairing-code row before deciding whether this is a first request
+  -- or a retry after a lost HTTP response.
+  SELECT id, tenant_id, store_id, pos_profile_id, used_at, expires_at
     INTO v_pairing
-    FROM public.redeem_device_pairing_code(p_code_hash);
+    FROM public.device_pairing_codes
+    WHERE code_hash = p_code_hash
+    FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'INVALID_OR_USED_PAIRING_CODE'
-      USING ERRCODE = 'P1001';
+    RAISE EXCEPTION 'INVALID_ACTIVATION_CODE' USING ERRCODE = 'P1001';
   END IF;
 
   PERFORM set_config('app.current_tenant_id', v_pairing.tenant_id::text, true);
 
-  -- Reuse the established 033 insertion path so its device/event invariants
-  -- and immutable migration history remain intact.
+  IF v_pairing.used_at IS NOT NULL THEN
+    SELECT *
+      INTO v_attempt
+      FROM public.device_enrollment_attempts
+      WHERE code_hash = p_code_hash;
+
+    IF FOUND
+       AND v_attempt.jti = p_jti
+       AND v_attempt.fingerprint = p_fingerprint
+       AND v_attempt.key_thumbprint = p_key_thumbprint THEN
+      SELECT *
+        INTO v_device
+        FROM public.devices
+        WHERE tenant_id = v_attempt.tenant_id
+          AND id = v_attempt.device_id;
+
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'ENROLLMENT_RECEIPT_DEVICE_MISSING' USING ERRCODE = 'P1004';
+      END IF;
+
+      -- Return the same server identity and credential on an exact retry.
+      -- Approval state is read from the authoritative device row.
+      RETURN QUERY
+        SELECT v_device.id, v_device.tenant_id, v_device.store_id,
+               v_device.pos_profile_id, v_device.name,
+               v_device.approval_status, v_attempt.credential_id;
+      RETURN;
+    END IF;
+
+    RAISE EXCEPTION 'CODE_ALREADY_CONSUMED' USING ERRCODE = 'P1002';
+  END IF;
+
+  IF v_pairing.expires_at <= clock_timestamp() THEN
+    RAISE EXCEPTION 'CODE_EXPIRED' USING ERRCODE = 'P1003';
+  END IF;
+
+  -- Keep the established one-time redemption function in the transaction.
+  SELECT *
+    INTO v_redeemed
+    FROM public.redeem_device_pairing_code(p_code_hash);
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'INVALID_ACTIVATION_CODE' USING ERRCODE = 'P1001';
+  END IF;
+
   SELECT *
     INTO v_device
     FROM public.register_device_enrollment(
       p_device_id,
-      v_pairing.tenant_id,
-      v_pairing.store_id,
-      v_pairing.pos_profile_id,
+      v_redeemed.tenant_id,
+      v_redeemed.store_id,
+      v_redeemed.pos_profile_id,
       p_name,
       p_fingerprint,
       p_hardware_info
@@ -78,17 +155,23 @@ BEGIN
     id, tenant_id, device_id, public_key_pem, key_thumbprint, algorithm, status
   )
   VALUES (
-    v_credential_id, v_pairing.tenant_id, p_device_id,
+    v_credential_id, v_redeemed.tenant_id, p_device_id,
     p_public_key_pem, p_key_thumbprint, 'ES256', 'active'
   );
 
-  -- The nonce table has a composite FK to devices and tenant RLS. The jti is
-  -- therefore bound to the exact newly-created device and tenant.
   INSERT INTO public.device_proof_nonces (
     tenant_id, device_id, jti, expires_at
   )
   VALUES (
-    v_pairing.tenant_id, p_device_id, p_jti, clock_timestamp() + interval '2 minutes'
+    v_redeemed.tenant_id, p_device_id, p_jti, clock_timestamp() + interval '2 minutes'
+  );
+
+  INSERT INTO public.device_enrollment_attempts (
+    code_hash, tenant_id, device_id, credential_id, jti, fingerprint, key_thumbprint
+  )
+  VALUES (
+    p_code_hash, v_redeemed.tenant_id, p_device_id, v_credential_id,
+    p_jti, p_fingerprint, p_key_thumbprint
   );
 
   RETURN QUERY
