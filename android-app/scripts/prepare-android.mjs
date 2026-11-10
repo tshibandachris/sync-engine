@@ -60,7 +60,7 @@ let variables = fs.readFileSync(variablesPath, 'utf8');
 for (const setting of ['compileSdkVersion', 'targetSdkVersion']) {
   const pattern = new RegExp('(' + setting + '\\s*=\\s*)\\d+');
   if (!pattern.test(variables)) throw new Error('Missing ' + setting + ' in variables.gradle.');
-  variables = variables.replace(pattern, '$1' + '36');
+  variables = variables.replace(pattern, (_match, prefix) => prefix + '36');
 }
 fs.writeFileSync(variablesPath, variables);
 
