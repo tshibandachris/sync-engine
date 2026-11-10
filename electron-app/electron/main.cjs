@@ -34,7 +34,7 @@ let deviceCredential = null;
 let deviceCredentialError = null;
 let deviceStatusService = null;
 let serverHasActiveCredential = false;
-// ES256 request signing is intentionally not enabled in this PR yet.
+// The encrypted device credential is the only source of the private key used for request proofs.
 let deviceProofReady = false;
 let agentAuthState = 'unauthenticated';
 let deviceTrustState = 'unregistered';
@@ -59,8 +59,10 @@ async function initializeDeviceToken() {
   try {
     deviceCredential = await credentialStore.load();
     deviceTrustState = deriveDeviceTrustState(deviceCredential);
+    deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
   } catch (error) {
     deviceCredentialError = error;
+    deviceProofReady = false;
     deviceTrustState = 'unregistered';
     console.error('[device] encrypted credential unavailable; sync remains fail-closed:', error.message);
   }
@@ -152,6 +154,8 @@ async function pullAll() {
       baseUrl: process.env.EDEN_SYNC_URL,
       token,
       lastPulledAt: cursor,
+      deviceId: deviceCredential?.deviceId,
+      privateKeyPem: deviceCredential?.privateKeyPem,
     });
     productsProcessed += applyPulledPage(db, response);
     if (!response.has_more) break;
@@ -167,6 +171,8 @@ async function pushPending() {
   const response = await pushChanges({
     baseUrl: process.env.EDEN_SYNC_URL,
     token: requireDeviceToken(),
+    deviceId: deviceCredential?.deviceId,
+    privateKeyPem: deviceCredential?.privateKeyPem,
     idempotencyKey: batch.idempotencyKey,
     payload: batch.payload,
   });
@@ -461,6 +467,7 @@ app.whenReady().then(async () => {
 
       deviceCredential = storedCredential;
       deviceCredentialError = null;
+      deviceProofReady = Boolean(storedCredential.deviceId && storedCredential.privateKeyPem && storedCredential.algorithm === 'ES256');
       serverHasActiveCredential = true;
       // Never infer approval from the enrollment response. The status endpoint
       // is queried immediately and remains the only source of trust transitions.
