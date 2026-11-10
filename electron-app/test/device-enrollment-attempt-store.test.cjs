@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { DeviceEnrollmentAttemptStore, ATTEMPT_FILENAME } = require('../electron/auth/device-enrollment-attempt-store.cjs');
-const { generateDeviceKeyPair, createInitialEnrollmentProof } = require('../electron/auth/device-crypto.cjs');
+const { generateDeviceKeyPair } = require('../electron/auth/device-crypto.cjs');
 
 function fixture(overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-enrollment-attempt-'));
@@ -42,11 +42,7 @@ function attempt() {
     publicKeyPem: pair.publicKeyPem,
     thumbprint: pair.thumbprint,
     algorithm: 'ES256',
-    initialProof: createInitialEnrollmentProof({
-      privateKeyPem: pair.privateKeyPem,
-      activationCode,
-      fingerprint,
-    }),
+    jti: crypto.randomUUID(),
   };
 }
 
