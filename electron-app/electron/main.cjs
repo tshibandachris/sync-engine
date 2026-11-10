@@ -4,6 +4,8 @@ const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalPr
 const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
+const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
+const { deriveDeviceTrustState, canAccessLocalPOS, canRunSync } = require('./auth/device-state.cjs');
 const { validateDeviceToken } = require('./auth/device-enrollment.cjs');
 const {
   assertTrustedIpcSender,
@@ -17,6 +19,12 @@ let windowRef;
 let tokenStore;
 let deviceToken;
 let tokenStoreError;
+let credentialStore;
+let deviceCredential = null;
+let deviceCredentialError = null;
+let agentAuthState = 'unauthenticated';
+let deviceTrustState = 'unregistered';
+let syncState = 'blocked_unregistered';
 let authState = 'checking';
 let authMessage = 'Vérification du stockage sécurisé…';
 let status = { state: 'starting', message: 'Initialisation…', productCount: 0, lastCursor: 0, outboxPending: 0, outboxFailed: 0 };
@@ -31,7 +39,17 @@ function requireDeviceToken() {
 
 async function initializeDeviceToken() {
   tokenStore = new DeviceTokenStore({ app, safeStorage });
+  credentialStore = new DeviceCredentialStore({ app, safeStorage });
   deviceToken = await tokenStore.load();
+  try {
+    deviceCredential = await credentialStore.load();
+    deviceTrustState = deriveDeviceTrustState(deviceCredential);
+  } catch (error) {
+    deviceCredentialError = error;
+    deviceTrustState = 'unregistered';
+    console.error('[device] encrypted credential unavailable; sync remains fail-closed:', error.message);
+  }
+  syncState = deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved' : 'blocked_unregistered';
 
   // Environment-based bootstrap is strictly for unpackaged local development.
   // Packaged production builds never read EDEN_SYNC_TOKEN from process.env.
@@ -45,11 +63,13 @@ async function initializeDeviceToken() {
   }
 
   if (deviceToken) {
+    agentAuthState = 'authenticated';
     authState = 'ready';
     authMessage = 'Jeton d’appareil chargé depuis le stockage sécurisé.';
     return;
   }
 
+  agentAuthState = 'unauthenticated';
   authState = 'enrollment-required';
   authMessage = 'Cette caisse doit être enrôlée avant de synchroniser.';
 }
@@ -60,6 +80,14 @@ function readStatus() {
     ...status,
     authState,
     authMessage,
+    agentAuthState,
+    deviceTrustState,
+    syncState,
+    deviceId: deviceCredential?.deviceId || null,
+    deviceThumbprint: deviceCredential?.thumbprint || null,
+    deviceCredentialError: deviceCredentialError?.message || null,
+    canOperateLocally: canAccessLocalPOS(agentAuthState),
+    canRunSync: canRunSync(agentAuthState, deviceTrustState),
     lastCursor: db ? getCursor(db) : status.lastCursor,
     productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL AND is_active = 1').get().n) : 0,
     outboxPending: outbox.pending,
@@ -102,7 +130,19 @@ async function pushPending() {
 }
 
 async function doSync() {
+  if (!canRunSync(agentAuthState, deviceTrustState)) {
+    syncState = deviceTrustState === 'revoked' ? 'blocked_revoked'
+      : deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved' : 'blocked_unregistered';
+    status = { ...status, state: 'pending', message: deviceTrustState === 'revoked'
+      ? 'Terminal révoqué : synchronisation désactivée. Les opérations locales sont conservées.'
+      : deviceTrustState === 'awaiting_approval'
+        ? 'Terminal en attente d’approbation : synchronisation suspendue. La caisse locale reste disponible.'
+        : 'Terminal non enregistré : synchronisation suspendue. La caisse locale reste disponible.' };
+    windowRef?.webContents.send('eden:status', readStatus());
+    return readStatus();
+  }
   if (status.state === 'syncing') return readStatus();
+  syncState = 'syncing';
   status = { ...status, state: 'syncing', message: 'Synchronisation en cours…' };
   windowRef?.webContents.send('eden:status', readStatus());
 
@@ -113,6 +153,7 @@ async function doSync() {
     // Pull once more to receive authoritative versions and server-assigned sync sequences.
     const finalPull = push.sent ? await pullAll() : initialPull;
     const outbox = getOutboxStatus(db);
+    syncState = 'idle';
     status = {
       ...status,
       state: outbox.pending > 0 ? 'pending' : 'synced',
@@ -124,6 +165,7 @@ async function doSync() {
     console.log(`[sync] OK pullPages=${initialPull.pages + (push.sent ? finalPull.pages : 0)}; products=${initialPull.productsProcessed + (push.sent ? finalPull.productsProcessed : 0)}; cursor=${finalPull.cursor}; outboxPending=${outbox.pending}`);
   } catch (error) {
     const outbox = getOutboxStatus(db);
+    syncState = 'paused_offline';
     status = {
       ...status,
       state: 'pending',
@@ -181,6 +223,16 @@ app.whenReady().then(async () => {
   }
 
   registerTrustedHandler('eden:get-status', () => readStatus());
+  // Read-only device metadata only. The private key and safeStorage never cross IPC.
+  registerTrustedHandler('eden:device:get-status', () => ({
+    isEnrolled: Boolean(deviceCredential?.deviceId),
+    deviceId: deviceCredential?.deviceId || null,
+    thumbprint: deviceCredential?.thumbprint || null,
+    trustState: deviceTrustState,
+    syncState,
+    canOperateLocally: canAccessLocalPOS(agentAuthState),
+    canRunSync: canRunSync(agentAuthState, deviceTrustState),
+  }));
   registerTrustedHandler('eden:device:enroll', async (credentials) => {
     try {
       credentials = validateEnrollmentCredentials(credentials);
@@ -205,12 +257,12 @@ app.whenReady().then(async () => {
       if (storedToken !== token) throw new Error('La vérification du stockage sécurisé a échoué.');
       deviceToken = storedToken;
       tokenStoreError = null;
+      agentAuthState = 'authenticated';
       authState = 'ready';
-      authMessage = 'Appareil enrôlé et jeton relu depuis le stockage sécurisé.';
-      status = { ...status, state: 'pending', message: 'Caisse enrôlée. Synchronisation en attente du serveur.', lastCursor: getCursor(db) };
+      authMessage = 'Session agent chargée depuis le stockage sécurisé.';
+      status = { ...status, state: 'pending', message: 'Session agent ouverte. La caisse locale est disponible ; le terminal doit encore être enregistré et approuvé pour synchroniser.', lastCursor: getCursor(db) };
       windowRef?.webContents.send('eden:status', readStatus());
-      // Enrollment succeeds on verified encrypted persistence; network sync is asynchronous.
-      void doSync();
+      // Local POS is available; sync remains blocked until a server-backed device credential is approved.
       return { success: true };
     } catch (error) {
       tokenStoreError = error;
