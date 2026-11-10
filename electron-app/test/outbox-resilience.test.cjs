@@ -154,6 +154,7 @@ for (const scenario of scenarios) {
       f.cleanup();
     }
   });
+}
 
 test('acknowledges the Outbox only after a valid successful HTTP response', async () => {
   const f = fixture();
@@ -200,5 +201,3 @@ test('acknowledges the Outbox only after a valid successful HTTP response', asyn
     f.cleanup();
   }
 });
-
-}
