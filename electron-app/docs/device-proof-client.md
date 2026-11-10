@@ -16,7 +16,7 @@ The Electron main process owns the device key pair and the complete device authe
 5. A single `SECURITY DEFINER` database function consumes the pairing code and creates the pending device, active ES256 credential and immutable `requested` audit event in one transaction. Direct `sync_app` writes to credentials and approval events remain revoked.
 6. Electron stores the returned tenant/device identity and `pending_approval` state in `safeStorage`.
 
-The pairing code is single-use and the initial proof is validated before any database write. A client-generated device UUID is included in the signed claims and stored before the request, allowing the client to recover the server result through the status endpoint if the response is lost.
+The pairing code is single-use and its conditional redemption is the replay barrier for initial enrollment: concurrent or repeated submissions cannot create a second terminal. The initial proof is validated before any database write. A client-generated device UUID is included in the signed claims and stored before the request, allowing the client to recover the server result through the status endpoint if the response is lost.
 
 ## Approval and synchronization
 
