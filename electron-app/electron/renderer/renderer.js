@@ -22,6 +22,9 @@ function renderStatus(value) {
   else if (status.state === 'pending') dot.classList.add('pending');
 
   const label = status.syncState === 'blocked_revoked' ? 'Terminal révoqué · local uniquement'
+    : status.syncState === 'blocked_rejected' ? 'Terminal rejeté · local uniquement'
+    : status.syncState === 'blocked_deactivated' ? 'Terminal désactivé · local uniquement'
+    : status.syncState === 'blocked_proof_unavailable' ? 'Approbation confirmée · preuve ES256 requise'
     : status.syncState === 'blocked_unapproved' ? 'Approbation requise · local uniquement'
     : status.syncState === 'blocked_unregistered' ? 'Terminal non enregistré · local uniquement'
     : status.state === 'syncing' ? 'Synchronisation…'
