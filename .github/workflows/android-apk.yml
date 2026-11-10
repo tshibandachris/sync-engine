@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         include:
           - api-level: 33
@@ -82,11 +82,11 @@ jobs:
           profile: pixel_2
           emulator-boot-timeout: 600
           disable-animations: true
-          emulator-options: "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect"
+          emulator-options: "-no-window -no-audio -no-boot-anim -no-snapshot-load -no-snapshot-save -gpu swiftshader_indirect"
           working-directory: android-app/android
           script: |
-            set -euo pipefail
-            ./gradlew clean connectedDebugAndroidTest assembleDebug --no-daemon --stacktrace --info
+            set -eu
+            ./gradlew clean connectedDebugAndroidTest assembleDebug --no-daemon --max-workers=1 --stacktrace --info
             if [ "${{ matrix.memory-profile }}" = "16kb" ]; then
               page_size="$(adb shell getconf PAGE_SIZE | tr -d '\r')"
               echo "Emulator page size: $page_size"
