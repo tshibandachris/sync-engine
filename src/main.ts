@@ -6,6 +6,7 @@ import { runBootGuards, assertMetricsConfig } from './boot-guards.js';
 import { startMetricsServer, stopMetricsServer } from './observability/metrics-server.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 import { S3AttachmentStorage } from './s3-attachment-storage.js';
+import { assertEnrollmentDatabaseIdentity } from './device-enrollment-db-guard.js';
 
 export async function createApp(
   db: NodePgDatabase<typeof schema>,
@@ -60,15 +61,7 @@ async function bootstrap(): Promise<void> {
   const enrollmentPool = new Pool({ connectionString: enrollmentDatabaseUrl, application_name: 'eden-device-enrollment' });
   const db = drizzle(pool, { schema });
   const enrollmentDb = drizzle(enrollmentPool, { schema });
-  const enrollmentIdentity = await enrollmentPool.query(`
-    SELECT session_user, current_user,
-           pg_has_role(session_user, 'sync_app', 'MEMBER') AS is_sync_app_member,
-           pg_has_role(session_user, 'device_enrollment_executor', 'USAGE') AS has_enrollment_capability
-  `);
-  if (enrollmentIdentity.rows[0]?.is_sync_app_member || !enrollmentIdentity.rows[0]?.has_enrollment_capability) {
-    await Promise.all([pool.end(), enrollmentPool.end()]);
-    throw new Error('DEVICE_ENROLLMENT_DATABASE_URL doit hériter de device_enrollment_executor et ne doit pas être membre de sync_app.');
-  }
+  await assertEnrollmentDatabaseIdentity(enrollmentPool);
 
   const bucket = process.env.S3_BUCKET;
   if (!bucket) throw new Error('S3_BUCKET requis.');
