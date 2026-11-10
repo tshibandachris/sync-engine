@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt.guard.js';
+import { DeviceApprovalGuard } from './device-approval.guard.js';
 import { SyncPullService } from './sync-pull.service.js';
 import { SyncPushService, type SyncPushDto } from './sync-push.service.js';
 import { SyncConflictService, type Resolution } from './sync-conflict.service.js';
@@ -15,7 +16,7 @@ interface ResolveBody {
 }
 
 @Controller('sync')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, DeviceApprovalGuard)
 export class SyncController {
   constructor(
     @Inject(SyncPullService) private readonly pull: SyncPullService,
