@@ -36,6 +36,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
       SYNC_APP_PASSWORD: ${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}
       DEVICE_ENROLLMENT_PASSWORD: ${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}
+      DEVICE_ADMIN_PASSWORD: ${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}
     volumes:
       - ./migrations:/migrations:ro
       - ./scripts/migrate.sh:/migrate.sh:ro
