@@ -93,6 +93,24 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
     expect(row.orphansFound).toBe(1);
   });
 
+  it('une purge de nonces en échec est signalée sans bloquer les autres étapes', async () => {
+    const calls: string[] = [];
+    const report = await run(
+      fakeService(calls, {
+        purgeExpiredDeviceProofNonces: async () => {
+          throw new Error('nonce purge down');
+        },
+      }),
+    );
+
+    expect(calls).toEqual(['syncLogs', 'pending', 'tombstones', 'storage', 'scan']);
+    expect(report.tenantsFailed).toBe(1);
+    expect(report.perTenant[0].deviceProofNoncesDeleted).toBe(0);
+    expect(report.perTenant[0].error).toContain('deviceProofNonces: nonce purge down');
+    expect(report.perTenant[0].syncLogsDeleted).toBe(2);
+    expect(report.perTenant[0].orphansFound).toBe(1);
+  });
+
   it('si les tombstones échouent, la purge du stockage est sautée mais le scan tourne', async () => {
     const calls: string[] = [];
     const report = await run(
