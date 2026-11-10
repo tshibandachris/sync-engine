@@ -12,6 +12,7 @@ import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
+import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import {
   TEST_JWT_SECRET,
@@ -57,6 +58,7 @@ describe('Sync Engine / HTTP', () => {
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
         DeviceApprovalGuard,
+        { provide: DeviceProofGuard, useFactory: (approval: DeviceApprovalGuard) => ({ canActivate: (context: any) => approval.canActivate(context) }), inject: [DeviceApprovalGuard] },
       ],
     }).compile();
 
