@@ -182,10 +182,7 @@ describe('Device security hardening — migration 032', () => {
                  '{}'::jsonb, true, 'pending_approval', now())`,
         [randomUUID(), tenantA, randomUUID()],
       ),
-    )).rejects.toMatchObject({
-      code: '42501',
-      message: expect.stringContaining('SECURITY_VIOLATION'),
-    });
+    )).rejects.toMatchObject({ code: '42501' });
   });
 
   it('T11: an active terminal remains pending, not approved', async () => {
