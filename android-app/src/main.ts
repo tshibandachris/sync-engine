@@ -39,7 +39,7 @@ function render(message: string, status: 'ok' | 'pending' | 'error' = 'pending')
       <section class="facts">
         <div><small>Plateforme</small><strong>${Capacitor.getPlatform()}</strong></div>
         <div><small>Stockage métier</small><strong>SQLite natif</strong></div>
-        <div><small>Orientation</small><strong>Paysage</strong></div>
+        <div><small>Affichage</small><strong>Adaptatif</strong></div>
       </section>
       <footer>Les ventes et les paiements ne font pas partie de cette tranche.</footer>
     </main>`;
@@ -125,4 +125,4 @@ async function testKey() {
   }
 }
 
-render('En attente des tests sur appareil Android 13.');
+render('En attente des tests sur Android 13 à 16.');
