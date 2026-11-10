@@ -43,7 +43,8 @@ function hasExactKeys(value: object, expected: string[]): boolean {
 
 @Injectable()
 export class DeviceEnrollmentService {
-  constructor(@Inject('DRIZZLE_DB') private readonly db: NodePgDatabase<typeof schema>) {}
+  constructor(@Inject('DRIZZLE_DB') private readonly db: NodePgDatabase<typeof schema>,
+    @Inject('DEVICE_ENROLLMENT_DB') private readonly enrollmentDb: NodePgDatabase<typeof schema>) {}
 
   private verifyInitialProof(dto: EnrollDeviceDto, hardwareId: string): string {
     if (typeof dto.publicKeyPem !== 'string' || dto.publicKeyPem.length > 4096 ||
@@ -121,7 +122,7 @@ export class DeviceEnrollmentService {
     const codeHash = createHash('sha256').update(dto.activationCode, 'utf8').digest('hex');
 
     try {
-      return await this.db.transaction(async (tx) => {
+      return await this.enrollmentDb.transaction(async (tx) => {
         const result = await tx.execute(sql`
           SELECT *
           FROM public.register_device_enrollment_with_credential(
