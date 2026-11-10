@@ -27,10 +27,14 @@ describe('HTTP device proof verification', () => {
   const inactiveDeviceId = crypto.randomUUID();
   const rejectedDeviceId = crypto.randomUUID();
   const noCredentialDeviceId = crypto.randomUUID();
+  const foreignTenantId = crypto.randomUUID();
+  const foreignTenantDeviceId = crypto.randomUUID();
   const jwt = createTestJwtService();
   const token = signAgentToken(agentId, jwt, tenantId);
   let privateKeyPem: string;
   let publicKeyPem: string;
+  let foreignPrivateKeyPem: string;
+  let foreignPublicKeyPem: string;
 
   function buildProof(options: {
     jti?: string;
@@ -75,6 +79,8 @@ describe('HTTP device proof verification', () => {
     status: 'pending_approval' | 'approved' | 'rejected' | 'revoked',
     active = true,
     withCredential = false,
+    ownerTenantId = tenantId,
+    ownerPublicKeyPem = publicKeyPem,
   ) {
     await pg.pool.query(
       `INSERT INTO public.devices
@@ -83,14 +89,14 @@ describe('HTTP device proof verification', () => {
        VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, $6, $7,
          CASE WHEN $7::varchar(24) IN ('approved', 'revoked') THEN now() ELSE NULL END,
          CASE WHEN $7::varchar(24) IN ('approved', 'revoked') THEN $8::uuid ELSE NULL END)`,
-      [id, tenantId, crypto.randomUUID(), `Proof device ${id}`, `proof-${id}`, active, status, agentId],
+      [id, ownerTenantId, crypto.randomUUID(), `Proof device ${id}`, `proof-${id}`, active, status, agentId],
     );
     if (withCredential) {
       await pg.pool.query(
         `INSERT INTO public.device_credentials
           (id, tenant_id, device_id, public_key_pem, key_thumbprint, algorithm, status)
          VALUES ($1, $2, $3, $4, $5, 'ES256', 'active')`,
-        [crypto.randomUUID(), tenantId, id, publicKeyPem, `thumb-${id}`],
+        [crypto.randomUUID(), ownerTenantId, id, ownerPublicKeyPem, `thumb-${id}`],
       );
     }
   }
@@ -104,6 +110,13 @@ describe('HTTP device proof verification', () => {
     });
     privateKeyPem = pair.privateKey;
     publicKeyPem = pair.publicKey;
+    const foreignPair = crypto.generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1',
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    foreignPrivateKeyPem = foreignPair.privateKey;
+    foreignPublicKeyPem = foreignPair.publicKey;
 
     await pg.pool.query(
       'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
@@ -115,6 +128,18 @@ describe('HTTP device proof verification', () => {
     await insertDevice(inactiveDeviceId, 'approved', false, true);
     await insertDevice(rejectedDeviceId, 'rejected');
     await insertDevice(noCredentialDeviceId, 'approved');
+    await pg.pool.query(
+      'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
+      [foreignTenantId, Date.now()],
+    );
+    await insertDevice(
+      foreignTenantDeviceId,
+      'approved',
+      true,
+      true,
+      foreignTenantId,
+      foreignPublicKeyPem,
+    );
 
     const moduleRef = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '30d' } })],
@@ -140,6 +165,15 @@ describe('HTTP device proof verification', () => {
   afterAll(async () => {
     await app?.close();
     await pg?.stop();
+  });
+
+  it('rejects a valid proof from a device owned by another tenant', async () => {
+    const response = await callSync(
+      foreignTenantDeviceId,
+      buildProof({ privateKey: foreignPrivateKeyPem }),
+    );
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('DEVICE_NOT_FOUND');
   });
 
   it('rejects a request without X-Device-Id', async () => {
