@@ -81,18 +81,37 @@ if [ "$legacy_schema" = "1" ] && [ "$ledger_entries" = "0" ]; then
   echo "[migrate] baseline 001-030 recorded atomically"
 fi
 
-echo "[migrate] applying pending migrations"
+echo "[migrate] applying pending migrations (transactional ledger)"
 for f in /migrations/*.sql; do
   name=$(basename "$f")
-  applied=$(psql_base -tA -v filename="$name" -c "SELECT 1 FROM public.schema_migrations WHERE filename = :'filename' LIMIT 1")
-  if [ "$applied" = "1" ]; then
-    echo "[migrate]   already applied: $name"
-    continue
-  fi
+  tmp=$(mktemp)
 
-  echo "[migrate]   applying: $name"
-  psql_base -f "$f" > /dev/null
-  psql_base -c "INSERT INTO public.schema_migrations (filename) VALUES ('$name')" > /dev/null
+  # Migration files historically carry their own BEGIN/COMMIT. Remove only
+  # standalone transaction-control lines so the migration and its ledger row
+  # can commit atomically in one psql transaction.
+  {
+    printf '%s\n' "BEGIN;"
+    printf '%s\n' "SELECT pg_advisory_xact_lock(7303::bigint);"
+    printf '%s\n' "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE filename = '$name') AS migration_already_applied \\gset"
+    printf '%s\n' "\\if :migration_already_applied"
+    printf '%s\n' "\\echo [migrate]   already applied: $name"
+    printf '%s\n' "\\else"
+    awk '
+      !/^[[:space:]]*BEGIN;[[:space:]]*$/ &&
+      !/^[[:space:]]*COMMIT;[[:space:]]*$/ { print }
+    ' "$f"
+    printf '\nINSERT INTO public.schema_migrations (filename) VALUES (\047%s\047);\n' "$name"
+    printf '%s\n' "\\endif"
+    printf '%s\n' "COMMIT;"
+  } > "$tmp"
+
+  echo "[migrate]   checking/applying: $name"
+  if ! psql_base -f "$tmp" > /dev/null; then
+    rm -f "$tmp"
+    echo "[migrate] ERROR: migration failed; transaction rolled back: $name"
+    exit 1
+  fi
+  rm -f "$tmp"
 done
 
 echo "[migrate] restricting migration ledger and enabling application login"
