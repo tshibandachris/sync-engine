@@ -21,6 +21,7 @@ describe('Device administration approval workflow', () => {
   const actorA = crypto.randomUUID();
   const pendingA = crypto.randomUUID();
   const pendingReject = crypto.randomUUID();
+  const pendingNoCredential = crypto.randomUUID();
   const pendingB = crypto.randomUUID();
   const approvedA = crypto.randomUUID();
 
@@ -66,9 +67,10 @@ describe('Device administration approval workflow', () => {
       'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $3), ($2, $3) ON CONFLICT (id) DO NOTHING',
       [tenantA, tenantB, Date.now()],
     );
-    await insertDevice(pendingA, tenantA, 'pending_approval');
-    await insertDevice(pendingReject, tenantA, 'pending_approval');
-    await insertDevice(pendingB, tenantB, 'pending_approval');
+    await insertDevice(pendingA, tenantA, 'pending_approval', true);
+    await insertDevice(pendingReject, tenantA, 'pending_approval', true);
+    await insertDevice(pendingNoCredential, tenantA, 'pending_approval');
+    await insertDevice(pendingB, tenantB, 'pending_approval', true);
     await insertDevice(approvedA, tenantA, 'approved', true);
 
     const moduleRef = await Test.createTestingModule({
@@ -171,6 +173,20 @@ describe('Device administration approval workflow', () => {
     expect(events.rows[0].count).toBe(1);
   });
 
+  it('does not approve an enrolled device without an active credential', async () => {
+    const auth = await token(tenantA, actorA, ['devices:approve']);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/admin/devices/' + pendingNoCredential + '/approve')
+      .set('Authorization', 'Bearer ' + auth);
+    expect(response.status).toBe(409);
+
+    const state = await pg.pool.query(
+      'SELECT approval_status FROM public.devices WHERE tenant_id = $1 AND id = $2',
+      [tenantA, pendingNoCredential],
+    );
+    expect(state.rows[0].approval_status).toBe('pending_approval');
+  });
+
   it('rejects only pending devices and requires an audit reason', async () => {
     const auth = await token(tenantA, actorA, ['devices:reject']);
     const missingReason = await request(app.getHttpServer())
@@ -187,6 +203,15 @@ describe('Device administration approval workflow', () => {
     expect(response.body.approvalStatus).toBe('rejected');
     expect(response.body.approvedAt).toBeNull();
     expect(response.body.approvedBy).toBeNull();
+  });
+
+  it('allows a rejected device to be approved again with its active credential', async () => {
+    const auth = await token(tenantA, actorA, ['devices:approve']);
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/admin/devices/' + pendingReject + '/approve')
+      .set('Authorization', 'Bearer ' + auth);
+    expect(response.status).toBe(201);
+    expect(response.body.approvalStatus).toBe('approved');
   });
 
   it('revokes an approved device and its active credential in the same transaction', async () => {
