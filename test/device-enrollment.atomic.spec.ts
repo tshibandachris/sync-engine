@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { DeviceEnrollmentService } from '../src/device-enrollment.service.js';
+import { assertEnrollmentDatabaseIdentity } from '../src/device-enrollment-db-guard.js';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 
 describe('Device enrollment atomic proof-of-possession', () => {
