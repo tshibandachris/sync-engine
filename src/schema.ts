@@ -374,11 +374,11 @@ export const devices = pgTable(
     tenantIdUnique: unique('devices_tenant_id_unique').on(table.tenantId, table.id),
     approvalStatusCheck: check(
       'devices_approval_status_check',
-      sql\`\${table.approvalStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked')\`,
+      sql`${table.approvalStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked')`,
     ),
     approvalDecisionConsistency: check(
       'devices_approval_decision_consistency',
-      sql\`(\${table.approvalStatus} IN ('approved', 'revoked') AND \${table.approvedAt} IS NOT NULL AND \${table.approvedBy} IS NOT NULL) OR (\${table.approvalStatus} IN ('pending_approval', 'rejected') AND \${table.approvedAt} IS NULL AND \${table.approvedBy} IS NULL)\`,
+      sql`(${table.approvalStatus} IN ('approved', 'revoked') AND ${table.approvedAt} IS NOT NULL AND ${table.approvedBy} IS NOT NULL) OR (${table.approvalStatus} IN ('pending_approval', 'rejected') AND ${table.approvedAt} IS NULL AND ${table.approvedBy} IS NULL)`,
     ),
     tenantApprovalStatusIdx: index('idx_devices_tenant_approval_status').on(table.tenantId, table.approvalStatus, table.createdAt),
     tenantStoreIdx: index('idx_devices_tenant_store').on(table.tenantId, table.storeId),
@@ -415,16 +415,16 @@ export const deviceCredentials = pgTable(
     }).onDelete('cascade'),
     oneActivePerDevice: uniqueIndex('device_credentials_one_active_per_device')
       .on(table.tenantId, table.deviceId)
-      .where(sql`\${table.status} = 'active'`),
+      .where(sql`${table.status} = 'active'`),
     tenantThumbprintUnique: unique('device_credentials_tenant_thumbprint_unique')
       .on(table.tenantId, table.keyThumbprint),
     tenantDeviceIdx: index('idx_device_credentials_tenant_device')
       .on(table.tenantId, table.deviceId, table.createdAt),
-    algorithmCheck: check('device_credentials_algorithm_check', sql`\${table.algorithm} = 'ES256'`),
-    statusCheck: check('device_credentials_status_check', sql`\${table.status} IN ('active', 'revoked')`),
+    algorithmCheck: check('device_credentials_algorithm_check', sql`${table.algorithm} = 'ES256'`),
+    statusCheck: check('device_credentials_status_check', sql`${table.status} IN ('active', 'revoked')`),
     revocationConsistency: check(
       'device_credentials_revocation_consistency',
-      sql`(\${table.status} = 'active' AND \${table.revokedAt} IS NULL) OR (\${table.status} = 'revoked' AND \${table.revokedAt} IS NOT NULL)`,
+      sql`(${table.status} = 'active' AND ${table.revokedAt} IS NULL) OR (${table.status} = 'revoked' AND ${table.revokedAt} IS NOT NULL)`,
     ),
   }),
 );
@@ -456,11 +456,11 @@ export const deviceApprovalEvents = pgTable(
       .on(table.tenantId, table.deviceId, table.createdAt),
     eventTypeCheck: check(
       'device_approval_events_type_check',
-      sql`\${table.eventType} IN ('requested', 'approved', 'rejected', 'revoked', 'reactivated')`,
+      sql`${table.eventType} IN ('requested', 'approved', 'rejected', 'revoked', 'reactivated')`,
     ),
     statusCheck: check(
       'device_approval_events_status_check',
-      sql`\${table.toStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked') AND (\${table.fromStatus} IS NULL OR \${table.fromStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked'))`,
+      sql`${table.toStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked') AND (${table.fromStatus} IS NULL OR ${table.fromStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked'))`,
     ),
   }),
 );
