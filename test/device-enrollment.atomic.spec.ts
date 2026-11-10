@@ -111,4 +111,54 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     );
     expect(state.rows[0].used_at).toBeNull();
   }, 120_000);
+
+  it('rejects the general sync_app connection as an enrollment executor at bootstrap', async () => {
+    await expect(assertEnrollmentDatabaseIdentity(pg.appPool)).rejects.toThrow(
+      /BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL/i,
+    );
+  });
+
+  it('accepts only the dedicated non-superuser executor login at bootstrap', async () => {
+    await expect(assertEnrollmentDatabaseIdentity(pg.enrollmentPool)).resolves.toBeUndefined();
+  });
+
+  it('denies sync_app EXECUTE while granting the dedicated executor the exact function capability', async () => {
+    const signature = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)';
+    const privileges = await pg.pool.query(
+      `SELECT
+        has_function_privilege('sync_app', $1, 'EXECUTE') AS sync_allowed,
+        has_function_privilege('device_enrollment_test', $1, 'EXECUTE') AS executor_allowed,
+        pg_has_role('device_enrollment_test', 'sync_app', 'MEMBER') AS executor_is_sync_member`,
+      [signature],
+    );
+    expect(privileges.rows[0]).toEqual({
+      sync_allowed: false,
+      executor_allowed: true,
+      executor_is_sync_member: false,
+    });
+  });
+
+  it('rejects direct invocation of the privileged enrollment function by sync_app', async () => {
+    await expect(pg.appPool.query(
+      `SELECT * FROM public.register_device_enrollment_with_credential(
+        $1::text, $2::uuid, $3::varchar, $4::varchar, $5::jsonb, $6::text, $7::varchar, $8::uuid
+      )`,
+      ['a'.repeat(64), randomUUID(), 'Forged POS', 'forged-fingerprint', JSON.stringify({}), 'forged-key', 'b'.repeat(43), randomUUID()],
+    )).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('keeps sync_app unable to write credentials, approval events or device rows directly', async () => {
+    const privileges = await pg.pool.query(`
+      SELECT
+        has_table_privilege('sync_app', 'public.device_credentials', 'INSERT') AS credential_insert,
+        has_table_privilege('sync_app', 'public.device_approval_events', 'INSERT') AS event_insert,
+        has_table_privilege('sync_app', 'public.devices', 'INSERT') AS device_insert
+    `);
+    expect(privileges.rows[0]).toEqual({
+      credential_insert: false,
+      event_insert: false,
+      device_insert: false,
+    });
+  });
+
 });
