@@ -7,12 +7,18 @@ function normalizeBaseUrl(value) {
   return url.toString().replace(/\/$/, '');
 }
 
-async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, timeoutMs = 15000, label }) {
+async function requestJson({ url, token, deviceId, privateKeyPem, body, headers = {}, fetchImpl = fetch, timeoutMs = 15000, label }) {
   if (!token) throw new Error('A device JWT must be loaded from secure device storage before synchronization.');
+  if (typeof deviceId !== 'string' || !deviceId.trim()) throw new Error('A registered device ID is required before synchronization.');
+  if (typeof privateKeyPem !== 'string' || !privateKeyPem.includes('BEGIN PRIVATE KEY')) throw new Error('The encrypted ES256 private key is required before synchronization.');
+  const method = 'POST';
+  const deviceProof = createDeviceProof({ privateKeyPem, token, method, url });
   const response = await fetchImpl(url, {
-    method: 'POST',
+    method,
     headers: {
       authorization: `Bearer ${token}`,
+      'x-device-id': deviceId,
+      'x-device-proof': deviceProof,
       'content-type': 'application/json',
       accept: 'application/json',
       ...headers,
@@ -35,10 +41,10 @@ async function requestJson({ url, token, body, headers = {}, fetchImpl = fetch, 
   return parsed;
 }
 
-async function pullChanges({ baseUrl, token, lastPulledAt = 0, fetchImpl = fetch }) {
+async function pullChanges({ baseUrl, token, deviceId, privateKeyPem, lastPulledAt = 0, fetchImpl = fetch }) {
   const base = normalizeBaseUrl(baseUrl);
   const body = await requestJson({
-    url: `${base}/sync/pull`, token, fetchImpl, label: 'Pull',
+    url: `${base}/sync/pull`, token, deviceId, privateKeyPem, fetchImpl, label: 'Pull',
     body: { last_pulled_at: lastPulledAt, limit: 1000 },
   });
   if (!body || typeof body.timestamp !== 'number' || !body.changes || typeof body.changes !== 'object') {
@@ -47,7 +53,7 @@ async function pullChanges({ baseUrl, token, lastPulledAt = 0, fetchImpl = fetch
   return body;
 }
 
-async function pushChanges({ baseUrl, token, idempotencyKey, payload, fetchImpl = fetch }) {
+async function pushChanges({ baseUrl, token, deviceId, privateKeyPem, idempotencyKey, payload, fetchImpl = fetch }) {
   if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
     throw new Error('A persisted Idempotency-Key is required for sync push.');
   }
@@ -56,7 +62,7 @@ async function pushChanges({ baseUrl, token, idempotencyKey, payload, fetchImpl 
   }
   const base = normalizeBaseUrl(baseUrl);
   const body = await requestJson({
-    url: `${base}/sync/push`, token, fetchImpl, label: 'Push',
+    url: `${base}/sync/push`, token, deviceId, privateKeyPem, fetchImpl, label: 'Push',
     headers: { 'Idempotency-Key': idempotencyKey },
     body: payload,
   });
