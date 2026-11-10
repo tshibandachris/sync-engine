@@ -4,13 +4,13 @@ on:
   push:
     branches: [feat/android-foundation]
     paths:
-      - 'android-app/**'
-      - '.github/workflows/android-apk.yml'
+      - "android-app/**"
+      - ".github/workflows/android-apk.yml"
   pull_request:
     branches: [main]
     paths:
-      - 'android-app/**'
-      - '.github/workflows/android-apk.yml'
+      - "android-app/**"
+      - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   android-emulator:
-    name: Android 13 emulator — SQLite and ES256
+    name: Android 13 emulator - SQLite and ES256
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -28,14 +28,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
       - uses: android-actions/setup-android@v3
         with:
-          packages: |\n            platform-tools\n            platforms;android-33\n            build-tools;35.0.0\n            emulator\n            system-images;android-33;google_apis;x86_64
+          packages: |
+            platform-tools
+            platforms;android-33
+            build-tools;35.0.0
+            emulator
+            system-images;android-33;google_apis;x86_64
           accept-android-sdk-licenses: true
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -53,7 +58,7 @@ jobs:
           api-level: 33
           arch: x86_64
           profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot
+          emulator-options: "-no-window -no-audio -no-boot-anim -no-snapshot"
           working-directory: android-app/android
           script: ./gradlew --no-daemon connectedDebugAndroidTest assembleDebug
       - name: Publish debug APK
