@@ -250,4 +250,13 @@ describe('Initial ES256 proof enrollment (PostgreSQL HTTP integration)', () => {
     expect(response.status).toBe(401);
     expect(response.body.code).toBe('INITIAL_PROOF_HTM_HTU_MISMATCH');
   });
+  it('fails closed if the SECURITY DEFINER owner regains CREATE on public', async () => {
+    await pg.pool.query('GRANT CREATE ON SCHEMA public TO device_enrollment_function_owner');
+    await expect(assertEnrollmentDatabaseIdentity(pg.enrollmentPool))
+      .rejects.toThrow(/BOOTSTRAP_SECURITY_ERROR/);
+
+    await pg.pool.query('REVOKE CREATE ON SCHEMA public FROM device_enrollment_function_owner');
+    await expect(assertEnrollmentDatabaseIdentity(pg.enrollmentPool)).resolves.toBeUndefined();
+  });
+
 });
