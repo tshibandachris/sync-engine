@@ -18,11 +18,13 @@ The next activation tranche must atomically register the public key against the 
 The Electron main process now tracks the agent session and terminal trust independently:
 
 - `agentAuthState`: `unauthenticated` or `authenticated`.
-- `deviceTrustState`: `unregistered`, `awaiting_approval`, `approved`, or `revoked`.
-- `syncState`: `idle`, `syncing`, `paused_offline`, `blocked_unregistered`, `blocked_unapproved`, or `blocked_revoked`.
+- `deviceTrustState`: `unregistered`, `awaiting_approval`, `approved`, `rejected`, `revoked`, or `deactivated`.
+- `syncState`: includes explicit blocked states for approval, rejection, revocation, deactivation, and unavailable ES256 proof transport.
 
-An authenticated agent can continue using local POS while the terminal is unregistered or awaiting approval. Synchronization is allowed only when both the agent is authenticated and device trust is approved. A local encrypted key is never treated as evidence of server approval; until a server-authenticated status endpoint is integrated, any stored credential is fail-closed as `awaiting_approval`.
+An authenticated agent can continue using local POS regardless of terminal trust. A local encrypted key never implies server approval. The main process obtains trust transitions only from the authenticated, tenant-scoped `GET /api/v1/devices/status` response; the server response is held in memory and is not copied into the local credential as an authority.
 
-The preload exposes only read-only device metadata through `getDeviceStatus()`. Private key material and the credential store remain in the main process. The existing outbox implementation is unchanged. Resilience tests exercise real `pushChanges()` HTTP rejection paths (401, 403 and network failure), compare persisted outbox rows and batch snapshots across a SQLite close/reopen, and verify reuse of the same idempotency key.
+The status endpoint is deliberately protected by `JwtAuthGuard` but not `DeviceApprovalGuard`, so pending and rejected terminals can query their status. It requires `X-Device-Id`, scopes the query to the tenant from the verified JWT, applies PostgreSQL RLS, returns 404 for a device outside that tenant, and reports active credential availability separately from approval status.
 
-**Integration boundary:** no server status polling or approval transition is claimed in this tranche. That requires the backend enrollment/status contract to return an authoritative device state. The client remains local-operation-only until then.
+The preload exposes read-only metadata through `getDeviceStatus()` and a status-refresh action. Private key material and the credential store remain in the main process. The existing `sync/api-client.cjs` and `sync/outbox.cjs` are unchanged. Resilience tests continue to exercise real `pushChanges()` HTTP rejection paths (401, 403 and network failure), persisted outbox rows and batch snapshots across SQLite close/reopen, and idempotency-key reuse.
+
+**Integration boundary:** approval status alone does not activate synchronization. The client deliberately keeps `deviceProofReady` false and does not enable sync until the ES256 enrollment/initial-proof and signed-request protocol is implemented end to end. Thus an approved terminal still operates locally without making unsigned requests to proof-protected routes.
