@@ -20,6 +20,7 @@ const MAINTENANCE_LOCK_KEY = 7302;
  * tenant on purpose.
  */
 export interface MaintenanceServiceLike {
+  purgeExpiredDeviceProofNonces(tenantId: string, batchSize?: number): Promise<{ deleted: number }>;
   purgeSyncLogs(tenantId: string, ttlDays: number): Promise<{ logsDeleted: number }>;
   purgeTenantPendingAttachments(tenantId: string, ttlDays: number): Promise<{ deleted: number }>;
   purgeTenantTombstones(tenantId: string, ttlDays: number): Promise<{
@@ -56,6 +57,7 @@ export interface MaintenanceOptions {
 
 export interface MaintenanceTenantReport {
   tenantId: string;
+  deviceProofNoncesDeleted: number;
   syncLogsDeleted: number;
   pendingAttachmentsDeleted: number;
   checkInsDeleted: number;
@@ -112,6 +114,7 @@ async function processTenant(
 ): Promise<MaintenanceTenantReport> {
   const row: MaintenanceTenantReport = {
     tenantId,
+    deviceProofNoncesDeleted: 0,
     syncLogsDeleted: 0,
     pendingAttachmentsDeleted: 0,
     checkInsDeleted: 0,
@@ -131,6 +134,9 @@ async function processTenant(
       return undefined;
     }
   };
+
+  const nonces = await step('deviceProofNonces', () => svc.purgeExpiredDeviceProofNonces(tenantId));
+  if (nonces) row.deviceProofNoncesDeleted = nonces.deleted;
 
   const syncLogs = await step('syncLogs', () => svc.purgeSyncLogs(tenantId, ttls.syncLogsTtlDays));
   if (syncLogs) row.syncLogsDeleted = syncLogs.logsDeleted;
