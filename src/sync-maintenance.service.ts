@@ -36,6 +36,10 @@ export interface PurgePendingAttachmentsResult {
   deleted: number;
 }
 
+export interface PurgeDeviceProofNoncesResult {
+  deleted: number;
+}
+
 export interface ScanTenantOrphansOptions {
   /**
    * When true (the default), the scan only reports the orphans. Nothing
@@ -185,6 +189,30 @@ export class SyncMaintenanceService {
       }
     }
     return { deleted, failed };
+  }
+
+  /**
+   * Removes only expired replay nonces for one tenant. The database function
+   * owns the narrowly scoped DELETE capability; sync_app has no table DELETE.
+   */
+  async purgeExpiredDeviceProofNonces(
+    tenantId: string,
+    batchSize: number = 5000,
+  ): Promise<PurgeDeviceProofNoncesResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 10000) {
+      throw new Error('batchSize doit etre compris entre 1 et 10000.');
+    }
+
+    const result = await this.db.execute(sql`
+      SELECT public.purge_expired_device_proof_nonces(
+        ${tenantId}::uuid,
+        ${batchSize}::int
+      ) AS deleted
+    `);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) throw new Error('purge_expired_device_proof_nonces a retourne un resultat vide.');
+    return { deleted: Number(row.deleted ?? 0) };
   }
 
   /**
