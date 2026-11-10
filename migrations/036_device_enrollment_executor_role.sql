@@ -51,7 +51,7 @@ BEGIN
       FROM pg_catalog.pg_proc AS p
      WHERE p.oid = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)'::regprocedure
        AND p.prosecdef
-       AND pg_catalog.pg_get_userbyid(p.proowner) <> 'sync_app'
+       AND pg_catalog.pg_get_userbyid(p.proowner) NOT IN ('sync_app', 'device_enrollment_executor', 'device_enrollment_login')
   ) THEN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: enrollment function must remain SECURITY DEFINER and must not be owned by sync_app';
   END IF;
