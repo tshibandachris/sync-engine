@@ -40,6 +40,13 @@ public class EdenFoundationInstrumentedTest {
     }
 
     @Test
+    public void sqlCipherNativeLibraryLoadsOnCurrentPageSizeRuntime() {
+        // The 16 KB API 35 matrix leg executes this same test on a 16 KB system image.
+        // A misaligned or incompatible SQLCipher .so fails here during native loading.
+        System.loadLibrary("sqlcipher");
+    }
+
+    @Test
     public void sqliteRowSurvivesCloseAndReopen() {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         SQLiteDatabase db = context.openOrCreateDatabase("eden-foundation-test.db", Context.MODE_PRIVATE, null);
