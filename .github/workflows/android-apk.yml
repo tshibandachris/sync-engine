@@ -18,14 +18,29 @@ permissions:
 
 jobs:
   android-emulator:
-    name: Android API ${{ matrix.api-level }} emulator - SQLite and ES256
+    name: Android API ${{ matrix.api-level }} ${{ matrix.memory-profile }} - SQLite and ES256
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        api-level: [33, 34, 35, 36]
+        include:
+          - api-level: 33
+            system-image: google_apis
+            memory-profile: standard
+          - api-level: 34
+            system-image: google_apis
+            memory-profile: standard
+          - api-level: 35
+            system-image: google_apis
+            memory-profile: standard
+          - api-level: 36
+            system-image: google_apis
+            memory-profile: standard
+          - api-level: 35
+            system-image: google_apis_ps16k
+            memory-profile: 16kb
     defaults:
       run:
         working-directory: android-app
@@ -53,14 +68,27 @@ jobs:
         with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
+          target: ${{ matrix.system-image }}
           profile: pixel_2
+          emulator-boot-timeout: 600
+          disable-animations: true
           emulator-options: "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect"
           working-directory: android-app/android
-          script: ./gradlew clean connectedDebugAndroidTest assembleDebug --no-daemon --stacktrace --info
+          script: |
+            set -euo pipefail
+            ./gradlew clean connectedDebugAndroidTest assembleDebug --no-daemon --stacktrace --info
+            if [ "${{ matrix.memory-profile }}" = "16kb" ]; then
+              page_size="$(adb shell getconf PAGE_SIZE | tr -d '\r')"
+              echo "Emulator page size: $page_size"
+              test "$page_size" = "16384"
+            fi
+            zipalign="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
+            test -n "$zipalign"
+            "$zipalign" -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
       - name: Publish debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: eden-gestion-android-api-${{ matrix.api-level }}-debug
+          name: eden-gestion-android-api-${{ matrix.api-level }}-${{ matrix.memory-profile }}-debug
           path: android-app/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
