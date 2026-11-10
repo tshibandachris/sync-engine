@@ -9,11 +9,12 @@ import { S3AttachmentStorage } from './s3-attachment-storage.js';
 
 export async function createApp(
   db: NodePgDatabase<typeof schema>,
+  enrollmentDb: NodePgDatabase<typeof schema>,
   jwtSecret: string,
   storage: AttachmentStorage,
 ) {
   const moduleRef = await NestFactory.create(
-    AppModule.register({ db, jwtSecret, storage }),
+    AppModule.register({ db, enrollmentDb, jwtSecret, storage }),
     { logger: false },
   );
 
@@ -44,17 +45,26 @@ async function bootstrap(): Promise<void> {
   runBootGuards();
 
   const databaseUrl = process.env.DATABASE_URL;
+  const enrollmentDatabaseUrl = process.env.DEVICE_ENROLLMENT_DATABASE_URL;
   const jwtSecret = process.env.JWT_SECRET;
   const port = Number(process.env.PORT ?? 3000);
 
   if (!databaseUrl) throw new Error('DATABASE_URL requis.');
+  if (!enrollmentDatabaseUrl) throw new Error('DEVICE_ENROLLMENT_DATABASE_URL requis : l’enrôlement doit utiliser un rôle PostgreSQL dédié.');
   if (!jwtSecret) throw new Error('JWT_SECRET requis.');
 
   const { Pool } = await import('pg');
   const { drizzle } = await import('drizzle-orm/node-postgres');
 
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = new Pool({ connectionString: databaseUrl, application_name: 'eden-sync-api' });
+  const enrollmentPool = new Pool({ connectionString: enrollmentDatabaseUrl, application_name: 'eden-device-enrollment' });
   const db = drizzle(pool, { schema });
+  const enrollmentDb = drizzle(enrollmentPool, { schema });
+  const enrollmentIdentity = await enrollmentPool.query('SELECT session_user, current_user');
+  if (enrollmentIdentity.rows[0]?.session_user === 'sync_app' || enrollmentIdentity.rows[0]?.current_user === 'sync_app') {
+    await Promise.all([pool.end(), enrollmentPool.end()]);
+    throw new Error('DEVICE_ENROLLMENT_DATABASE_URL ne doit jamais utiliser sync_app.');
+  }
 
   const bucket = process.env.S3_BUCKET;
   if (!bucket) throw new Error('S3_BUCKET requis.');
@@ -71,7 +81,7 @@ async function bootstrap(): Promise<void> {
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
   });
 
-  const app = await createApp(db, jwtSecret, storage);
+  const app = await createApp(db, enrollmentDb, jwtSecret, storage);
   await app.listen(port);
 
   console.log('Sync engine listening on port ' + port);
@@ -91,6 +101,7 @@ async function bootstrap(): Promise<void> {
     try {
       await stopMetricsServer(metricsServer);
       await app.close();
+      await Promise.all([pool.end(), enrollmentPool.end()]);
     } finally {
       process.exit(0);
     }
