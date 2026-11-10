@@ -14,6 +14,7 @@ set -eu
 DB_HOST=${DB_HOST:-db}
 DB_NAME=${DB_NAME:-sync_engine}
 DB_USER=${DB_USER:-postgres}
+MIGRATIONS_DIR=${MIGRATIONS_DIR:-/migrations}
 
 psql_base() {
   psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" "$@"
@@ -61,7 +62,7 @@ if [ "$legacy_schema" = "1" ] && [ "$ledger_entries" = "0" ]; then
   fi
 
   baseline_values=""
-  for f in /migrations/*.sql; do
+  for f in $MIGRATIONS_DIR/*.sql; do
     name=$(basename "$f")
     version=$(printf '%s' "$name" | cut -d_ -f1)
     version_number=$(printf '%s' "$version" | sed 's/^0*//')
@@ -82,7 +83,7 @@ if [ "$legacy_schema" = "1" ] && [ "$ledger_entries" = "0" ]; then
 fi
 
 echo "[migrate] applying pending migrations (transactional ledger)"
-for f in /migrations/*.sql; do
+for f in $MIGRATIONS_DIR/*.sql; do
   name=$(basename "$f")
   tmp=$(mktemp)
 
