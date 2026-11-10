@@ -23,11 +23,13 @@ function validateSearchQuery(value = '') {
 }
 
 function validateEnrollmentCredentials(value) {
-  if (!isPlainRecord(value) || Object.keys(value).some((key) => key !== 'token') ||
-      typeof value.token !== 'string' || value.token.length < 1 || value.token.length > 16384) {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['token', 'activationCode', 'deviceName'].includes(key)) ||
+      typeof value.token !== 'string' || value.token.trim().length < 1 || value.token.length > 16384 ||
+      typeof value.activationCode !== 'string' || !/^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$/.test(value.activationCode.trim()) ||
+      typeof value.deviceName !== 'string' || !value.deviceName.trim() || value.deviceName.trim().length > 120) {
     throw new Error('Invalid enrollment credentials.');
   }
-  return { token: value.token };
+  return { token: value.token.trim(), activationCode: value.activationCode.trim().toUpperCase(), deviceName: value.deviceName.trim() };
 }
 
 function validateProductInput(value) {
@@ -79,6 +81,7 @@ const api = Object.freeze({
   listProducts: (search = '') => ipcRenderer.invoke('eden:products:list', validateSearchQuery(search)),
   saveProduct: (product) => ipcRenderer.invoke('eden:products:save', validateProductInput(product)),
   enrollDevice: (credentials) => ipcRenderer.invoke('eden:device:enroll', validateEnrollmentCredentials(credentials)),
+  checkDeviceApproval: () => ipcRenderer.invoke('eden:device:check-approval'),
   onStatus: (callback) => {
     if (typeof callback !== 'function') throw new TypeError('onStatus expects a function.');
     const listener = (_event, value) => callback(value);
