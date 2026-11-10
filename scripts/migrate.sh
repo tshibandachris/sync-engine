@@ -159,6 +159,11 @@ separation_ok=$(psql_base -tA -c "
         WHERE member_role.rolname = 'device_enrollment_login'
           AND granted_role.rolname <> 'device_enrollment_executor'
      )
+     AND NOT pg_catalog.has_table_privilege('sync_app', 'public.devices', 'INSERT')
+     AND NOT pg_catalog.has_table_privilege('sync_app', 'public.device_pairing_codes', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('sync_app', 'public.device_pairing_codes', 'UPDATE')
+     AND NOT pg_catalog.has_function_privilege('sync_app', 'public.redeem_device_pairing_code(text)', 'EXECUTE')
+     AND NOT pg_catalog.has_function_privilege('sync_app', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE')
      AND NOT pg_catalog.has_function_privilege(
        'sync_app',
        'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)',
