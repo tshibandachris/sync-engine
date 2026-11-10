@@ -22,6 +22,8 @@ export class TestPostgres {
 
   readonly enrollmentDb: ReturnType<typeof drizzle<typeof schema>>;
 
+  readonly connectionOptions: { host: string; port: number; database: string };
+
   private constructor(
     container: Awaited<
       ReturnType<PostgreSqlContainer['start']>
@@ -32,6 +34,7 @@ export class TestPostgres {
     appDb: ReturnType<typeof drizzle<typeof schema>>,
     enrollmentPool: Pool,
     enrollmentDb: ReturnType<typeof drizzle<typeof schema>>,
+    connectionOptions: { host: string; port: number; database: string },
   ) {
     this.container = container;
     this.pool = pool;
@@ -40,6 +43,7 @@ export class TestPostgres {
     this.appDb = appDb;
     this.enrollmentPool = enrollmentPool;
     this.enrollmentDb = enrollmentDb;
+    this.connectionOptions = connectionOptions;
   }
 
   static async start(): Promise<TestPostgres> {
@@ -337,6 +341,7 @@ export class TestPostgres {
       appDb,
       enrollmentPool,
       enrollmentDb,
+      { host: container.getHost(), port: container.getPort(), database: container.getDatabase() },
     );
   }
 
