@@ -49,9 +49,9 @@ jobs:
           api-level: 33
           arch: x86_64
           profile: pixel_2
-          emulator-options: "-no-window -no-audio -no-boot-anim -no-snapshot"
+          emulator-options: "-no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect"
           working-directory: android-app/android
-          script: ./gradlew --no-daemon connectedDebugAndroidTest assembleDebug
+          script: ./gradlew clean connectedDebugAndroidTest assembleDebug --no-daemon --stacktrace --info
       - name: Publish debug APK
         uses: actions/upload-artifact@v4
         with:
