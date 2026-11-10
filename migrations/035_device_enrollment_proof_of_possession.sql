@@ -98,6 +98,10 @@ $function$;
 REVOKE ALL ON FUNCTION public.register_device_enrollment_with_credential(text, uuid, uuid, varchar, varchar, jsonb, text, varchar) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.register_device_enrollment_with_credential(text, uuid, uuid, varchar, varchar, jsonb, text, varchar) TO sync_app;
 
+-- Enrollment is now exclusively mediated by the credential-aware function.
+-- No direct device INSERT is needed by the application role.
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.devices FROM sync_app;
+
 -- Close the older SECURITY DEFINER entry points that allowed device creation
 -- without a registered key, or pairing-code consumption without enrollment.
 REVOKE ALL ON FUNCTION public.register_device_enrollment(uuid, uuid, uuid, uuid, varchar, varchar, jsonb) FROM PUBLIC, sync_app;
