@@ -9,9 +9,6 @@ describe('Device enrollment atomic pairing-code redemption', () => {
   let service: DeviceEnrollmentService;
   const tenantId = randomUUID();
   const storeId = randomUUID();
-  const keyPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-  const publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
-  const privateKeyPem = keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 
   beforeAll(async () => {
     pg = await startTestPostgres();
@@ -35,6 +32,9 @@ describe('Device enrollment atomic pairing-code redemption', () => {
   }
 
   function dto(activationCode: string, fingerprint: string, deviceName = 'Caisse test') {
+    const keyPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const publicKeyPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const privateKeyPem = keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
     const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'dpop+jwt' })).toString('base64url');
     const payload = Buffer.from(JSON.stringify({
       jti: randomUUID(),
