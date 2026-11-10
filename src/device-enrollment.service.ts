@@ -1,7 +1,7 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, Inject, UnauthorizedException,
 } from '@nestjs/common';
-import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
@@ -122,15 +122,15 @@ export class DeviceEnrollmentService {
 
     try {
       return await this.db.transaction(async (tx) => {
-        const result = await tx.execute(sql\`
+        const result = await tx.execute(sql`
           SELECT *
           FROM public.register_device_enrollment_with_credential(
-            \${codeHash}, \${tenantId}::uuid, \${randomUUID()}::uuid,
-            \${dto.deviceName}::varchar, \${hardwareId.trim()}::varchar,
-            \${JSON.stringify(dto.hardwareInfo)}::jsonb,
-            \${dto.publicKeyPem}::text, \${keyThumbprint}::varchar
+            ${codeHash}, ${tenantId}::uuid, ${dto.deviceId}::uuid,
+            ${dto.deviceName}::varchar, ${hardwareId.trim()}::varchar,
+            ${JSON.stringify(dto.hardwareInfo)}::jsonb,
+            ${dto.publicKeyPem}::text, ${keyThumbprint}::varchar
           )
-        \`);
+        `);
         const device = result.rows[0] as {
           device_id: string; tenant_id: string; store_id: string; pos_profile_id: string | null;
           device_name: string; approval_status: string; key_thumbprint: string;
@@ -167,13 +167,13 @@ export class DeviceEnrollmentService {
   async getDeviceStatus(tenantId: string, deviceId: string) {
     if (!UUID_RE.test(tenantId ?? '') || !UUID_RE.test(deviceId ?? '')) throw new BadRequestException('Identité du terminal invalide.');
     return this.db.transaction(async (tx) => {
-      await tx.execute(sql\`SELECT set_config('app.current_tenant_id', \${tenantId}, true)\`);
-      const result = await tx.execute(sql\`
+      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`);
+      const result = await tx.execute(sql`
         SELECT id, tenant_id, approval_status, is_active
         FROM public.devices
-        WHERE tenant_id = \${tenantId}::uuid AND id = \${deviceId}::uuid
+        WHERE tenant_id = ${tenantId}::uuid AND id = ${deviceId}::uuid
         LIMIT 1
-      \`);
+      `);
       const row = result.rows[0] as { id: string; tenant_id: string; approval_status: string; is_active: boolean } | undefined;
       if (!row) throw new ForbiddenException({ code: 'DEVICE_NOT_FOUND', message: 'Terminal introuvable pour ce tenant.' });
       return { deviceId: row.id, tenantId: row.tenant_id, approvalStatus: row.approval_status, isActive: row.is_active };
