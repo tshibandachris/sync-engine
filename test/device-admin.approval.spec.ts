@@ -24,8 +24,13 @@ describe('Device administration approval workflow', () => {
   const pendingB = crypto.randomUUID();
   const approvedA = crypto.randomUUID();
 
-  async function token(tenantId: string, agentId: string, permissions: string[] = []) {
-    return jwt.signAsync({ sub: agentId, tenantId, permissions });
+  async function token(
+    tenantId: string,
+    agentId: string,
+    permissions: string[] = [],
+    tokenUse = 'device_admin',
+  ) {
+    return jwt.signAsync({ sub: agentId, tenantId, permissions, token_use: tokenUse });
   }
 
   async function insertDevice(
@@ -99,6 +104,12 @@ describe('Device administration approval workflow', () => {
 
     const noToken = await request(app.getHttpServer()).get('/api/v1/admin/devices/pending');
     expect(noToken.status).toBe(401);
+
+    const ordinaryAgentToken = await token(tenantA, actorA, ['devices:approve'], 'agent');
+    const purposeDenied = await request(app.getHttpServer())
+      .post('/api/v1/admin/devices/' + pendingA + '/approve')
+      .set('Authorization', 'Bearer ' + ordinaryAgentToken);
+    expect(purposeDenied.status).toBe(403);
 
     const wrongPermission = await token(tenantA, actorA, ['devices:approve']);
     const approveDenied = await request(app.getHttpServer())
