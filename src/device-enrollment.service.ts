@@ -132,18 +132,18 @@ export class DeviceEnrollmentService {
           )
         `);
         const device = result.rows[0] as {
-          device_id: string; tenant_id: string; store_id: string; pos_profile_id: string | null;
-          device_name: string; approval_status: string; key_thumbprint: string;
+          result_device_id: string; result_tenant_id: string; result_store_id: string; result_pos_profile_id: string | null;
+          result_device_name: string; result_approval_status: string; result_key_thumbprint: string;
         } | undefined;
         if (!device) throw new BadRequestException("Code d'activation invalide, expiré ou déjà utilisé.");
 
         return {
           success: true,
           data: {
-            deviceId: device.device_id, tenantId: device.tenant_id,
-            store: { id: device.store_id }, posProfileId: device.pos_profile_id,
-            deviceName: device.device_name, approvalStatus: device.approval_status,
-            keyThumbprint: device.key_thumbprint,
+            deviceId: device.result_device_id, tenantId: device.result_tenant_id,
+            store: { id: device.result_store_id }, posProfileId: device.result_pos_profile_id,
+            deviceName: device.result_device_name, approvalStatus: device.result_approval_status,
+            keyThumbprint: device.result_key_thumbprint,
           },
         };
       });
