@@ -1,4 +1,6 @@
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { DeviceEnrollmentService } from '../src/device-enrollment.service.js';
@@ -159,6 +161,43 @@ describe('Device enrollment atomic pairing-code redemption', () => {
       event_insert: false,
       device_insert: false,
     });
+  });
+
+
+  it('applies migration 036 with a pre-provisioned executor and a migration role without CREATEROLE', async () => {
+    const client = await pg.pool.connect();
+    try {
+      await client.query(`
+        CREATE ROLE device_enrollment_migration_test
+          NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS
+      `);
+      await client.query('ALTER SCHEMA public OWNER TO device_enrollment_migration_test');
+      await client.query(`
+        ALTER FUNCTION public.register_device_enrollment_with_credential(
+          text, uuid, varchar, varchar, jsonb, text, varchar, uuid
+        ) OWNER TO device_enrollment_migration_test
+      `);
+      await client.query('SET ROLE device_enrollment_migration_test');
+      const migration = readFileSync(
+        path.resolve('migrations/036_device_enrollment_executor_role.sql'),
+        'utf8',
+      );
+      await client.query(migration);
+
+      const roleState = await client.query(`
+        SELECT rolcreaterole, rolcanlogin, rolsuper, rolbypassrls
+        FROM pg_catalog.pg_roles
+        WHERE rolname = 'device_enrollment_migration_test'
+      `);
+      expect(roleState.rows[0]).toEqual({
+        rolcreaterole: false,
+        rolcanlogin: false,
+        rolsuper: false,
+        rolbypassrls: false,
+      });
+    } finally {
+      client.release();
+    }
   });
 
 });
