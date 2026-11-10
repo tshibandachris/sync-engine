@@ -169,6 +169,32 @@ separation_ok=$(psql_base -tA -c "
        'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)',
        'EXECUTE'
      )
+     AND EXISTS (
+       SELECT 1 FROM pg_catalog.pg_roles AS r
+        WHERE r.rolname = 'device_enrollment_function_owner'
+          AND NOT r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolcreatedb
+          AND NOT r.rolcreaterole AND NOT r.rolinherit
+          AND NOT r.rolreplication AND NOT r.rolbypassrls
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_auth_members
+        WHERE member = 'device_enrollment_function_owner'::regrole
+     )
+     AND NOT pg_catalog.pg_has_role('device_enrollment_function_owner', 'sync_app', 'MEMBER')
+     AND NOT pg_catalog.pg_has_role('device_enrollment_function_owner', 'device_enrollment_executor', 'MEMBER')
+     AND (
+       SELECT pg_catalog.pg_get_userbyid(p.proowner) = 'device_enrollment_function_owner'
+         FROM pg_catalog.pg_proc AS p
+        WHERE p.oid = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)'::regprocedure
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_class AS c
+        WHERE c.relowner = 'device_enrollment_function_owner'::regrole
+          AND c.relname IN (
+            'tenants', 'devices', 'device_pairing_codes', 'device_credentials',
+            'device_approval_events', 'device_proof_nonces', 'device_enrollment_attempts'
+          )
+     )
     THEN 1 ELSE 0 END
 ")
 if [ "$separation_ok" != "1" ]; then
