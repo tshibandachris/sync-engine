@@ -38,11 +38,16 @@ test('product search accepts bounded strings only', () => {
   assert.throws(() => validateSearchQuery('x'.repeat(201)), /Invalid product search/);
 });
 
-test('enrollment credentials accept only a bounded token field', () => {
-  assert.deepEqual(validateEnrollmentCredentials({ token: 'a.b.c' }), { token: 'a.b.c' });
-  assert.throws(() => validateEnrollmentCredentials({ token: 'a.b.c', extra: true }), /Invalid enrollment/);
-  assert.throws(() => validateEnrollmentCredentials({ token: '' }), /Invalid enrollment/);
-  assert.throws(() => validateEnrollmentCredentials({ token: 'x'.repeat(16385) }), /Invalid enrollment/);
+test('enrollment credentials require a bounded agent JWT, pairing code and device name', () => {
+  const input = { token: 'a.b.c', activationCode: 'ab12-cd34', deviceName: 'Caisse 01' };
+  assert.deepEqual(validateEnrollmentCredentials(input), {
+    token: 'a.b.c', activationCode: 'AB12-CD34', deviceName: 'Caisse 01',
+  });
+  assert.throws(() => validateEnrollmentCredentials({ ...input, extra: true }), /Invalid enrollment/);
+  assert.throws(() => validateEnrollmentCredentials({ ...input, token: '' }), /Invalid enrollment/);
+  assert.throws(() => validateEnrollmentCredentials({ ...input, token: 'x'.repeat(16385) }), /Invalid enrollment/);
+  assert.throws(() => validateEnrollmentCredentials({ ...input, activationCode: 'bad' }), /Invalid enrollment/);
+  assert.throws(() => validateEnrollmentCredentials({ ...input, deviceName: '' }), /Invalid enrollment/);
 });
 
 test('product IPC accepts the supported DTO and rejects unknown or oversized fields', () => {
