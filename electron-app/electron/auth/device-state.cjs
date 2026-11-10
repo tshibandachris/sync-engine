@@ -11,7 +11,7 @@ function deriveDeviceTrustState(credential) {
   return credential?.deviceId ? 'awaiting_approval' : 'unregistered';
 }
 
-function canAccessLocalPOS(agentAuthState) {
+function canAccessLocalPOS(agentAuthState, _deviceTrustState) {
   return agentAuthState === 'authenticated';
 }
 
