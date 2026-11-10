@@ -323,7 +323,7 @@ export class TestPostgres {
 
     // Dedicated LOGIN used only by the enrollment capability pool.
     await pool.query("CREATE ROLE device_enrollment_test LOGIN INHERIT PASSWORD 'device_enrollment_test_pw'");
-    await pool.query('GRANT device_enrollment_executor TO device_enrollment_test');
+    await pool.query('GRANT device_enrollment_executor TO device_enrollment_test WITH INHERIT TRUE, SET FALSE');
     const enrollmentPool = new Pool({
       host: container.getHost(),
       port: container.getPort(),
