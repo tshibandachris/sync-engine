@@ -37,6 +37,7 @@ jobs:
           DB_HOST: localhost
           DB_NAME: sync_engine_test
           DB_USER: postgres
+          MIGRATIONS_DIR: migrations
           PGPASSWORD: postgres
           SYNC_APP_PASSWORD: sync_app_test_password
           DEVICE_ENROLLMENT_PASSWORD: enrollment_test_password
