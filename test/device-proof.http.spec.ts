@@ -24,6 +24,8 @@ describe('HTTP device proof verification', () => {
   const pendingDeviceId = crypto.randomUUID();
   const revokedDeviceId = crypto.randomUUID();
   const inactiveDeviceId = crypto.randomUUID();
+  const rejectedDeviceId = crypto.randomUUID();
+  const noCredentialDeviceId = crypto.randomUUID();
   const jwt = createTestJwtService();
   const token = signAgentToken(agentId, jwt, tenantId);
   let privateKeyPem: string;
@@ -110,6 +112,8 @@ describe('HTTP device proof verification', () => {
     await insertDevice(pendingDeviceId, 'pending_approval');
     await insertDevice(revokedDeviceId, 'revoked');
     await insertDevice(inactiveDeviceId, 'approved', false, true);
+    await insertDevice(rejectedDeviceId, 'rejected');
+    await insertDevice(noCredentialDeviceId, 'approved');
 
     const moduleRef = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '30d' } })],
@@ -161,6 +165,18 @@ describe('HTTP device proof verification', () => {
     const response = await callSync(revokedDeviceId, buildProof());
     expect(response.status).toBe(403);
     expect(response.body.code).toBe('DEVICE_REVOKED');
+  });
+
+  it('rejects a rejected device with its explicit state', async () => {
+    const response = await callSync(rejectedDeviceId, buildProof());
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('DEVICE_REJECTED');
+  });
+
+  it('rejects an approved device without an active credential', async () => {
+    const response = await callSync(noCredentialDeviceId, buildProof());
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('NO_ACTIVE_CREDENTIAL');
   });
 
   it('rejects an inactive approved device', async () => {
@@ -215,6 +231,12 @@ describe('HTTP device proof verification', () => {
     const response = await callSync(approvedDeviceId, buildProof({ alg: 'none' }));
     expect(response.status).toBe(401);
     expect(response.body.code).toBe('UNSUPPORTED_PROOF_ALGORITHM');
+  });
+
+  it('rejects a malformed compact JWS', async () => {
+    const response = await callSync(approvedDeviceId, 'not-a-jws');
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('MALFORMED_PROOF');
   });
 
   it('rejects a replayed proof', async () => {
