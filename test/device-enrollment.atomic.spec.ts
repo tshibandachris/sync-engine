@@ -161,6 +161,36 @@ describe('Device enrollment atomic proof-of-possession', () => {
     expect(state.rows[0].used_at).toBeNull();
   }, 120_000);
 
+  it('rejects a direct privileged enrollment call from sync_app with SQLSTATE 42501', async () => {
+    const maliciousCall = pg.appPool.query(
+      `SELECT * FROM public.register_device_enrollment_with_credential(
+        $1::text, $2::uuid, $3::uuid, $4::varchar, $5::varchar,
+        $6::jsonb, $7::text, $8::varchar
+      )`,
+      [
+        'a'.repeat(64),
+        tenantId,
+        randomUUID(),
+        'Attacker POS',
+        'fp-bad',
+        JSON.stringify({}),
+        'fake-pem',
+        'b'.repeat(43),
+      ],
+    );
+
+    await expect(maliciousCall).rejects.toMatchObject({
+      code: '42501',
+      message: expect.stringMatching(/permission denied for function register_device_enrollment_with_credential/i),
+    });
+  });
+
+  it('fails bootstrap identity validation when the enrollment pool connects as sync_app', async () => {
+    await expect(assertEnrollmentDatabaseIdentity(pg.appPool)).rejects.toThrow(
+      /BOOTSTRAP_SECURITY_ERROR: Device enrollment pool must use a non-superuser login that inherits device_enrollment_executor and is not a member of sync_app/i,
+    );
+  });
+
   it('isolates the SECURITY DEFINER enrollment capability from sync_app', async () => {
     const syncExecute = await pg.pool.query(
       `SELECT has_function_privilege('sync_app', 'public.register_device_enrollment_with_credential(text,uuid,uuid,character varying,character varying,jsonb,text,character varying)', 'EXECUTE') AS allowed`,
