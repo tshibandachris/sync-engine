@@ -22,6 +22,7 @@ import type { AttachmentStorage } from './attachment-storage.js';
 export const ATTACHMENT_STORAGE = 'ATTACHMENT_STORAGE';
 import { AuthController } from './auth.controller.js';
 import { JwtAuthGuard } from './jwt.guard.js';
+import { DeviceApprovalGuard } from './device-approval.guard.js';
 import { SyncLogService } from './observability/sync-log.service.js';
 import { SyncLogInterceptor } from './observability/sync-log.interceptor.js';
 
@@ -58,6 +59,7 @@ export class AppModule {
         { provide: CourrierService, useFactory: (d: any, s: any) => new CourrierService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
         { provide: DeviceEnrollmentService, useFactory: (d: any) => new DeviceEnrollmentService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
+        DeviceApprovalGuard,
         SyncLogService,
         { provide: APP_INTERCEPTOR, useClass: SyncLogInterceptor },
       ],
