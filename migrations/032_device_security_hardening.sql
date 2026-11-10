@@ -26,8 +26,8 @@ GRANT INSERT (
 -- No credential service with cryptographic proof-of-possession exists yet.
 REVOKE INSERT, UPDATE, DELETE ON TABLE device_credentials FROM sync_app;
 
--- Approval events remain append-only for the application role.
-REVOKE UPDATE, DELETE ON TABLE device_approval_events FROM sync_app;
+-- No event-writing service exists yet; the application role is read-only.
+REVOKE INSERT, UPDATE, DELETE ON TABLE device_approval_events FROM sync_app;
 
 -- ---------------------------------------------------------------------------
 -- 2. Irreversible credential revocation (defense in depth)
