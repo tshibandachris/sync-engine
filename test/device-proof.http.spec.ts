@@ -214,6 +214,12 @@ describe('HTTP device proof verification', () => {
     expect(response.body.code).toBe('ATH_MISMATCH');
   });
 
+  it('rejects a non-UUID jti claim', async () => {
+    const response = await callSync(approvedDeviceId, buildProof({ jti: 'not-a-uuid' }));
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('INVALID_JTI');
+  });
+
   it('rejects a proof outside the ±60 second window', async () => {
     const response = await callSync(
       approvedDeviceId,
@@ -231,6 +237,12 @@ describe('HTTP device proof verification', () => {
 
   it('rejects unsupported JWS headers and extra header parameters', async () => {
     const response = await callSync(approvedDeviceId, buildProof({ alg: 'none' }));
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('UNSUPPORTED_PROOF_ALGORITHM');
+  });
+
+  it('rejects a proof with an unsupported typ', async () => {
+    const response = await callSync(approvedDeviceId, buildProof({ typ: 'JWT' }));
     expect(response.status).toBe(401);
     expect(response.body.code).toBe('UNSUPPORTED_PROOF_ALGORITHM');
   });
