@@ -28,3 +28,16 @@ The status endpoint is deliberately protected by `JwtAuthGuard` but not `DeviceA
 The preload exposes read-only metadata through `getDeviceStatus()` and a status-refresh action. Private key material and the credential store remain in the main process. The existing `sync/api-client.cjs` and `sync/outbox.cjs` are unchanged. Resilience tests continue to exercise real `pushChanges()` HTTP rejection paths (401, 403 and network failure), persisted outbox rows and batch snapshots across SQLite close/reopen, and idempotency-key reuse.
 
 **Integration boundary:** approval status alone does not activate synchronization. The client deliberately keeps `deviceProofReady` false and does not enable sync until the ES256 enrollment/initial-proof and signed-request protocol is implemented end to end. Thus an approved terminal still operates locally without making unsigned requests to proof-protected routes.
+
+
+## Initial proof enrollment (client tranche)
+
+- The Renderer submits only an activation code and a human-readable device name through a narrow IPC method.
+- Electron Main generates a fresh P-256 key pair, derives the RFC 7638 thumbprint, builds the host fingerprint and signs the initial compact JWS.
+- The initial proof binds `POST`, `/api/v1/devices/enroll`, `iat`, `jti`, SHA-256/base64url of the activation code, and the exact fingerprint sent in `X-Device-Fingerprint`.
+- A dedicated enrollment transport posts `publicKeyPem` and `initialProof` to the backend. It does not send the agent bearer JWT.
+- On a matching `201` response, Main stores `deviceId` + private/public key + thumbprint in one OS-encrypted safeStorage credential, reads it back, and only then changes the local trust state to `awaiting_approval`.
+- The status poller starts after the encrypted credential has been verified. The server remains the sole authority for later approval transitions.
+- The Renderer never receives the private key, the signed proof, or the public-key persistence envelope.
+
+The client still deliberately keeps `deviceProofReady` false. Enrollment and approval do not enable synchronization: the existing sync transport must be upgraded to sign each request and send the server-verified proof before `/sync/*` can be used. The SQLite Outbox and local POS path are unchanged.
