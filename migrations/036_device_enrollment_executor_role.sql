@@ -174,6 +174,19 @@ BEGIN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: enrollment function must remain SECURITY DEFINER and must not be owned by sync_app';
   END IF;
   IF EXISTS (
+    SELECT 1
+      FROM pg_catalog.pg_class AS c
+      JOIN pg_catalog.pg_roles AS r ON r.oid = c.relowner
+     WHERE r.rolname = 'device_enrollment_function_owner'
+       AND c.relname IN (
+         'tenants', 'devices', 'device_pairing_codes', 'device_credentials',
+         'device_approval_events', 'device_proof_nonces', 'device_enrollment_attempts'
+       )
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: SECURITY DEFINER owner must not own tenant or enrollment tables; FORCE RLS must remain effective';
+  END IF;
+
+  IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_auth_members
     WHERE member = 'device_enrollment_executor'::regrole
   ) THEN
