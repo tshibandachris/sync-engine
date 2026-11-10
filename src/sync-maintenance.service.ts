@@ -204,15 +204,17 @@ export class SyncMaintenanceService {
       throw new Error('batchSize doit etre compris entre 1 et 10000.');
     }
 
-    const result = await this.db.execute(sql`
-      SELECT public.purge_expired_device_proof_nonces(
-        ${tenantId}::uuid,
-        ${batchSize}::int
-      ) AS deleted
-    `);
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    if (!row) throw new Error('purge_expired_device_proof_nonces a retourne un resultat vide.');
-    return { deleted: Number(row.deleted ?? 0) };
+    return withTenant(this.db, tenantId, async (tx) => {
+      const result = await tx.execute(sql`
+        SELECT public.purge_expired_device_proof_nonces(
+          ${tenantId}::uuid,
+          ${batchSize}::int
+        ) AS deleted
+      `);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new Error('purge_expired_device_proof_nonces a retourne un resultat vide.');
+      return { deleted: Number(row.deleted ?? 0) };
+    });
   }
 
   /**
