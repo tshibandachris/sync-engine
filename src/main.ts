@@ -60,10 +60,14 @@ async function bootstrap(): Promise<void> {
   const enrollmentPool = new Pool({ connectionString: enrollmentDatabaseUrl, application_name: 'eden-device-enrollment' });
   const db = drizzle(pool, { schema });
   const enrollmentDb = drizzle(enrollmentPool, { schema });
-  const enrollmentIdentity = await enrollmentPool.query('SELECT session_user, current_user');
-  if (enrollmentIdentity.rows[0]?.session_user === 'sync_app' || enrollmentIdentity.rows[0]?.current_user === 'sync_app') {
+  const enrollmentIdentity = await enrollmentPool.query(`
+    SELECT session_user, current_user,
+           pg_has_role(session_user, 'sync_app', 'MEMBER') AS is_sync_app_member,
+           pg_has_role(session_user, 'device_enrollment_executor', 'USAGE') AS has_enrollment_capability
+  `);
+  if (enrollmentIdentity.rows[0]?.is_sync_app_member || !enrollmentIdentity.rows[0]?.has_enrollment_capability) {
     await Promise.all([pool.end(), enrollmentPool.end()]);
-    throw new Error('DEVICE_ENROLLMENT_DATABASE_URL ne doit jamais utiliser sync_app.');
+    throw new Error('DEVICE_ENROLLMENT_DATABASE_URL doit hériter de device_enrollment_executor et ne doit pas être membre de sync_app.');
   }
 
   const bucket = process.env.S3_BUCKET;
