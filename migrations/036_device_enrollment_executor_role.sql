@@ -100,6 +100,15 @@ BEGIN
   IF pg_catalog.pg_has_role('device_enrollment_executor', 'sync_app', 'MEMBER') THEN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: executor must not be a member of sync_app';
   END IF;
+
+  IF pg_catalog.has_table_privilege('sync_app', 'public.devices', 'INSERT')
+     OR pg_catalog.has_table_privilege('sync_app', 'public.device_pairing_codes', 'SELECT')
+     OR pg_catalog.has_table_privilege('sync_app', 'public.device_pairing_codes', 'UPDATE')
+     OR pg_catalog.has_function_privilege('sync_app', 'public.redeem_device_pairing_code(text)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('sync_app', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: sync_app retains a direct device enrollment or pairing-code privilege';
+  END IF;
+
   IF pg_catalog.has_function_privilege(
     'sync_app',
     'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)',
