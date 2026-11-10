@@ -283,7 +283,7 @@ app.whenReady().then(async () => {
     trustState: deviceTrustState,
     syncState,
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
-    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady),
+    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
     serverHasActiveCredential,
     deviceProofReady,
   }));
