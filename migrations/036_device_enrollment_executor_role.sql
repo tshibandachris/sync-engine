@@ -76,15 +76,6 @@ GRANT INSERT ON TABLE public.device_approval_events TO device_enrollment_functio
 GRANT INSERT ON TABLE public.device_proof_nonces TO device_enrollment_function_owner;
 GRANT SELECT, INSERT ON TABLE public.device_enrollment_attempts TO device_enrollment_function_owner;
 
-ALTER FUNCTION public.redeem_device_pairing_code(text)
-  OWNER TO device_enrollment_function_owner;
-ALTER FUNCTION public.register_device_enrollment(
-  uuid, uuid, uuid, uuid, varchar, varchar, jsonb
-) OWNER TO device_enrollment_function_owner;
-ALTER FUNCTION public.register_device_enrollment_with_credential(
-  text, uuid, varchar, varchar, jsonb, text, varchar, uuid
-) OWNER TO device_enrollment_function_owner;
-
 
 -- Remove the legacy direct-write and helper-function paths from the general app role.
 -- Enrollment now enters only through the dedicated executor capability.
@@ -103,6 +94,15 @@ REVOKE ALL ON FUNCTION public.register_device_enrollment_with_credential(
 GRANT EXECUTE ON FUNCTION public.register_device_enrollment_with_credential(
   text, uuid, varchar, varchar, jsonb, text, varchar, uuid
 ) TO device_enrollment_executor;
+
+ALTER FUNCTION public.redeem_device_pairing_code(text)
+  OWNER TO device_enrollment_function_owner;
+ALTER FUNCTION public.register_device_enrollment(
+  uuid, uuid, uuid, uuid, varchar, varchar, jsonb
+) OWNER TO device_enrollment_function_owner;
+ALTER FUNCTION public.register_device_enrollment_with_credential(
+  text, uuid, varchar, varchar, jsonb, text, varchar, uuid
+) OWNER TO device_enrollment_function_owner;
 
 -- Fail the migration if the capability accidentally inherits the general role.
 DO $verification$
