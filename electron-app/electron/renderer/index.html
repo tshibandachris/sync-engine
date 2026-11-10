@@ -88,13 +88,13 @@
   <section id="enrollment-screen" hidden aria-labelledby="enrollment-title">
     <div class="auth-card">
       <div class="auth-brand"><div class="mark">E</div><div><strong>Eden Gestion</strong><small class="subtext">CONFIGURATION INITIALE</small></div></div>
-      <h1 id="enrollment-title">Connecter cette caisse</h1>
-      <p>Cette installation n’a pas encore de jeton d’appareil chiffré. Collez le JWT fourni par votre administrateur. Il sera enregistré uniquement après chiffrement par le stockage sécurisé du système.</p>
+      <h1 id="enrollment-title">Ouvrir une session agent</h1>
+      <p>Cette installation ne possède pas encore de session agent chiffrée. Collez le JWT agent fourni par votre administrateur. Il sera enregistré uniquement après chiffrement par le stockage sécurisé du système. L’identité cryptographique du terminal sera enregistrée séparément à l’étape suivante.</p>
       <form id="enrollment-form">
-        <div class="field"><label for="device-token">Jeton d’appareil (JWT)</label><textarea id="device-token" name="token" required maxlength="16384" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="eyJ..." aria-describedby="enrollment-help"></textarea></div>
-        <p class="form-help" id="enrollment-help">Le serveur actuel ne fournit pas encore de route d’échange pour un code d’activation. Utilisez un JWT d’appareil émis par votre administrateur. Sa signature et ses autorisations seront vérifiées par le serveur lors de la synchronisation.</p>
+        <div class="field"><label for="device-token">Jeton de session agent (JWT)</label><textarea id="device-token" name="token" required maxlength="16384" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="eyJ..." aria-describedby="enrollment-help"></textarea></div>
+        <p class="form-help" id="enrollment-help">Ce JWT identifie l’agent, pas le terminal. Après l’ouverture de session, utilisez le code d’activation fourni par l’administrateur pour enregistrer la clé cryptographique propre à cette caisse.</p>
         <p class="feedback" id="enrollment-feedback" role="status" aria-live="polite"></p>
-        <button class="btn primary" id="enroll-button" type="submit">Chiffrer et connecter la caisse</button>
+        <button class="btn primary" id="enroll-button" type="submit">Chiffrer et ouvrir la session agent</button>
       </form>
     </div>
   </section>
