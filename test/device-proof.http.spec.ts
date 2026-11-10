@@ -12,6 +12,7 @@ import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
+import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
 import { DeviceRepository } from '../src/devices/device.repository.js';
 import { DeviceProofNonceRepository } from '../src/auth/device-proof-nonce.repository.js';
 
@@ -124,6 +125,7 @@ describe('HTTP device proof verification', () => {
         { provide: SyncPushService, useFactory: (db: any) => new SyncPushService(db), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (db: any) => new SyncConflictService(db), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
+        DeviceApprovalGuard,
         DeviceRepository,
         DeviceProofNonceRepository,
         DeviceProofGuard,
