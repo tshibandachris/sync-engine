@@ -22,11 +22,16 @@ import type { AttachmentStorage } from './attachment-storage.js';
 export const ATTACHMENT_STORAGE = 'ATTACHMENT_STORAGE';
 import { AuthController } from './auth.controller.js';
 import { JwtAuthGuard } from './jwt.guard.js';
+import { DeviceApprovalGuard } from './device-approval.guard.js';
+import { DeviceProofGuard } from './auth/device-proof.guard.js';
+import { DeviceProofNonceRepository } from './auth/device-proof-nonce.repository.js';
+import { DeviceRepository } from './devices/device.repository.js';
 import { SyncLogService } from './observability/sync-log.service.js';
 import { SyncLogInterceptor } from './observability/sync-log.interceptor.js';
 
 export interface AppModuleOptions {
   db: NodePgDatabase<typeof schema>;
+  enrollmentDb: NodePgDatabase<typeof schema>;
   jwtSecret: string;
   storage: AttachmentStorage;
   jwtExpiresIn?: number | string;
@@ -35,7 +40,7 @@ export interface AppModuleOptions {
 @Module({})
 export class AppModule {
   static register(options: AppModuleOptions): DynamicModule {
-    const { db, jwtSecret, storage, jwtExpiresIn = '30d' } = options;
+    const { db, enrollmentDb, jwtSecret, storage, jwtExpiresIn = '30d' } = options;
     return {
       module: AppModule,
       imports: [
@@ -48,6 +53,7 @@ export class AppModule {
       controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController],
       providers: [
         { provide: 'DRIZZLE_DB', useValue: db },
+        { provide: 'DEVICE_ENROLLMENT_DB', useValue: enrollmentDb },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: CashSessionService, useFactory: (d: any) => new CashSessionService(d), inject: ['DRIZZLE_DB'] },
@@ -56,8 +62,12 @@ export class AppModule {
         { provide: ATTACHMENT_STORAGE, useValue: storage },
         { provide: AttachmentService, useFactory: (d: any, s: any) => new AttachmentService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
         { provide: CourrierService, useFactory: (d: any, s: any) => new CourrierService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
-        { provide: DeviceEnrollmentService, useFactory: (d: any) => new DeviceEnrollmentService(d), inject: ['DRIZZLE_DB'] },
+        { provide: DeviceEnrollmentService, useFactory: (e: any) => new DeviceEnrollmentService(e), inject: ['DEVICE_ENROLLMENT_DB'] },
         JwtAuthGuard,
+        DeviceApprovalGuard,
+        DeviceProofGuard,
+        DeviceProofNonceRepository,
+        DeviceRepository,
         SyncLogService,
         { provide: APP_INTERCEPTOR, useClass: SyncLogInterceptor },
       ],
