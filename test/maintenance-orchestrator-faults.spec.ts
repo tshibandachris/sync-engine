@@ -26,6 +26,7 @@ const storage = {} as AttachmentStorage;
 // Service simulé : chaque étape note son passage et renvoie des compteurs reconnaissables.
 function fakeService(calls: string[], over: Partial<MaintenanceServiceLike> = {}): MaintenanceServiceLike {
   return {
+    purgeExpiredDeviceProofNonces: async () => { calls.push('nonces'); return { deleted: 1 }; },
     purgeSyncLogs: async () => {
       calls.push('syncLogs');
       return { logsDeleted: 2 };
@@ -78,7 +79,7 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
       }),
     );
 
-    expect(calls).toEqual(['pending', 'tombstones', 'storage', 'scan']);
+    expect(calls).toEqual(['nonces', 'pending', 'tombstones', 'storage', 'scan']);
     expect(report.tenantsFailed).toBe(1);
     expect(report.tenantsSucceeded).toBe(0);
     const row = report.perTenant[0];
@@ -102,7 +103,7 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
       }),
     );
 
-    expect(calls).toEqual(['syncLogs', 'pending', 'scan']);
+    expect(calls).toEqual(['nonces', 'syncLogs', 'pending', 'scan']);
     const row = report.perTenant[0];
     expect(row.error).toBe('tombstones: tombstones down');
     expect(row.syncLogsDeleted).toBe(2);
