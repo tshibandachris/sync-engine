@@ -4,6 +4,7 @@ import path from 'node:path';
 const root = path.resolve('android');
 const javaRoot = path.join(root, 'app', 'src', 'main', 'java');
 const nativeSource = path.resolve('native', 'EdenDeviceKeyPlugin.java');
+const testSource = path.resolve('native-test', 'EdenFoundationInstrumentedTest.java');
 
 function findFile(directory, filename) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -11,9 +12,7 @@ function findFile(directory, filename) {
     if (entry.isDirectory()) {
       const found = findFile(candidate, filename);
       if (found) return found;
-    } else if (entry.isFile() && entry.name === filename) {
-      return candidate;
-    }
+    } else if (entry.isFile() && entry.name === filename) return candidate;
   }
   return null;
 }
@@ -21,36 +20,30 @@ function findFile(directory, filename) {
 const mainActivity = findFile(javaRoot, 'MainActivity.java');
 if (!mainActivity) throw new Error('Capacitor MainActivity.java was not generated.');
 const source = fs.readFileSync(mainActivity, 'utf8');
-const packageMatch = source.match(/^package\s+([\w.]+);/m);
+const packageMatch = source.match(/^package\\s+([\\w.]+);/m);
 if (!packageMatch) throw new Error('Unable to determine Android application package.');
 const packageName = packageMatch[1];
 const packageDirectory = path.join(javaRoot, ...packageName.split('.'));
 fs.mkdirSync(packageDirectory, { recursive: true });
 
-const plugin = fs.readFileSync(nativeSource, 'utf8')
-  .replace(/^package\s+[\w.]+;/m, `package ${packageName};`);
+const plugin = fs.readFileSync(nativeSource, 'utf8').replace(/^package\\s+[\\w.]+;/m, `package ${packageName};`);
 fs.writeFileSync(path.join(packageDirectory, 'EdenDeviceKeyPlugin.java'), plugin);
 
 let activity = source;
 if (!activity.includes('EdenDeviceKeyPlugin.class')) {
   activity = activity.replace(
-    /public class MainActivity extends BridgeActivity\s*\{/,
-    `public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(android.os.Bundle savedInstanceState) {\n        registerPlugin(EdenDeviceKeyPlugin.class);\n        super.onCreate(savedInstanceState);\n    }\n`,
+    /public class MainActivity extends BridgeActivity\\s*\\{/,
+    `public class MainActivity extends BridgeActivity {\\n    @Override\\n    public void onCreate(android.os.Bundle savedInstanceState) {\\n        registerPlugin(EdenDeviceKeyPlugin.class);\\n        super.onCreate(savedInstanceState);\\n    }\\n`,
   );
-  activity = activity.replace(
-    /import com.getcapacitor.BridgeActivity;/,
-    'import com.getcapacitor.BridgeActivity;\nimport ' + packageName + '.EdenDeviceKeyPlugin;',
-  );
+  activity = activity.replace(/import com.getcapacitor.BridgeActivity;/, 'import com.getcapacitor.BridgeActivity;\\nimport ' + packageName + '.EdenDeviceKeyPlugin;');
   fs.writeFileSync(mainActivity, activity);
 }
 
 const manifestPath = path.join(root, 'app', 'src', 'main', 'AndroidManifest.xml');
 let manifest = fs.readFileSync(manifestPath, 'utf8');
-manifest = manifest.replace(/(<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*)(>)/s, (all, before, close) => {
-  if (before.includes('android:screenOrientation')) return all;
-  return before + ' android:screenOrientation="landscape"' + close;
-});
-manifest = manifest.replace(/(<application\b[^>]*)(>)/s, (all, before, close) => {
+manifest = manifest.replace(/(<activity\\b[^>]*android:name="[^"]*MainActivity"[^>]*)(>)/s, (all, before, close) =>
+  before.includes('android:screenOrientation') ? all : before + ' android:screenOrientation="landscape"' + close);
+manifest = manifest.replace(/(<application\\b[^>]*)(>)/s, (all, before, close) => {
   let updated = before;
   if (!updated.includes('android:allowBackup')) updated += ' android:allowBackup="false"';
   if (!updated.includes('android:dataExtractionRules')) updated += ' android:dataExtractionRules="@xml/data_extraction_rules"';
@@ -63,18 +56,28 @@ fs.mkdirSync(xmlDirectory, { recursive: true });
 fs.writeFileSync(path.join(xmlDirectory, 'data_extraction_rules.xml'), `<?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="root" />
-        <exclude domain="database" />
-        <exclude domain="sharedpref" />
-        <exclude domain="external" />
+        <exclude domain="root" /><exclude domain="database" /><exclude domain="sharedpref" /><exclude domain="external" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="root" />
-        <exclude domain="database" />
-        <exclude domain="sharedpref" />
-        <exclude domain="external" />
+        <exclude domain="root" /><exclude domain="database" /><exclude domain="sharedpref" /><exclude domain="external" />
     </device-transfer>
 </data-extraction-rules>
 `);
 
-console.log('Android native ES256 plugin registered; landscape and backup protections applied.');
+const gradlePath = path.join(root, 'app', 'build.gradle');
+let gradle = fs.readFileSync(gradlePath, 'utf8');
+if (!gradle.includes('testInstrumentationRunner')) {
+  gradle = gradle.replace(/defaultConfig\\s*\\{/, 'defaultConfig {\\n        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"');
+}
+if (!gradle.includes('androidx.test:runner')) {
+  gradle = gradle.replace(/dependencies\\s*\\{/, 'dependencies {\\n    androidTestImplementation "androidx.test:runner:1.6.2"\\n    androidTestImplementation "androidx.test:rules:1.6.1"\\n    androidTestImplementation "androidx.test.ext:junit:1.2.1"');
+}
+fs.writeFileSync(gradlePath, gradle);
+
+const testRoot = path.join(root, 'app', 'src', 'androidTest', 'java');
+const testPackageDir = path.join(testRoot, ...packageName.split('.'));
+fs.mkdirSync(testPackageDir, { recursive: true });
+const test = fs.readFileSync(testSource, 'utf8').replace(/^package\\s+[\\w.]+;/m, `package ${packageName};`);
+fs.writeFileSync(path.join(testPackageDir, 'EdenFoundationInstrumentedTest.java'), test);
+
+console.log('Registered native ES256 plugin, Android instrumentation tests, landscape and backup protections.');
