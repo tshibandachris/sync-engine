@@ -218,6 +218,7 @@ describe('Device enrollment atomic pairing-code redemption', () => {
         rolbypassrls: false,
       });
     } finally {
+      await client.query('RESET ROLE').catch(() => undefined);
       client.release();
     }
   });
