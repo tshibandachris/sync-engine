@@ -1,7 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt.guard.js';
-import { DeviceApprovalGuard } from './device-approval.guard.js';
-import { DeviceProofGuard } from './auth/device-proof.guard.js';
 import { AttachmentService } from './sync-attachment.service.js';
 
 interface RequestUploadBody {
@@ -12,7 +10,7 @@ interface RequestUploadBody {
 }
 
 @Controller('attachments')
-@UseGuards(JwtAuthGuard, DeviceApprovalGuard, DeviceProofGuard)
+@UseGuards(JwtAuthGuard)
 export class AttachmentController {
   constructor(
     @Inject(AttachmentService) private readonly svc: AttachmentService,
