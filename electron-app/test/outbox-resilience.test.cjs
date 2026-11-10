@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { openDatabase } = require('../electron/db/client.cjs');
+const { pushChanges } = require('../electron/sync/api-client.cjs');
 const {
   enqueueOutbox, preparePushBatch, getOutboxStatus,
 } = require('../electron/sync/outbox.cjs');
@@ -39,9 +40,9 @@ function enqueueSale(db, id) {
 }
 
 for (const scenario of [
-  { name: '401 authentication refusal', error: Object.assign(new Error('Unauthorized'), { response: { status: 401, data: { code: 'AUTH_REJECTED' } } }) },
-  { name: '403 device approval refusal', error: Object.assign(new Error('Device pending'), { response: { status: 403, data: { code: 'DEVICE_PENDING_APPROVAL' } } }) },
-  { name: 'network failure', error: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) },
+  { name: '401 authentication refusal', fetchImpl: async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ code: 'AUTH_REJECTED' }) }) },
+  { name: '403 device approval refusal', fetchImpl: async () => ({ ok: false, status: 403, text: async () => JSON.stringify({ code: 'DEVICE_PENDING_APPROVAL' }) }) },
+  { name: 'network failure', fetchImpl: async () => { throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }); } },
 ]) {
   test('preserves outbox snapshots and idempotency after ' + scenario.name, () => {
     const f = fixture();
@@ -52,9 +53,15 @@ for (const scenario of [
       const beforeOutbox = f.db.prepare('SELECT id, entity_type, entity_id, operation, payload_json, attempts, last_error FROM outbox').get();
       const beforeBatch = f.db.prepare('SELECT idempotency_key, payload_json, outbox_ids_json, state FROM outbox_batches').get();
 
-      // The production sync coordinator applies no response on rejection.
-      // In particular, applyPushResponse is intentionally not called here.
-      assert.ok(scenario.error);
+      // Exercise the actual HTTP client. Its rejected promise never reaches
+      // the success-only applyPushResponse call in the production coordinator.
+      await assert.rejects(pushChanges({
+        baseUrl: 'http://127.0.0.1:3000',
+        token: 'test-agent-jwt',
+        idempotencyKey: batch.idempotencyKey,
+        payload: batch.payload,
+        fetchImpl: scenario.fetchImpl,
+      }));
       assert.equal(getOutboxStatus(f.db).pending, 1);
 
       f.reopen();
