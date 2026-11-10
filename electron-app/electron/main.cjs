@@ -197,7 +197,7 @@ async function doSync() {
           : deviceTrustState === 'awaiting_approval'
             ? 'Terminal en attente d’approbation : synchronisation suspendue. La caisse locale reste disponible.'
             : deviceTrustState === 'approved'
-              ? 'Terminal approuvé par le serveur, mais la preuve ES256 côté client n’est pas encore activée. Synchronisation suspendue.'
+              ? 'Terminal approuvé, mais la clé ES256 locale ou la credential serveur n’est pas disponible. Synchronisation suspendue.'
               : 'Terminal non enregistré : synchronisation suspendue. La caisse locale reste disponible.';
     status = { ...status, state: 'pending', message };
     windowRef?.webContents.send('eden:status', readStatus());
@@ -264,7 +264,7 @@ function startDeviceStatusPolling() {
           ...status,
           state: 'pending',
           message: deviceTrustState === 'approved'
-            ? 'Approbation serveur confirmée. La synchronisation attend l’activation du protocole de preuve ES256.'
+            ? (deviceProofReady && serverHasActiveCredential\n              ? 'Approbation confirmée et credential ES256 active. Synchronisation en cours.'\n              : 'Approbation confirmée, mais la clé ES256 ou la credential serveur n’est pas disponible.')
             : `Statut serveur du terminal : ${serverStatus.approvalStatus}.`,
         };
         windowRef?.webContents.send('eden:status', readStatus());
