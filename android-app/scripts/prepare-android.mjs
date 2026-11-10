@@ -74,6 +74,10 @@ if (!gradle.includes('androidx.test:runner')) {
 }
 fs.writeFileSync(gradlePath, gradle);
 
+const generatedTestRoot = path.join(root, 'app', 'src', 'androidTest');
+const generatedExampleTest = findFile(generatedTestRoot, 'ExampleInstrumentedTest.java');
+if (generatedExampleTest) fs.unlinkSync(generatedExampleTest);
+
 const testRoot = path.join(root, 'app', 'src', 'androidTest', 'java');
 const testPackageDir = path.join(testRoot, ...packageName.split('.'));
 fs.mkdirSync(testPackageDir, { recursive: true });
