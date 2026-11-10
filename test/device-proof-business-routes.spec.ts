@@ -3,7 +3,6 @@ import { INestApplication } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import request from 'supertest';
 import * as crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET, createTestJwtService, signAgentToken } from './helpers/jwt.js';
@@ -12,11 +11,6 @@ import { CashSessionService } from '../src/cash-session.service.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
 import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
-
-const require = createRequire(import.meta.url);
-const { createDeviceProof } = require('../electron-app/electron/auth/device-crypto.cjs') as {
-  createDeviceProof(input: { privateKeyPem: string; token: string; method: string; url: string }): string;
-};
 
 describe('Device proof on POS cash-session route', () => {
   let pg: TestPostgres;
@@ -32,12 +26,20 @@ describe('Device proof on POS cash-session route', () => {
   let cashSessionId: string;
 
   function proof(method: string, path: string, privateKey = privateKeyPem) {
-    return createDeviceProof({
-      privateKeyPem: privateKey,
-      token,
-      method,
-      url: 'https://sync.example.test' + path,
+    const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'dpop+jwt' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({
+      jti: crypto.randomUUID(),
+      htm: method,
+      htu: path,
+      iat: Math.floor(Date.now() / 1000),
+      ath: crypto.createHash('sha256').update(token).digest('base64url'),
+    })).toString('base64url');
+    const input = header + '.' + payload;
+    const signature = crypto.sign('sha256', Buffer.from(input, 'ascii'), {
+      key: privateKey,
+      dsaEncoding: 'ieee-p1363',
     });
+    return input + '.' + signature.toString('base64url');
   }
 
   function headers(deviceId = approvedDeviceId, signedProof?: string) {
