@@ -1,5 +1,7 @@
 const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('node:path');
+const os = require('node:os');
+const crypto = require('node:crypto');
 const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
 const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
@@ -7,11 +9,14 @@ const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
 const { deriveDeviceTrustState, canAccessLocalPOS, canRunSync } = require('./auth/device-state.cjs');
 const { DeviceStatusService } = require('./auth/device-status.cjs');
+const { generateDeviceKeyPair, createInitialEnrollmentProof } = require('./auth/device-crypto.cjs');
+const { enrollDevice: enrollDeviceWithProof } = require('./auth/device-enrollment-client.cjs');
 const { validateDeviceToken } = require('./auth/device-enrollment.cjs');
 const {
   assertTrustedIpcSender,
   validateSearchQuery,
   validateEnrollmentCredentials,
+  validateDeviceEnrollmentInput,
   validateProductInput,
 } = require('./security/ipc-security.cjs');
 
@@ -77,6 +82,23 @@ async function initializeDeviceToken() {
   agentAuthState = 'unauthenticated';
   authState = 'enrollment-required';
   authMessage = 'Cette caisse doit être enrôlée avant de synchroniser.';
+}
+
+
+function getDeviceHardwareInfo() {
+  return {
+    hostname: os.hostname().slice(0, 255),
+    platform: os.platform().slice(0, 40),
+    arch: os.arch().slice(0, 40),
+    osRelease: os.release().slice(0, 100),
+  };
+}
+
+function getDeviceFingerprint(hardwareInfo) {
+  // Stable host fingerprint; no serial number or hardware secret is collected.
+  return crypto.createHash('sha256')
+    .update([hardwareInfo.hostname, hardwareInfo.platform, hardwareInfo.arch, hardwareInfo.osRelease].join('\0'), 'utf8')
+    .digest('hex');
 }
 
 function readStatus() {
@@ -332,6 +354,90 @@ app.whenReady().then(async () => {
       return { success: false, error: authMessage };
     }
   });
+
+  registerTrustedHandler('eden:device:register', async (input) => {
+    let enrollment;
+    try {
+      enrollment = validateDeviceEnrollmentInput(input);
+    } catch (error) {
+      return { success: false, error: error.message || 'Données d’enrôlement invalides.' };
+    }
+    if (!deviceToken || agentAuthState !== 'authenticated') {
+      return { success: false, error: 'Une session agent valide doit être enregistrée avant l’enrôlement du terminal.' };
+    }
+    if (tokenStoreError || deviceCredentialError) {
+      return { success: false, error: 'Le stockage sécurisé est indisponible. L’enrôlement est bloqué.' };
+    }
+    if (deviceCredential?.deviceId) {
+      return { success: false, error: 'Ce terminal possède déjà une credential. Aucun nouvel enrôlement ne sera lancé.' };
+    }
+    if (!credentialStore) {
+      return { success: false, error: 'Le stockage sécurisé des credentials est indisponible.' };
+    }
+
+    try {
+      const keyPair = generateDeviceKeyPair();
+      const hardwareInfo = getDeviceHardwareInfo();
+      const fingerprint = getDeviceFingerprint(hardwareInfo);
+      const initialProof = createInitialEnrollmentProof({
+        privateKeyPem: keyPair.privateKeyPem,
+        activationCode: enrollment.activationCode,
+        fingerprint,
+      });
+      const serverEnrollment = await enrollDeviceWithProof({
+        baseUrl: process.env.EDEN_SYNC_URL,
+        activationCode: enrollment.activationCode,
+        deviceName: enrollment.deviceName,
+        hardwareInfo,
+        fingerprint,
+        publicKeyPem: keyPair.publicKeyPem,
+        initialProof,
+        expectedThumbprint: keyPair.thumbprint,
+      });
+
+      const credential = {
+        deviceId: serverEnrollment.deviceId,
+        privateKeyPem: keyPair.privateKeyPem,
+        publicKeyPem: keyPair.publicKeyPem,
+        thumbprint: keyPair.thumbprint,
+        algorithm: 'ES256',
+      };
+      await credentialStore.save(credential);
+      const storedCredential = await credentialStore.load();
+      if (!storedCredential || storedCredential.deviceId !== serverEnrollment.deviceId ||
+          storedCredential.thumbprint !== keyPair.thumbprint) {
+        throw new Error('La vérification de la credential chiffrée a échoué.');
+      }
+
+      deviceCredential = storedCredential;
+      deviceCredentialError = null;
+      serverHasActiveCredential = true;
+      deviceTrustState = 'awaiting_approval';
+      syncState = 'blocked_unapproved';
+      status = {
+        ...status,
+        state: 'pending',
+        message: 'Terminal enregistré cryptographiquement. Approbation administrative requise ; la caisse locale reste disponible.',
+      };
+      startDeviceStatusPolling();
+      windowRef?.webContents.send('eden:status', readStatus());
+      return {
+        success: true,
+        deviceId: serverEnrollment.deviceId,
+        approvalStatus: serverEnrollment.approvalStatus,
+        keyThumbprint: serverEnrollment.keyThumbprint,
+      };
+    } catch (error) {
+      console.error('[device] initial proof enrollment failed:', error.message);
+      return {
+        success: false,
+        error: error.message || 'Enrôlement cryptographique impossible.',
+        code: error.code || null,
+        statusCode: error.status || null,
+      };
+    }
+  });
+
   registerTrustedHandler('eden:refresh', () => doSync());
   registerTrustedHandler('eden:dashboard', () => getDashboardSummary(db));
   registerTrustedHandler('eden:products:list', (search = '') =>
@@ -349,4 +455,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { if (db) db.close(); });
+app.on('before-quit', () => {
+  deviceStatusService?.stopPolling();
+  if (db) db.close();
+});
