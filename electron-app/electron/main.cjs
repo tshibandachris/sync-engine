@@ -285,7 +285,7 @@ app.whenReady().then(async () => {
         throw new Error('La relecture des identifiants chiffrés a échoué.');
       }
 
-      if (!registration.isActive || ['rejected', 'revoked'].includes(registration.approvalStatus)) {
+      if (registration.isActive === false || ['rejected', 'revoked'].includes(registration.approvalStatus)) {
         authState = 'device-blocked';
         authMessage = registration.approvalStatus === 'rejected'
           ? 'L’enrôlement de ce terminal a été refusé.'
