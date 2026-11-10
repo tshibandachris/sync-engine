@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import * as schema from '../schema.js';
-import { withTenant } from '../with-tenant.js';
+import { withTenant, type TransactionClient } from '../with-tenant.js';
 import { salePushSchema } from './schemas/sale-push.schema.js';
 
 export type SalePushResult = {
@@ -16,6 +16,16 @@ export class PosSalesPushService {
   constructor(private readonly db: Db) {}
 
   async push(tenantId: string, payload: unknown): Promise<SalePushResult[]> {
+    return withTenant(this.db, tenantId, tx => this.pushInTransaction(tenantId, payload, tx), { write: true });
+  }
+
+  /**
+   * Applies POS sales inside the caller's transaction. Each sale uses a
+   * nested transaction/savepoint so one invalid sale does not poison other
+   * entries, while the caller can atomically commit the whole sync batch and
+   * its idempotency key.
+   */
+  async pushInTransaction(tenantId: string, payload: unknown, outerTx: TransactionClient): Promise<SalePushResult[]> {
     if (!Array.isArray(payload)) throw new BadRequestException('changes.sales must be an array');
     const results: SalePushResult[] = [];
     const touched = new Set<string>();
@@ -29,7 +39,7 @@ export class PosSalesPushService {
       }
       const s = parsed.data;
       try {
-        const status = await withTenant(this.db, tenantId, async tx => {
+        const status = await outerTx.transaction(async tx => {
           const prior = await tx.execute(sql`SELECT * FROM sales WHERE tenant_id=${tenantId}::uuid AND id=${s.id}::uuid FOR UPDATE`);
           if (prior.rows.length) {
             const row = prior.rows[0] as any;
@@ -91,8 +101,31 @@ export class PosSalesPushService {
             (id,tenant_id,sale_id,product_id,product_name,product_sku,quantity,unit_price,subtotal,created_at,updated_at,sync_seq,first_sync_seq)
             VALUES (${l.id}::uuid,${tenantId}::uuid,${s.id}::uuid,${l.product_id}::uuid,${l.product_name},
             ${l.product_sku ?? null},${l.quantity},${l.unit_price},${l.subtotal},${l.created_at},${l.updated_at},0,0)`);
+          // The stock ledger must mirror the sale lines exactly, aggregated by product.
+          // A movement per line is not required, but missing, excess, or mis-signed
+          // quantities are rejected before any sale/line/movement is committed.
+          const expectedByProduct = new Map<string, number>();
+          for (const line of s.lines) {
+            expectedByProduct.set(line.product_id,
+              (expectedByProduct.get(line.product_id) ?? 0) + line.quantity);
+          }
+          const actualByProduct = new Map<string, number>();
+          for (const movement of s.stock_movements) {
+            if (movement.reference_id !== s.id || movement.reference_type !== 'sale') {
+              throw new BadRequestException('stock movement must reference its sale');
+            }
+            if (movement.movement_type !== (s.is_void ? 'void' : 'sale')) {
+              throw new BadRequestException('stock movement type does not match sale type');
+            }
+            actualByProduct.set(movement.product_id,
+              (actualByProduct.get(movement.product_id) ?? 0) + movement.quantity_delta);
+          }
+          if (expectedByProduct.size !== actualByProduct.size ||
+              [...expectedByProduct].some(([productId, quantity]) =>
+                actualByProduct.get(productId) !== -quantity)) {
+            throw new BadRequestException('stock movements must exactly reverse sale line quantities by product');
+          }
           for (const m of s.stock_movements) {
-            if (m.reference_id !== s.id || m.reference_type !== 'sale') throw new BadRequestException('stock movement must reference its sale');
             await tx.execute(sql`INSERT INTO stock_movements
               (id,tenant_id,product_id,movement_type,quantity_delta,reference_id,reference_type,unit_cost,notes,created_at,updated_at,created_by,sync_seq,first_sync_seq)
               VALUES (${m.id}::uuid,${tenantId}::uuid,${m.product_id}::uuid,${m.movement_type},${m.quantity_delta},
@@ -100,7 +133,7 @@ export class PosSalesPushService {
               ${m.updated_at},${m.created_by ?? null}::uuid,0,0)`);
           }
           return 'applied' as const;
-        }, { write: true });
+        });
         results.push({ id: s.id, status, reason: null });
         if (status === 'applied') touched.add(s.cash_session_id);
       } catch (e: any) {
@@ -113,17 +146,13 @@ export class PosSalesPushService {
     }
 
     for (const sessionId of touched) {
-      try {
-        await withTenant(this.db, tenantId, async tx => {
-          await tx.execute(sql`UPDATE cash_sessions cs SET
+      await outerTx.execute(sql`UPDATE cash_sessions cs SET
             reconciled_expected_amount = cs.opening_amount + COALESCE((SELECT SUM(s.cash_amount)::integer FROM sales s WHERE s.tenant_id=cs.tenant_id AND s.cash_session_id=cs.id),0),
             reconciled_difference = cs.closing_amount - (cs.opening_amount + COALESCE((SELECT SUM(s.cash_amount)::integer FROM sales s WHERE s.tenant_id=cs.tenant_id AND s.cash_session_id=cs.id),0)),
             reconciled_at = (extract(epoch FROM clock_timestamp())*1000)::bigint,
             reconciliation_alert = (cs.closing_amount <> cs.opening_amount + COALESCE((SELECT SUM(s.cash_amount)::integer FROM sales s WHERE s.tenant_id=cs.tenant_id AND s.cash_session_id=cs.id),0)),
             reconciliation_alert_reason = CASE WHEN cs.closing_amount <> cs.opening_amount + COALESCE((SELECT SUM(s.cash_amount)::integer FROM sales s WHERE s.tenant_id=cs.tenant_id AND s.cash_session_id=cs.id),0) THEN 'amount_mismatch' ELSE NULL END
             WHERE cs.tenant_id=${tenantId}::uuid AND cs.id=${sessionId}::uuid AND cs.status='closed'`);
-        }, { write: true });
-      } catch { /* The periodic job retries derived reconciliation; committed sales remain valid. */ }
     }
     return results;
   }
