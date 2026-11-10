@@ -15,7 +15,7 @@ const CLOCK_SKEW_SECONDS = 60;
 const ENROLLMENT_PATH = '/api/v1/devices/enroll';
 
 interface InitialProofPayload {
-  jti: string; htm: string; htu: string; iat: number; code_hash: string; fingerprint: string;
+  jti: string; htm: string; htu: string; iat: number; code_hash: string; fingerprint: string; device_id: string;
 }
 
 function decodeCanonicalBase64Url(segment: string): Buffer {
@@ -76,11 +76,11 @@ export class DeviceEnrollmentService {
     }
 
     const payload = parseJsonObject(decodeCanonicalBase64Url(payloadB64), 'JWS payload') as unknown as InitialProofPayload;
-    if (!hasExactKeys(payload, ['jti', 'htm', 'htu', 'iat', 'code_hash', 'fingerprint']) ||
+    if (!hasExactKeys(payload, ['jti', 'htm', 'htu', 'iat', 'code_hash', 'fingerprint', 'device_id']) ||
         typeof payload.jti !== 'string' || !UUID_RE.test(payload.jti) ||
         typeof payload.htm !== 'string' || typeof payload.htu !== 'string' ||
         typeof payload.iat !== 'number' || !Number.isSafeInteger(payload.iat) ||
-        typeof payload.code_hash !== 'string' || typeof payload.fingerprint !== 'string') {
+        typeof payload.code_hash !== 'string' || typeof payload.fingerprint !== 'string' || typeof payload.device_id !== 'string' || !UUID_RE.test(payload.device_id)) {
       throw new UnauthorizedException({ code: 'INVALID_INITIAL_PROOF_CLAIMS', message: 'Initial proof claims are invalid.' });
     }
 
@@ -93,7 +93,7 @@ export class DeviceEnrollmentService {
     }
 
     const expectedCodeHash = createHash('sha256').update(dto.activationCode, 'utf8').digest('base64url');
-    if (payload.code_hash !== expectedCodeHash || payload.fingerprint !== hardwareId) {
+    if (payload.code_hash !== expectedCodeHash || payload.fingerprint !== hardwareId || payload.device_id !== dto.deviceId) {
       throw new UnauthorizedException({ code: 'INITIAL_PROOF_BINDING_MISMATCH', message: 'Proof does not match the activation code and device fingerprint.' });
     }
 
