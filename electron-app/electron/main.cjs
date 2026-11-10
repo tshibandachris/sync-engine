@@ -3,8 +3,9 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
-const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
-const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
+const { pullChanges } = require('./sync/api-client.cjs');
+const { pushPendingBatch } = require('./sync/sync-coordinator.cjs');
+const { getOutboxStatus } = require('./sync/outbox.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
 const { DeviceEnrollmentAttemptStore } = require('./auth/device-enrollment-attempt-store.cjs');
@@ -166,19 +167,17 @@ async function pullAll() {
 }
 
 async function pushPending() {
-  const batch = preparePushBatch(db);
-  if (!batch) return { sent: false, acknowledged: 0, retained: 0 };
-  const response = await pushChanges({
+  const result = await pushPendingBatch({
+    db,
     baseUrl: process.env.EDEN_SYNC_URL,
     token: requireDeviceToken(),
     deviceId: deviceCredential?.deviceId,
     privateKeyPem: deviceCredential?.privateKeyPem,
-    idempotencyKey: batch.idempotencyKey,
-    payload: batch.payload,
   });
-  const result = applyPushResponse(db, batch, response);
-  console.log(`[sync] push batch=${batch.idempotencyKey}; acknowledged=${result.acknowledged}; retained=${result.retained}; replay=${result.replay}`);
-  return { sent: true, ...result };
+  if (result.sent) {
+    console.log(`[sync] push acknowledged=${result.acknowledged}; retained=${result.retained}; replay=${result.replay}`);
+  }
+  return result;
 }
 
 async function doSync() {
