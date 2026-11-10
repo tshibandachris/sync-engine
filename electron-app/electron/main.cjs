@@ -461,8 +461,6 @@ app.whenReady().then(async () => {
 
       deviceCredential = storedCredential;
       deviceCredentialError = null;
-      await enrollmentAttemptStore.clear();
-      pendingEnrollmentAttempt = null;
       serverHasActiveCredential = true;
       // Never infer approval from the enrollment response. The status endpoint
       // is queried immediately and remains the only source of trust transitions.
@@ -475,6 +473,13 @@ app.whenReady().then(async () => {
       };
       startDeviceStatusPolling();
       windowRef?.webContents.send('eden:status', readStatus());
+      try {
+        await enrollmentAttemptStore.clear();
+        pendingEnrollmentAttempt = null;
+      } catch (cleanupError) {
+        // The credential is already safely persisted. Startup will retry cleanup.
+        console.error('[device] pending enrollment cleanup deferred:', cleanupError.message);
+      }
       return {
         success: true,
         deviceId: serverEnrollment.deviceId,
@@ -483,6 +488,22 @@ app.whenReady().then(async () => {
       };
     } catch (error) {
       console.error('[device] initial proof enrollment failed:', error.message);
+      const definitiveRejections = new Set([
+        'INVALID_ACTIVATION_CODE',
+        'CODE_ALREADY_CONSUMED',
+        'CODE_EXPIRED',
+        'PROOF_BINDING_MISMATCH',
+        'INVALID_INITIAL_PROOF_SIGNATURE',
+        'INITIAL_PROOF_HTM_HTU_MISMATCH',
+      ]);
+      if (error.status === 401 && definitiveRejections.has(error.code)) {
+        try {
+          await enrollmentAttemptStore.clear();
+          pendingEnrollmentAttempt = null;
+        } catch (cleanupError) {
+          console.error('[device] rejected pending attempt cleanup failed:', cleanupError.message);
+        }
+      }
       return {
         success: false,
         error: error.message || 'Enrôlement cryptographique impossible.',
