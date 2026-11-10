@@ -1,6 +1,7 @@
 'use strict';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst APPROVAL_STATES = new Set(['pending_approval', 'approved', 'rejected', 'revoked']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const APPROVAL_STATES = new Set(['pending_approval', 'approved', 'rejected', 'revoked']);
 
 function normalizeBaseUrl(value) {
   if (!value) throw new Error('EDEN_SYNC_URL is required.');
