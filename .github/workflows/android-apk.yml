@@ -35,7 +35,7 @@ jobs:
           java-version: '21'
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools,platforms;android-33,build-tools;35.0.0,emulator,system-images;android-33;google_apis;x86_64'
+          packages: |\n            platform-tools\n            platforms;android-33\n            build-tools;35.0.0\n            emulator\n            system-images;android-33;google_apis;x86_64
           accept-android-sdk-licenses: true
       - name: Install dependencies
         run: npm install --no-audit --no-fund
