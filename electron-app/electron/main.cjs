@@ -7,6 +7,7 @@ const { pullChanges, pushChanges } = require('./sync/api-client.cjs');
 const { preparePushBatch, applyPushResponse, getOutboxStatus } = require('./sync/outbox.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
+const { DeviceEnrollmentAttemptStore } = require('./auth/device-enrollment-attempt-store.cjs');
 const { deriveDeviceTrustState, canAccessLocalPOS, canRunSync } = require('./auth/device-state.cjs');
 const { DeviceStatusService } = require('./auth/device-status.cjs');
 const { generateDeviceKeyPair, createInitialEnrollmentProof } = require('./auth/device-crypto.cjs');
@@ -26,6 +27,9 @@ let tokenStore;
 let deviceToken;
 let tokenStoreError;
 let credentialStore;
+let enrollmentAttemptStore;
+let pendingEnrollmentAttempt = null;
+let enrollmentAttemptError = null;
 let deviceCredential = null;
 let deviceCredentialError = null;
 let deviceStatusService = null;
@@ -50,6 +54,7 @@ function requireDeviceToken() {
 async function initializeDeviceToken() {
   tokenStore = new DeviceTokenStore({ app, safeStorage });
   credentialStore = new DeviceCredentialStore({ app, safeStorage });
+  enrollmentAttemptStore = new DeviceEnrollmentAttemptStore({ app, safeStorage });
   deviceToken = await tokenStore.load();
   try {
     deviceCredential = await credentialStore.load();
@@ -58,6 +63,16 @@ async function initializeDeviceToken() {
     deviceCredentialError = error;
     deviceTrustState = 'unregistered';
     console.error('[device] encrypted credential unavailable; sync remains fail-closed:', error.message);
+  }
+  try {
+    pendingEnrollmentAttempt = await enrollmentAttemptStore.load();
+    if (deviceCredential?.deviceId && pendingEnrollmentAttempt) {
+      await enrollmentAttemptStore.clear();
+      pendingEnrollmentAttempt = null;
+    }
+  } catch (error) {
+    enrollmentAttemptError = error;
+    console.error('[device] encrypted pending enrollment unavailable; new enrollment is blocked:', error.message);
   }
   syncState = deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved' : 'blocked_unregistered';
 
@@ -113,6 +128,8 @@ function readStatus() {
     deviceId: deviceCredential?.deviceId || null,
     deviceThumbprint: deviceCredential?.thumbprint || null,
     deviceCredentialError: deviceCredentialError?.message || null,
+    pendingEnrollment: Boolean(pendingEnrollmentAttempt),
+    enrollmentAttemptError: enrollmentAttemptError?.message || null,
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
     canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
     serverHasActiveCredential,
@@ -365,59 +382,90 @@ app.whenReady().then(async () => {
     if (!deviceToken || agentAuthState !== 'authenticated') {
       return { success: false, error: 'Une session agent valide doit être enregistrée avant l’enrôlement du terminal.' };
     }
-    if (tokenStoreError || deviceCredentialError) {
+    if (tokenStoreError || deviceCredentialError || enrollmentAttemptError) {
       return { success: false, error: 'Le stockage sécurisé est indisponible. L’enrôlement est bloqué.' };
     }
     if (deviceCredential?.deviceId) {
       return { success: false, error: 'Ce terminal possède déjà une credential. Aucun nouvel enrôlement ne sera lancé.' };
     }
-    if (!credentialStore) {
+    if (!credentialStore || !enrollmentAttemptStore) {
       return { success: false, error: 'Le stockage sécurisé des credentials est indisponible.' };
     }
 
     try {
-      const keyPair = generateDeviceKeyPair();
-      const hardwareInfo = getDeviceHardwareInfo();
-      const fingerprint = getDeviceFingerprint(hardwareInfo);
-      const initialProof = createInitialEnrollmentProof({
-        privateKeyPem: keyPair.privateKeyPem,
-        activationCode: enrollment.activationCode,
-        fingerprint,
-      });
+      let attempt = pendingEnrollmentAttempt;
+      if (attempt) {
+        if (attempt.activationCode !== enrollment.activationCode) {
+          return {
+            success: false,
+            code: 'PENDING_ENROLLMENT_MISMATCH',
+            error: 'Une tentative chiffrée est déjà en attente. Réutilisez le même code d’activation pour reprendre exactement cette preuve.',
+          };
+        }
+      } else {
+        const keyPair = generateDeviceKeyPair();
+        const hardwareInfo = getDeviceHardwareInfo();
+        const fingerprint = getDeviceFingerprint(hardwareInfo);
+        const initialProof = createInitialEnrollmentProof({
+          privateKeyPem: keyPair.privateKeyPem,
+          activationCode: enrollment.activationCode,
+          fingerprint,
+        });
+        attempt = {
+          activationCode: enrollment.activationCode,
+          deviceName: enrollment.deviceName,
+          hardwareInfo,
+          fingerprint,
+          privateKeyPem: keyPair.privateKeyPem,
+          publicKeyPem: keyPair.publicKeyPem,
+          thumbprint: keyPair.thumbprint,
+          algorithm: 'ES256',
+          initialProof,
+        };
+        // Persist the exact key, jti and signed request before any network call.
+        // A lost response can then be retried idempotently with the same proof.
+        await enrollmentAttemptStore.save(attempt);
+        pendingEnrollmentAttempt = attempt;
+      }
+
       const serverEnrollment = await enrollDeviceWithProof({
         baseUrl: process.env.EDEN_SYNC_URL,
-        activationCode: enrollment.activationCode,
-        deviceName: enrollment.deviceName,
-        hardwareInfo,
-        fingerprint,
-        publicKeyPem: keyPair.publicKeyPem,
-        initialProof,
-        expectedThumbprint: keyPair.thumbprint,
+        activationCode: attempt.activationCode,
+        deviceName: attempt.deviceName,
+        hardwareInfo: attempt.hardwareInfo,
+        fingerprint: attempt.fingerprint,
+        publicKeyPem: attempt.publicKeyPem,
+        initialProof: attempt.initialProof,
+        expectedThumbprint: attempt.thumbprint,
       });
 
       const credential = {
         deviceId: serverEnrollment.deviceId,
-        privateKeyPem: keyPair.privateKeyPem,
-        publicKeyPem: keyPair.publicKeyPem,
-        thumbprint: keyPair.thumbprint,
+        privateKeyPem: attempt.privateKeyPem,
+        publicKeyPem: attempt.publicKeyPem,
+        thumbprint: attempt.thumbprint,
         algorithm: 'ES256',
       };
       await credentialStore.save(credential);
       const storedCredential = await credentialStore.load();
       if (!storedCredential || storedCredential.deviceId !== serverEnrollment.deviceId ||
-          storedCredential.thumbprint !== keyPair.thumbprint) {
+          storedCredential.thumbprint !== attempt.thumbprint) {
         throw new Error('La vérification de la credential chiffrée a échoué.');
       }
 
       deviceCredential = storedCredential;
       deviceCredentialError = null;
+      await enrollmentAttemptStore.clear();
+      pendingEnrollmentAttempt = null;
       serverHasActiveCredential = true;
+      // Never infer approval from the enrollment response. The status endpoint
+      // is queried immediately and remains the only source of trust transitions.
       deviceTrustState = 'awaiting_approval';
       syncState = 'blocked_unapproved';
       status = {
         ...status,
         state: 'pending',
-        message: 'Terminal enregistré cryptographiquement. Approbation administrative requise ; la caisse locale reste disponible.',
+        message: 'Terminal enregistré cryptographiquement. Vérification du statut serveur et approbation administrative en cours ; la caisse locale reste disponible.',
       };
       startDeviceStatusPolling();
       windowRef?.webContents.send('eden:status', readStatus());
@@ -434,6 +482,7 @@ app.whenReady().then(async () => {
         error: error.message || 'Enrôlement cryptographique impossible.',
         code: error.code || null,
         statusCode: error.status || null,
+        retryable: Boolean(pendingEnrollmentAttempt),
       };
     }
   });
