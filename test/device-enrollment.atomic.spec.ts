@@ -201,36 +201,32 @@ describe('Device enrollment atomic pairing-code redemption', () => {
       SELECT
         has_table_privilege('sync_app', 'public.device_credentials', 'INSERT') AS credential_insert,
         has_table_privilege('sync_app', 'public.device_approval_events', 'INSERT') AS event_insert,
-        has_table_privilege('sync_app', 'public.devices', 'INSERT') AS device_insert
+        has_table_privilege('sync_app', 'public.devices', 'INSERT') AS device_insert,
+        has_table_privilege('sync_app', 'public.device_pairing_codes', 'SELECT') AS pairing_select,
+        has_table_privilege('sync_app', 'public.device_pairing_codes', 'UPDATE') AS pairing_update,
+        has_function_privilege('sync_app', 'public.redeem_device_pairing_code(text)', 'EXECUTE') AS can_redeem_pairing,
+        has_function_privilege('sync_app', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE') AS can_register_device
     `);
     expect(privileges.rows[0]).toEqual({
       credential_insert: false,
       event_insert: false,
-      device_insert: true,
+      device_insert: false,
+      pairing_select: false,
+      pairing_update: false,
+      can_redeem_pairing: false,
+      can_register_device: false,
     });
   });
 
 
 
-  it('allows sync_app to create only a pending device, never an approved device', async () => {
-    const client = await pg.appPool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(
-        "SELECT set_config('app.current_tenant_id', $1, true)",
-        [tenantId],
-      );
-      await expect(client.query(
-        `INSERT INTO public.devices (
-          id, tenant_id, store_id, name, fingerprint, hardware_info,
-          approval_status, approved_at, approved_by
-        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'approved', now(), $7)`,
-        [randomUUID(), tenantId, storeId, 'Forged approval', 'forged-approved-fingerprint', JSON.stringify({}), randomUUID()],
-      )).rejects.toMatchObject({ code: '42501' });
-      await client.query('ROLLBACK');
-    } finally {
-      client.release();
-    }
+  it('does not allow sync_app to insert a device after the enrollment privilege split', async () => {
+    await expect(pg.appPool.query(
+      `INSERT INTO public.devices (
+        id, tenant_id, store_id, name, fingerprint, hardware_info
+      ) VALUES ($1, $2, $3, 'Direct insert attempt', 'direct-insert-fingerprint', '{}'::jsonb)`,
+      [randomUUID(), tenantId, storeId],
+    )).rejects.toMatchObject({ code: '42501' });
   });
 
   it('applies migration 036 with a pre-provisioned executor and a migration role without CREATEROLE', async () => {
