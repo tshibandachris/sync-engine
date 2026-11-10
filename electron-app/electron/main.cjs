@@ -58,9 +58,11 @@ async function initializeDeviceToken() {
   deviceToken = await tokenStore.load();
   try {
     deviceCredential = await credentialStore.load();
+    deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
     deviceTrustState = deriveDeviceTrustState(deviceCredential);
   } catch (error) {
     deviceCredentialError = error;
+    deviceProofReady = false;
     deviceTrustState = 'unregistered';
     console.error('[device] encrypted credential unavailable; sync remains fail-closed:', error.message);
   }
@@ -151,6 +153,7 @@ async function pullAll() {
     const response = await pullChanges({
       baseUrl: process.env.EDEN_SYNC_URL,
       token,
+      deviceCredential,
       lastPulledAt: cursor,
     });
     productsProcessed += applyPulledPage(db, response);
@@ -167,6 +170,7 @@ async function pushPending() {
   const response = await pushChanges({
     baseUrl: process.env.EDEN_SYNC_URL,
     token: requireDeviceToken(),
+    deviceCredential,
     idempotencyKey: batch.idempotencyKey,
     payload: batch.payload,
   });
@@ -461,7 +465,9 @@ app.whenReady().then(async () => {
 
       deviceCredential = storedCredential;
       deviceCredentialError = null;
-      serverHasActiveCredential = true;
+      deviceProofReady = true;
+      // The status endpoint, not the enrollment response, confirms active server state.
+      serverHasActiveCredential = false;
       // Never infer approval from the enrollment response. The status endpoint
       // is queried immediately and remains the only source of trust transitions.
       deviceTrustState = 'awaiting_approval';
