@@ -37,6 +37,7 @@ import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
 import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
+import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 
 describe('sync pull / stale cursor (410 GONE)', () => {
   let pg: TestPostgres;
@@ -137,7 +138,8 @@ describe('sync pull / stale cursor (410 GONE)', () => {
         { provide: SyncMaintenanceService, useFactory: (d: any) => new SyncMaintenanceService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
       ],
-    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true }).compile();
+    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true })
+      .overrideGuard(DeviceProofGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
 
