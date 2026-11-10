@@ -6,6 +6,21 @@ BEGIN;
 CREATE INDEX IF NOT EXISTS idx_device_proof_nonces_tenant_expiry
   ON public.device_proof_nonces (tenant_id, expires_at);
 
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'device_proof_maintenance_function_owner'
+  ) THEN
+    CREATE ROLE device_proof_maintenance_function_owner
+      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+END;
+$;
+
+GRANT USAGE, CREATE ON SCHEMA public TO device_proof_maintenance_function_owner;
+GRANT SELECT, DELETE ON TABLE public.device_proof_nonces TO device_proof_maintenance_function_owner;
+
 CREATE OR REPLACE FUNCTION public.purge_expired_device_proof_nonces(
   p_tenant_id UUID,
   p_batch_size INTEGER DEFAULT 5000
@@ -49,7 +64,10 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.purge_expired_device_proof_nonces(UUID, INTEGER) FROM PUBLIC;
+ALTER FUNCTION public.purge_expired_device_proof_nonces(UUID, INTEGER)
+  OWNER TO device_proof_maintenance_function_owner;
+REVOKE CREATE ON SCHEMA public FROM device_proof_maintenance_function_owner;
+REVOKE ALL ON FUNCTION public.purge_expired_device_proof_nonces(UUID, INTEGER) FROM PUBLIC, sync_app;
 GRANT EXECUTE ON FUNCTION public.purge_expired_device_proof_nonces(UUID, INTEGER) TO sync_app;
 
 COMMIT;
