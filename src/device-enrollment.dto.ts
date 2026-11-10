@@ -15,6 +15,7 @@ export interface HardwareInfoDto {
 }
 
 export interface EnrollDeviceDto {
+  deviceId: string;
   activationCode: string;
   deviceName: string;
   fingerprint: string;
@@ -26,6 +27,7 @@ export interface EnrollDeviceDto {
 export function parseEnrollDeviceDto(input: unknown): EnrollDeviceDto {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BadRequestException('Un objet JSON est requis.');
   const value = input as Record<string, unknown>;
+  const deviceId = typeof value.deviceId === 'string' ? value.deviceId.trim() : '';
   const activationCode = typeof value.activationCode === 'string' ? value.activationCode.trim().toUpperCase() : '';
   const deviceName = typeof value.deviceName === 'string' ? value.deviceName.trim() : '';
   const fingerprint = typeof value.fingerprint === 'string' ? value.fingerprint.trim() : '';
@@ -33,6 +35,7 @@ export function parseEnrollDeviceDto(input: unknown): EnrollDeviceDto {
   const initialProof = typeof value.initialProof === 'string' ? value.initialProof : '';
   const hardware = value.hardwareInfo;
 
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(deviceId)) throw new BadRequestException('deviceId doit être un UUID valide.');
   if (!ACTIVATION_CODE_RE.test(activationCode)) throw new BadRequestException("Le code d'activation doit respecter le format XXXX-XXXX.");
   if (!deviceName || deviceName.length > DEVICE_NAME_MAX) throw new BadRequestException('deviceName doit contenir entre 1 et 120 caractères.');
   if (!fingerprint || fingerprint.length > FINGERPRINT_MAX) throw new BadRequestException('fingerprint est requis (maximum 255 caractères).');
@@ -56,7 +59,7 @@ export function parseEnrollDeviceDto(input: unknown): EnrollDeviceDto {
   }
 
   return {
-    activationCode, deviceName, fingerprint, publicKeyPem, initialProof,
+    deviceId, activationCode, deviceName, fingerprint, publicKeyPem, initialProof,
     hardwareInfo: {
       hostname: (info.hostname as string).trim(),
       platform: (info.platform as string).trim(),
