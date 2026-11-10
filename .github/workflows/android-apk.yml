@@ -1,4 +1,4 @@
-name: Android debug APK
+name: Android foundation validation
 
 on:
   push:
@@ -17,10 +17,10 @@ permissions:
   contents: read
 
 jobs:
-  debug-apk:
-    name: Build Android debug APK
+  android-emulator:
+    name: Android 13 emulator — SQLite and ES256
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: android-app
@@ -33,23 +33,26 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: ''
+      - uses: android-actions/setup-android@v3
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Build web application
         run: npm run build
       - name: Generate Android project
         run: npx cap add android
-      - name: Register native Android Keystore plugin
+      - name: Register native plugin and instrumentation tests
         run: node scripts/prepare-android.mjs
       - name: Sync Capacitor plugins
         run: npx cap sync android
-      - name: Build debug APK
-        working-directory: android-app/android
-        run: ./gradlew --no-daemon assembleDebug
+      - name: Run Android 13 instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot
+          working-directory: android-app/android
+          script: ./gradlew --no-daemon connectedDebugAndroidTest assembleDebug
       - name: Publish debug APK
         uses: actions/upload-artifact@v4
         with:
