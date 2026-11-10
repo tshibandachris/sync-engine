@@ -14,6 +14,8 @@ $$;
 
 ALTER ROLE device_enrollment_executor NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
 
+GRANT USAGE ON SCHEMA public TO device_enrollment_executor;
+
 REVOKE ALL ON FUNCTION public.register_device_enrollment_with_credential(text, uuid, uuid, varchar, varchar, jsonb, text, varchar)
   FROM PUBLIC, sync_app;
 GRANT EXECUTE ON FUNCTION public.register_device_enrollment_with_credential(text, uuid, uuid, varchar, varchar, jsonb, text, varchar)
