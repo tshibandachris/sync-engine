@@ -368,7 +368,7 @@ app.whenReady().then(async () => {
       status = { ...status, state: 'pending', message: 'Session agent ouverte. La caisse locale est disponible ; le terminal doit encore être enregistré et approuvé pour synchroniser.', lastCursor: getCursor(db) };
       windowRef?.webContents.send('eden:status', readStatus());
       startDeviceStatusPolling();
-      // Local POS is available; sync remains blocked until server approval and the ES256 client proof protocol are ready.
+      // Local POS is available; sync remains blocked until the server confirms approval and the active credential.
       return { success: true };
     } catch (error) {
       tokenStoreError = error;
