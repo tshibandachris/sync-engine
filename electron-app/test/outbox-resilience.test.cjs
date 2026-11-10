@@ -128,7 +128,7 @@ for (const scenario of scenarios) {
       assert.equal(capturedRequest.url, 'http://127.0.0.1:3000/sync/push');
       assert.equal(capturedRequest.options.method, 'POST');
       assert.equal(capturedRequest.options.headers['x-device-id'], deviceId);
-      assert.match(capturedRequest.options.headers['x-device-proof'], /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/);
+      assert.match(capturedRequest.options.headers['x-device-proof'], /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
       assert.equal(capturedRequest.options.headers.authorization, 'Bearer test-agent-jwt');
       assert.equal(capturedRequest.options.headers['Idempotency-Key'], batch.idempotencyKey);
 
