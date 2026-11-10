@@ -4,7 +4,7 @@ on:
   push:
     branches: [feature/pos-domain-schema]
   pull_request:
-    branches: [main]
+    branches: [main, feat/device-enrollment-initial-proof]
   workflow_dispatch:
 
 jobs:
