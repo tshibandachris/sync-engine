@@ -26,8 +26,7 @@ psql_base -c "
   CREATE TABLE IF NOT EXISTS public.schema_migrations (
     filename text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT clock_timestamp()
-  );
-  REVOKE ALL ON TABLE public.schema_migrations FROM PUBLIC, sync_app
+  )
 " > /dev/null
 
 if [ "$ledger_before" = "0" ] && [ "$legacy_schema" = "1" ]; then
@@ -71,7 +70,10 @@ for f in /migrations/*.sql; do
   psql_base -c "INSERT INTO public.schema_migrations (filename) VALUES ('$name')" > /dev/null
 done
 
-echo "[migrate] enabling application login"
+echo "[migrate] restricting migration ledger and enabling application login"
+psql_base <<'EOSQL'
+REVOKE ALL ON TABLE public.schema_migrations FROM PUBLIC, sync_app;
+EOSQL
 psql_base -v pw="$SYNC_APP_PASSWORD" <<'EOSQL'
 ALTER ROLE sync_app LOGIN INHERIT PASSWORD :'pw';
 ALTER ROLE sync_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
