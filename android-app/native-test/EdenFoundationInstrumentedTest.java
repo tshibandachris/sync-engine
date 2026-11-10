@@ -35,8 +35,6 @@ public class EdenFoundationInstrumentedTest {
         );
         assertEquals("Android 16 large-screen layouts must remain orientation-adaptive",
             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED, activity.screenOrientation);
-        assertNotEquals("MainActivity must remain resizable",
-            ActivityInfo.RESIZE_MODE_UNRESIZEABLE, activity.resizeMode);
     }
 
     @Test

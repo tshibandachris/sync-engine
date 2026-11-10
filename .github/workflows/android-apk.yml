@@ -87,6 +87,10 @@ jobs:
           script: |
             set -eu
             ./gradlew clean connectedDebugAndroidTest assembleDebug --no-daemon --max-workers=1 --stacktrace --info
+            aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+            test -n "$aapt"
+            manifest_dump="$("$aapt" dump xmltree app/build/outputs/apk/debug/app-debug.apk AndroidManifest.xml)"
+            printf '%s\n' "$manifest_dump" | grep -Eq 'android:resizeableActivity.*0xffffffff'
             if [ "${{ matrix.memory-profile }}" = "16kb" ]; then
               page_size="$(adb shell getconf PAGE_SIZE | tr -d '\r')"
               echo "Emulator page size: $page_size"
