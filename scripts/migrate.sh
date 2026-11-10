@@ -1,13 +1,14 @@
 #!/bin/sh
 #
-# Apply pending SQL migrations exactly once, then provision the two
-# application logins from deployment secrets. The migration ledger also
+# Apply pending SQL migrations exactly once, then provision the application, enrollment and device-admin logins
+# from independent deployment secrets. The migration ledger also
 # allows existing pre-ledger installations to advance beyond migration 030.
 #
 set -eu
 
 : "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
 : "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
+: "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
 : "${PGPASSWORD:?PGPASSWORD is required}"
 
 DB_HOST=db
@@ -125,6 +126,27 @@ GRANT device_enrollment_executor TO device_enrollment_login WITH INHERIT TRUE, S
 GRANT CONNECT ON DATABASE sync_engine TO device_enrollment_login;
 EOSQL
 
+echo "[migrate] provisioning isolated device admin login"
+admin_role_exists=$(psql_base -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'device_admin_login') THEN 1 ELSE 0 END")
+if [ "$admin_role_exists" = "1" ]; then
+  psql_base -v pw="$DEVICE_ADMIN_PASSWORD" <<'EOSQL'
+ALTER ROLE device_admin_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
+EOSQL
+else
+  psql_base -v pw="$DEVICE_ADMIN_PASSWORD" <<'EOSQL'
+CREATE ROLE device_admin_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
+EOSQL
+fi
+
+psql_base <<'EOSQL'
+REVOKE sync_app FROM device_admin_login;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM device_admin_login;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_admin_login;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM device_admin_login;
+GRANT device_admin_executor TO device_admin_login WITH INHERIT TRUE, SET FALSE;
+GRANT CONNECT ON DATABASE sync_engine TO device_admin_login;
+EOSQL
+
 echo "[migrate] verifying login separation"
 separation_ok=$(psql_base -tA -c "
   SELECT CASE
@@ -212,6 +234,36 @@ separation_ok=$(psql_base -tA -c "
 ")
 if [ "$separation_ok" != "1" ]; then
   echo "[migrate] ERROR: PostgreSQL enrollment privilege boundary verification failed."
+  exit 1
+fi
+
+echo "[migrate] verifying device admin privilege boundary"
+admin_separation_ok=$(psql_base -tA -c "
+  SELECT CASE
+    WHEN NOT pg_catalog.pg_has_role('device_admin_login', 'sync_app', 'MEMBER')
+     AND pg_catalog.pg_has_role('device_admin_login', 'device_admin_executor', 'USAGE')
+     AND NOT pg_catalog.pg_has_role('device_admin_login', 'device_admin_executor', 'SET')
+     AND pg_catalog.has_function_privilege('device_admin_login', 'public.transition_device_approval(uuid,uuid,uuid,text,character varying)', 'EXECUTE')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_auth_members AS m
+       JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = m.member
+       JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = m.roleid
+       WHERE member_role.rolname = 'device_admin_login'
+         AND granted_role.rolname <> 'device_admin_executor'
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_class
+       WHERE relowner = 'device_admin_login'::regrole
+     )
+     AND NOT pg_catalog.has_table_privilege('device_admin_login', 'public.devices', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('device_admin_login', 'public.devices', 'UPDATE')
+     AND NOT pg_catalog.has_table_privilege('device_admin_login', 'public.device_credentials', 'UPDATE')
+     AND NOT pg_catalog.has_table_privilege('device_admin_login', 'public.device_approval_events', 'INSERT')
+     AND NOT pg_catalog.has_function_privilege('sync_app', 'public.transition_device_approval(uuid,uuid,uuid,text,character varying)', 'EXECUTE')
+    THEN 1 ELSE 0 END
+")
+if [ "$admin_separation_ok" != "1" ]; then
+  echo "[migrate] ERROR: PostgreSQL device admin privilege boundary verification failed."
   exit 1
 fi
 

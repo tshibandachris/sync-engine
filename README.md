@@ -49,7 +49,7 @@ Le client nécessite une URL d'API joignable et un jeton d'appareil valide. En m
 ## Structure du dépôt
 
 - `src/` : API NestJS, services métier, synchronisation, sécurité et observabilité.
-- `migrations/` : migrations SQL versionnées pour PostgreSQL (jusqu'à 036).
+- `migrations/` : migrations SQL versionnées pour PostgreSQL (jusqu'à 037).
 - `electron-app/` : client Windows Electron, SQLite, interface, sécurité IPC et synchronisation.
 - `test/` : tests backend et d'intégration.
 - `electron-app/test/` : tests du client desktop et simulations.
@@ -63,6 +63,18 @@ Le client nécessite une URL d'API joignable et un jeton d'appareil valide. En m
 - **Synchronisation :** l'outbox locale conserve les opérations en attente et utilise l'idempotence pour limiter les doublons.
 - **Secrets :** ne jamais versionner de jetons, mots de passe, clés ou fichiers d'environnement contenant des secrets.
 - **Client desktop :** le jeton persistant doit être conservé par le stockage sécurisé du processus principal Electron.
+
+## Administration des terminaux
+
+Les terminaux nouvellement enrôlés restent en attente jusqu'à une décision administrative explicite. L'API expose :
+- `GET /api/v1/admin/devices/pending` avec la permission IdP `devices:read` ;
+- `POST /api/v1/admin/devices/:id/approve` avec `devices:approve` ;
+- `POST /api/v1/admin/devices/:id/reject` avec `devices:reject` et une justification obligatoire ;
+- `POST /api/v1/admin/devices/:id/revoke` avec `devices:revoke` et une justification obligatoire.
+
+Les permissions proviennent exclusivement des claims validés du fournisseur d'identité. En mode à secret partagé, les jetons POS ordinaires restent sans permissions administratives ; un opérateur de confiance peut émettre un jeton dédié de 15 minutes avec `scripts/mint-device-admin-token.mjs`. En mode JWKS, l'IdP fournit les claims de permissions. Les transitions sont tenant-scoped, transactionnelles et journalisées dans `device_approval_events`. Une révocation invalide aussi la credential active. Le compte général `sync_app` ne peut ni appeler la fonction d'administration ni modifier directement les tables de terminaux.
+
+La fonction de transition est exposée à un rôle-capacité PostgreSQL distinct, via `DEVICE_ADMIN_DATABASE_URL`. Le login `device_admin_login` doit rester distinct de `sync_app` et de `device_enrollment_login`. Configurez `DEVICE_ADMIN_PASSWORD` et l'URL dédiée avant de lancer les migrations. Le démarrage refuse une identité ou des privilèges non conformes.
 
 ## Enrôlement sécurisé des terminaux
 

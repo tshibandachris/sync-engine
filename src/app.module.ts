@@ -18,6 +18,9 @@ import { DeviceEnrollmentController } from './device-enrollment.controller.js';
 import { DeviceEnrollmentService } from './device-enrollment.service.js';
 import { DeviceStatusController } from './device-status.controller.js';
 import { DeviceStatusService } from './device-status.service.js';
+import { DeviceAdminController } from './device-admin.controller.js';
+import { DeviceAdminService } from './device-admin.service.js';
+import { DeviceAdminPermissionGuard } from './device-admin.guard.js';
 import { createDeviceEnrollmentThrottleModule } from './device-enrollment.throttle.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 
@@ -34,6 +37,7 @@ import { SyncLogInterceptor } from './observability/sync-log.interceptor.js';
 export interface AppModuleOptions {
   db: NodePgDatabase<typeof schema>;
   enrollmentDb: NodePgDatabase<typeof schema>;
+  adminDb: NodePgDatabase<typeof schema>;
   jwtSecret: string;
   storage: AttachmentStorage;
   jwtExpiresIn?: number | string;
@@ -42,7 +46,7 @@ export interface AppModuleOptions {
 @Module({})
 export class AppModule {
   static register(options: AppModuleOptions): DynamicModule {
-    const { db, enrollmentDb, jwtSecret, storage, jwtExpiresIn = '30d' } = options;
+    const { db, enrollmentDb, adminDb, jwtSecret, storage, jwtExpiresIn = '30d' } = options;
     return {
       module: AppModule,
       imports: [
@@ -52,10 +56,11 @@ export class AppModule {
         }),
         createDeviceEnrollmentThrottleModule(),
       ],
-      controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController, DeviceStatusController],
+      controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController, DeviceStatusController, DeviceAdminController],
       providers: [
         { provide: 'DRIZZLE_DB', useValue: db },
         { provide: 'DEVICE_ENROLLMENT_DB', useValue: enrollmentDb },
+        { provide: 'DEVICE_ADMIN_DB', useValue: adminDb },
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: CashSessionService, useFactory: (d: any) => new CashSessionService(d), inject: ['DRIZZLE_DB'] },
@@ -66,9 +71,11 @@ export class AppModule {
         { provide: CourrierService, useFactory: (d: any, s: any) => new CourrierService(d, s), inject: ['DRIZZLE_DB', ATTACHMENT_STORAGE] },
         { provide: DeviceEnrollmentService, useFactory: (e: any) => new DeviceEnrollmentService(e), inject: ['DEVICE_ENROLLMENT_DB'] },
         { provide: DeviceStatusService, useFactory: (d: any) => new DeviceStatusService(d), inject: ['DRIZZLE_DB'] },
+        { provide: DeviceAdminService, useFactory: (d: any, a: any) => new DeviceAdminService(d, a), inject: ['DRIZZLE_DB', 'DEVICE_ADMIN_DB'] },
         JwtAuthGuard,
         DeviceApprovalGuard,
         DeviceProofGuard,
+        DeviceAdminPermissionGuard,
         DeviceProofNonceRepository,
         DeviceRepository,
         SyncLogService,

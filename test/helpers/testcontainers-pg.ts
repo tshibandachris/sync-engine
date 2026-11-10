@@ -22,6 +22,10 @@ export class TestPostgres {
 
   readonly enrollmentDb: ReturnType<typeof drizzle<typeof schema>>;
 
+  readonly adminPool: Pool;
+
+  readonly adminDb: ReturnType<typeof drizzle<typeof schema>>;
+
   readonly connectionOptions: { host: string; port: number; database: string };
 
   private constructor(
@@ -34,6 +38,8 @@ export class TestPostgres {
     appDb: ReturnType<typeof drizzle<typeof schema>>,
     enrollmentPool: Pool,
     enrollmentDb: ReturnType<typeof drizzle<typeof schema>>,
+    adminPool: Pool,
+    adminDb: ReturnType<typeof drizzle<typeof schema>>,
     connectionOptions: { host: string; port: number; database: string },
   ) {
     this.container = container;
@@ -43,6 +49,8 @@ export class TestPostgres {
     this.appDb = appDb;
     this.enrollmentPool = enrollmentPool;
     this.enrollmentDb = enrollmentDb;
+    this.adminPool = adminPool;
+    this.adminDb = adminDb;
     this.connectionOptions = connectionOptions;
   }
 
@@ -255,6 +263,7 @@ export class TestPostgres {
     '034_device_proof_replay_protection.sql',
     '035_device_enrollment_with_credential.sql',
     '036_device_enrollment_executor_role.sql',
+    '037_device_admin_approval_capability.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
@@ -333,6 +342,18 @@ export class TestPostgres {
     });
     const enrollmentDb = drizzle(enrollmentPool, { schema });
 
+    // Dedicated LOGIN used only by the isolated device administration capability.
+    await pool.query("CREATE ROLE device_admin_test LOGIN INHERIT PASSWORD 'device_admin_test_pw'");
+    await pool.query('GRANT device_admin_executor TO device_admin_test WITH INHERIT TRUE, SET FALSE');
+    const adminPool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: 'device_admin_test',
+      password: 'device_admin_test_pw',
+    });
+    const adminDb = drizzle(adminPool, { schema });
+
     return new TestPostgres(
       container,
       pool,
@@ -341,11 +362,14 @@ export class TestPostgres {
       appDb,
       enrollmentPool,
       enrollmentDb,
+      adminPool,
+      adminDb,
       { host: container.getHost(), port: container.getPort(), database: container.getDatabase() },
     );
   }
 
   async stop(): Promise<void> {
+    await this.adminPool.end();
     await this.enrollmentPool.end();
     await this.appPool.end();
     await this.pool.end();
