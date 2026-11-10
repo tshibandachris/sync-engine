@@ -92,6 +92,26 @@ if (!gradle.includes('androidx.test:runner')) {
 }
 fs.writeFileSync(gradlePath, gradle);
 
+
+const rootGradlePath = path.join(root, 'build.gradle');
+if (!fs.existsSync(rootGradlePath)) {
+  throw new Error('Capacitor root build.gradle was not generated.');
+}
+let rootGradle = fs.readFileSync(rootGradlePath, 'utf8');
+if (!rootGradle.includes('// Eden: exclude obsolete Kotlin JDK extension modules')) {
+  rootGradle += `
+
+// Eden: exclude obsolete Kotlin JDK extension modules
+subprojects {
+    configurations.configureEach {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+    }
+}
+`;
+  fs.writeFileSync(rootGradlePath, rootGradle);
+}
+
 const generatedTestRoot = path.join(root, 'app', 'src', 'androidTest');
 const generatedExampleTest = findFile(generatedTestRoot, 'ExampleInstrumentedTest.java');
 if (generatedExampleTest) fs.unlinkSync(generatedExampleTest);
@@ -102,4 +122,4 @@ fs.mkdirSync(testPackageDir, { recursive: true });
 const test = fs.readFileSync(testSource, 'utf8').replace(/^package\s+[\w.]+;/m, `package ${packageName};`);
 fs.writeFileSync(path.join(testPackageDir, 'EdenFoundationInstrumentedTest.java'), test);
 
-console.log('Registered native ES256 plugin, Android instrumentation tests, adaptive orientation, API 36 SDK and backup protections.');
+console.log('Registered native ES256 plugin, Android instrumentation tests, adaptive orientation, Kotlin stdlib exclusions, API 36 SDK and backup protections.');
