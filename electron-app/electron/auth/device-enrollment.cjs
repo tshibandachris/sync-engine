@@ -1,3 +1,8 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const os = require('node:os');
+
 function decodeJsonSegment(segment, label) {
   if (!segment || !/^[A-Za-z0-9_-]+$/.test(segment)) {
     throw new Error(`Le segment ${label} du JWT est invalide.`);
@@ -35,4 +40,40 @@ function validateDeviceToken(value, nowMs = Date.now()) {
   return token;
 }
 
-module.exports = { validateDeviceToken };
+
+
+const FINGERPRINT_FILENAME = 'device-fingerprint';
+
+function getMachineFingerprint(app, fsImpl = fs, cryptoImpl = crypto) {
+  if (!app || typeof app.getPath !== 'function') throw new TypeError('Electron app.getPath() is required.');
+  const directory = path.join(app.getPath('appData'), 'EdenGestion');
+  const filePath = path.join(directory, FINGERPRINT_FILENAME);
+  if (fsImpl.existsSync(filePath)) {
+    const value = fsImpl.readFileSync(filePath, 'utf8').trim();
+    if (/^[a-f0-9]{64}$/.test(value)) return value;
+    throw new Error('Stored installation fingerprint is invalid; refusing to replace device identity silently.');
+  }
+  fsImpl.mkdirSync(directory, { recursive: true });
+  const fingerprint = cryptoImpl.randomBytes(32).toString('hex');
+  const temporaryPath = filePath + '.tmp';
+  fsImpl.writeFileSync(temporaryPath, fingerprint + '\n', { mode: 0o600, flag: 'wx' });
+  try {
+    fsImpl.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    try { fsImpl.rmSync(temporaryPath, { force: true }); } catch { /* preserve original error */ }
+    if (fsImpl.existsSync(filePath)) return getMachineFingerprint(app, fsImpl, cryptoImpl);
+    throw error;
+  }
+  return fingerprint;
+}
+
+function getHardwareInfo(osImpl = os) {
+  return {
+    hostname: String(osImpl.hostname()).slice(0, 255),
+    platform: String(osImpl.platform()).slice(0, 40),
+    arch: String(osImpl.arch()).slice(0, 40),
+    osRelease: String(osImpl.release()).slice(0, 100),
+  };
+}
+
+module.exports = { validateDeviceToken, getMachineFingerprint, getHardwareInfo, FINGERPRINT_FILENAME };
