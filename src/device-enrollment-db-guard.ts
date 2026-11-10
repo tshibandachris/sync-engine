@@ -14,6 +14,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
     can_replicate: boolean;
     can_inherit: boolean;
     is_sync_app_member: boolean;
+    has_unexpected_memberships: boolean;
     has_executor_membership: boolean;
     can_execute_enrollment: boolean;
     is_function_owner: boolean;
@@ -31,6 +32,14 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
            ELSE pg_catalog.pg_has_role(session_user, 'sync_app', 'MEMBER') END AS is_sync_app_member,
       CASE WHEN pg_catalog.to_regrole('device_enrollment_executor') IS NULL THEN false
            ELSE pg_catalog.pg_has_role(session_user, 'device_enrollment_executor', 'USAGE') END AS has_executor_membership,
+      EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_auth_members AS membership
+          JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
+          JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
+         WHERE member_role.rolname = session_user
+           AND granted_role.rolname <> 'device_enrollment_executor'
+      ) AS has_unexpected_memberships,
       pg_catalog.has_function_privilege(session_user, $1, 'EXECUTE') AS can_execute_enrollment,
       COALESCE((SELECT pg_catalog.pg_get_userbyid(p.proowner) = session_user
                   FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure), true) AS is_function_owner
@@ -39,7 +48,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
   if (!identity || identity.is_superuser || identity.can_bypass_rls ||
       identity.can_create_db || identity.can_create_role || identity.can_replicate ||
       !identity.can_inherit || identity.session_user !== identity.current_user ||
-      identity.is_sync_app_member || !identity.has_executor_membership ||
+      identity.is_sync_app_member || identity.has_unexpected_memberships || !identity.has_executor_membership ||
       !identity.can_execute_enrollment || identity.is_function_owner) {
     throw new Error(
       'BOOTSTRAP_SECURITY_ERROR: DEVICE_ENROLLMENT_DATABASE_URL must use a non-privileged INHERIT login, not a member of sync_app, inheriting device_enrollment_executor, with EXECUTE on the exact enrollment function.',
