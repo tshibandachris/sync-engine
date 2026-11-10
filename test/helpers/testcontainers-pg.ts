@@ -238,6 +238,7 @@ export class TestPostgres {
     '029_create_device_pairing_codes.sql',
     '030_create_enrolled_devices.sql',
     '031_device_approval_and_credentials.sql',
+    '032_device_security_hardening.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
