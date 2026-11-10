@@ -122,6 +122,21 @@
       </header>
 
       <section class="page active" id="page-dashboard">
+        <section class="panel" id="device-enrollment-panel" hidden style="margin-bottom:18px;">
+          <div class="panel-head"><div><h3>Enregistrer ce terminal</h3><p>Associez cette caisse à un code d’activation fourni par l’administrateur.</p></div></div>
+          <div class="panel-body">
+            <form id="device-enrollment-form">
+              <div class="form-grid">
+                <div class="field"><label for="activation-code">Code d’activation *</label><input id="activation-code" name="activationCode" required maxlength="9" minlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-1234"></div>
+                <div class="field"><label for="device-name">Nom du terminal *</label><input id="device-name" name="deviceName" required maxlength="120" autocomplete="off" placeholder="Caisse principale"></div>
+              </div>
+              <p class="form-help">La clé P-256 est générée dans le processus principal, la preuve initiale est signée localement et la clé privée est conservée dans le stockage sécurisé du système. Le terminal restera en attente d’approbation.</p>
+              <p class="feedback" id="device-enrollment-feedback" role="status" aria-live="polite"></p>
+              <div class="dialog-actions"><button class="btn primary" id="register-device-button" type="submit">Enregistrer et sécuriser ce terminal</button></div>
+            </form>
+          </div>
+        </section>
+
         <div class="section-heading"><div><h2>Activité du commerce</h2><p>Résumé des données enregistrées sur cet ordinateur.</p></div><span class="subtext" id="last-refresh">Chargement…</span></div>
         <div class="metrics">
           <article class="metric"><div class="metric-label">Produits actifs <span>▤</span></div><div class="metric-value" id="metric-products">—</div><div class="metric-note">Catalogue local</div></article>
