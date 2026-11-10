@@ -9,8 +9,14 @@ DECLARE
 BEGIN
   SELECT * INTO v_executor FROM pg_catalog.pg_roles WHERE rolname = 'device_admin_executor';
   IF NOT FOUND THEN
-    CREATE ROLE device_admin_executor
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+    BEGIN
+      CREATE ROLE device_admin_executor
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+    EXCEPTION
+      WHEN insufficient_privilege THEN
+        RAISE EXCEPTION
+          'MIGRATION_FAILED: pre-provision device_admin_executor as NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOINHERIT, NOREPLICATION, NOBYPASSRLS, then rerun migration 037.';
+    END;
   ELSIF v_executor.rolcanlogin OR v_executor.rolsuper OR v_executor.rolcreatedb
      OR v_executor.rolcreaterole OR v_executor.rolinherit OR v_executor.rolreplication
      OR v_executor.rolbypassrls THEN
@@ -19,8 +25,14 @@ BEGIN
 
   SELECT * INTO v_owner FROM pg_catalog.pg_roles WHERE rolname = 'device_admin_function_owner';
   IF NOT FOUND THEN
-    CREATE ROLE device_admin_function_owner
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+    BEGIN
+      CREATE ROLE device_admin_function_owner
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+    EXCEPTION
+      WHEN insufficient_privilege THEN
+        RAISE EXCEPTION
+          'MIGRATION_FAILED: pre-provision device_admin_function_owner as NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOINHERIT, NOREPLICATION, NOBYPASSRLS, then rerun migration 037.';
+    END;
   ELSIF v_owner.rolcanlogin OR v_owner.rolsuper OR v_owner.rolcreatedb
      OR v_owner.rolcreaterole OR v_owner.rolinherit OR v_owner.rolreplication
      OR v_owner.rolbypassrls THEN
