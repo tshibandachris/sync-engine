@@ -406,11 +406,6 @@ app.whenReady().then(async () => {
         const keyPair = generateDeviceKeyPair();
         const hardwareInfo = getDeviceHardwareInfo();
         const fingerprint = getDeviceFingerprint(hardwareInfo);
-        const initialProof = createInitialEnrollmentProof({
-          privateKeyPem: keyPair.privateKeyPem,
-          activationCode: enrollment.activationCode,
-          fingerprint,
-        });
         attempt = {
           activationCode: enrollment.activationCode,
           deviceName: enrollment.deviceName,
@@ -422,8 +417,8 @@ app.whenReady().then(async () => {
           algorithm: 'ES256',
           jti: crypto.randomUUID(),
         };
-        // Persist the exact key, jti and signed request before any network call.
-        // A lost response can then be retried idempotently with the same proof.
+        // Persist the exact key, jti and activation binding before any network call.
+        // A lost response can then be retried idempotently with a fresh iat.
         await enrollmentAttemptStore.save(attempt);
         pendingEnrollmentAttempt = attempt;
       }
@@ -446,7 +441,7 @@ app.whenReady().then(async () => {
         hardwareInfo: attempt.hardwareInfo,
         fingerprint: attempt.fingerprint,
         publicKeyPem: attempt.publicKeyPem,
-        initialProof: attempt.initialProof,
+        initialProof,
         expectedThumbprint: attempt.thumbprint,
       });
 
