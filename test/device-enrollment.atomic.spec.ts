@@ -165,10 +165,14 @@ describe('Device enrollment atomic proof-of-possession', () => {
     const credentialPrivilege = await pg.pool.query(
       `SELECT has_table_privilege('sync_app', 'public.device_credentials', 'INSERT') AS allowed`,
     );
+    const deviceInsertPrivilege = await pg.pool.query(
+      `SELECT has_table_privilege('sync_app', 'public.devices', 'INSERT') AS allowed`,
+    );
     const eventPrivilege = await pg.pool.query(
       `SELECT has_table_privilege('sync_app', 'public.device_approval_events', 'INSERT') AS allowed`,
     );
     expect(credentialPrivilege.rows[0].allowed).toBe(false);
+    expect(deviceInsertPrivilege.rows[0].allowed).toBe(false);
     expect(eventPrivilege.rows[0].allowed).toBe(false);
   });
 });
