@@ -264,7 +264,9 @@ function startDeviceStatusPolling() {
           ...status,
           state: 'pending',
           message: deviceTrustState === 'approved'
-            ? (deviceProofReady && serverHasActiveCredential\n              ? 'Approbation confirmée et credential ES256 active. Synchronisation en cours.'\n              : 'Approbation confirmée, mais la clé ES256 ou la credential serveur n’est pas disponible.')
+            ? (deviceProofReady && serverHasActiveCredential
+              ? 'Approbation confirmée et credential ES256 active. Synchronisation en cours.'
+              : 'Approbation confirmée, mais la clé ES256 ou la credential serveur n’est pas disponible.')
             : `Statut serveur du terminal : ${serverStatus.approvalStatus}.`,
         };
         windowRef?.webContents.send('eden:status', readStatus());
