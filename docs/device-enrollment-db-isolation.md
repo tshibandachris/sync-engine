@@ -34,7 +34,7 @@ Configurer les secrets de l'application :
 - `DATABASE_URL` : connexion applicative habituelle, avec le même mot de passe que `SYNC_APP_PASSWORD` ;
 - `DEVICE_ENROLLMENT_DATABASE_URL` : connexion du compte `device_enrollment_login`.
 
-Au démarrage, le backend vérifie l'identité réelle de la seconde connexion : `session_user`, absence de superuser, absence d'appartenance à `sync_app`, appartenance effective à `device_enrollment_executor` et privilège `EXECUTE` sur la signature exacte de la fonction. Une configuration invalide arrête le démarrage (fail closed).
+Au démarrage, le backend vérifie l'identité réelle de la seconde connexion : `session_user`, absence de superuser, BYPASSRLS, CREATEROLE, CREATEDB et REPLICATION, rôle LOGIN en mode INHERIT, absence d'appartenance à `sync_app`, appartenance effective à `device_enrollment_executor` et privilège `EXECUTE` sur la signature exacte de la fonction. Une configuration invalide arrête le démarrage (fail closed).
 
 ## Migration ledger et bases existantes
 
