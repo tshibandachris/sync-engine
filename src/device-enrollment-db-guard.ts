@@ -21,6 +21,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
     can_execute_enrollment: boolean;
     is_function_owner: boolean;
     function_owner_is_safe: boolean;
+    function_owner_can_create_schema: boolean;
     function_owner_owns_protected_tables: boolean;
     function_owner_is_sync_member: boolean;
     function_owner_is_executor_member: boolean;
@@ -78,6 +79,10 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
         JOIN pg_catalog.pg_roles AS r ON r.oid = p.proowner
         WHERE p.oid = $1::regprocedure
       ), false) AS function_owner_is_safe,
+      COALESCE((
+        SELECT pg_catalog.has_schema_privilege(pg_catalog.pg_get_userbyid(p.proowner), 'public', 'CREATE')
+          FROM pg_catalog.pg_proc AS p WHERE p.oid = $1::regprocedure
+      ), true) AS function_owner_can_create_schema,
       EXISTS (
         SELECT 1
           FROM pg_catalog.pg_class AS c
@@ -108,7 +113,7 @@ export async function assertEnrollmentDatabaseIdentity(pool: Pool): Promise<void
       !identity.can_inherit || identity.session_user !== identity.current_user ||
       identity.is_sync_app_member || identity.has_unexpected_memberships || identity.owns_database_objects || !identity.has_executor_membership || identity.can_set_executor_role ||
       !identity.can_execute_enrollment || identity.is_function_owner ||
-      !identity.function_owner_is_safe || identity.function_owner_owns_protected_tables ||
+      !identity.function_owner_is_safe || identity.function_owner_can_create_schema || identity.function_owner_owns_protected_tables ||
       identity.function_owner_is_sync_member || identity.function_owner_is_executor_member ||
       identity.function_owner_has_memberships) {
     throw new Error(
