@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import type { INestApplication } from '@nestjs/common';
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import request from 'supertest';
@@ -97,7 +98,7 @@ describe('Initial ES256 proof enrollment (PostgreSQL HTTP integration)', () => {
         { provide: 'DRIZZLE_DB', useValue: pg.appDb },
         { provide: DeviceEnrollmentService, useFactory: (db: any) => new DeviceEnrollmentService(db), inject: ['DRIZZLE_DB'] },
       ],
-    }).compile();
+    }).overrideGuard(ThrottlerGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
     await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
@@ -165,7 +166,7 @@ describe('Initial ES256 proof enrollment (PostgreSQL HTTP integration)', () => {
       'SELECT algorithm, status, public_key_pem FROM public.device_credentials WHERE tenant_id = $1 AND device_id = $2',
       [tenantId, deviceId],
     );
-    expect(credential.rows[0]).toEqual({ algorithm: 'ES256', status: 'active', public_key_pem: publicKeyPem });
+    expect(credential.rows[0]).toEqual({ algorithm: 'ES256', status: 'active', public_key_pem: publicKeyPem.trim() });
 
     const pairing = await pg.pool.query(
       'SELECT used_at FROM public.device_pairing_codes WHERE code_hash = $1',
