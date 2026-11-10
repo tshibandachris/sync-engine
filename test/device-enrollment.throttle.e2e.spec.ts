@@ -66,6 +66,8 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
   const payload = {
     activationCode: 'ABCD-1234',
     deviceName: 'Caisse test',
+    publicKeyPem: '-----BEGIN PUBLIC KEY-----\\nTEST\\n-----END PUBLIC KEY-----',
+    initialProof: 'header.payload.signature',
     hardwareInfo: {
       hostname: 'pos-test',
       platform: 'win32',
