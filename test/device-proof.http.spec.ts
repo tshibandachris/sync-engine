@@ -233,6 +233,12 @@ describe('HTTP device proof verification', () => {
     expect(response.body.code).toBe('UNSUPPORTED_PROOF_ALGORITHM');
   });
 
+  it('rejects a proof larger than the configured 8 KiB limit', async () => {
+    const response = await callSync(approvedDeviceId, 'a'.repeat(8193));
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('PROOF_TOO_LARGE');
+  });
+
   it('rejects a malformed compact JWS', async () => {
     const response = await callSync(approvedDeviceId, 'not-a-jws');
     expect(response.status).toBe(401);
