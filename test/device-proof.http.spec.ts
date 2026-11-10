@@ -27,6 +27,8 @@ describe('HTTP device proof verification', () => {
   const inactiveDeviceId = crypto.randomUUID();
   const rejectedDeviceId = crypto.randomUUID();
   const noCredentialDeviceId = crypto.randomUUID();
+  const foreignTenantId = crypto.randomUUID();
+  const foreignDeviceId = crypto.randomUUID();
   const jwt = createTestJwtService();
   const token = signAgentToken(agentId, jwt, tenantId);
   let privateKeyPem: string;
@@ -75,6 +77,7 @@ describe('HTTP device proof verification', () => {
     status: 'pending_approval' | 'approved' | 'rejected' | 'revoked',
     active = true,
     withCredential = false,
+    deviceTenantId = tenantId,
   ) {
     await pg.pool.query(
       `INSERT INTO public.devices
@@ -83,14 +86,14 @@ describe('HTTP device proof verification', () => {
        VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, $6, $7,
          CASE WHEN $7::varchar(24) IN ('approved', 'revoked') THEN now() ELSE NULL END,
          CASE WHEN $7::varchar(24) IN ('approved', 'revoked') THEN $8::uuid ELSE NULL END)`,
-      [id, tenantId, crypto.randomUUID(), `Proof device ${id}`, `proof-${id}`, active, status, agentId],
+      [id, deviceTenantId, crypto.randomUUID(), `Proof device ${id}`, `proof-${id}`, active, status, agentId],
     );
     if (withCredential) {
       await pg.pool.query(
         `INSERT INTO public.device_credentials
           (id, tenant_id, device_id, public_key_pem, key_thumbprint, algorithm, status)
          VALUES ($1, $2, $3, $4, $5, 'ES256', 'active')`,
-        [crypto.randomUUID(), tenantId, id, publicKeyPem, `thumb-${id}`],
+        [crypto.randomUUID(), deviceTenantId, id, publicKeyPem, `thumb-${id}`],
       );
     }
   }
@@ -109,12 +112,17 @@ describe('HTTP device proof verification', () => {
       'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
       [tenantId, Date.now()],
     );
+    await pg.pool.query(
+      'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
+      [foreignTenantId, Date.now()],
+    );
     await insertDevice(approvedDeviceId, 'approved', true, true);
     await insertDevice(pendingDeviceId, 'pending_approval');
     await insertDevice(revokedDeviceId, 'revoked');
     await insertDevice(inactiveDeviceId, 'approved', false, true);
     await insertDevice(rejectedDeviceId, 'rejected');
     await insertDevice(noCredentialDeviceId, 'approved');
+    await insertDevice(foreignDeviceId, 'approved', true, true, foreignTenantId);
 
     const moduleRef = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '30d' } })],
@@ -185,6 +193,12 @@ describe('HTTP device proof verification', () => {
     const response = await callSync(inactiveDeviceId, buildProof());
     expect(response.status).toBe(403);
     expect(response.body.code).toBe('DEVICE_DEACTIVATED');
+  });
+
+  it('rejects a tenant A JWT paired with a device registered to tenant B', async () => {
+    const response = await callSync(foreignDeviceId, buildProof());
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('DEVICE_NOT_FOUND');
   });
 
   it('rejects a proof signed by a different private key', async () => {
