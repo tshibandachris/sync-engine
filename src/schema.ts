@@ -455,7 +455,7 @@ export const deviceApprovalEvents = pgTable(
       name: 'fk_device_approval_events_device_tenant',
     }).onDelete('restrict'),
     tenantDeviceIdx: index('idx_device_approval_events_tenant_device')
-      .on(table.tenantId, table.deviceId, table.createdAt),
+      .on(table.tenantId, table.deviceId, table.createdAt.desc()),
     eventTypeCheck: check(
       'device_approval_events_type_check',
       sql`${table.eventType} IN ('requested', 'approved', 'rejected', 'revoked', 'reactivated')`,
