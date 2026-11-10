@@ -4,6 +4,7 @@ import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
+import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
 import { DeviceEnrollmentController } from '../src/device-enrollment.controller.js';
 import { DeviceEnrollmentService } from '../src/device-enrollment.service.js';
 import { createDeviceEnrollmentThrottleModule } from '../src/device-enrollment.throttle.js';
@@ -47,6 +48,8 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
           throw new UnauthorizedException('Authorization required for POS sync.');
         },
       })
+      .overrideGuard(DeviceApprovalGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleRef.createNestApplication();
