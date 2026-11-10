@@ -1,7 +1,7 @@
 #!/bin/sh
 #
-# Apply pending SQL migrations exactly once, then provision the two
-# application logins from deployment secrets. The migration ledger also
+# Apply pending SQL migrations exactly once, then provision the application, enrollment and device-admin logins
+# from independent deployment secrets. The migration ledger also
 # allows existing pre-ledger installations to advance beyond migration 030.
 #
 set -eu
