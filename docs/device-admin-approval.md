@@ -44,6 +44,8 @@ Ajouter aux secrets de déploiement :
 
 Le compte d'administration PostgreSQL est distinct des identifiants de l'application et de l'enrôlement. En production, le fournisseur d'identité doit émettre les permissions ci-dessus pour les administrateurs autorisés. Aucune permission n'est accordée par défaut.
 
+La validation de cette PR empilée est exécutée par `.github/workflows/device-admin-stacked-ci.yml` sur PostgreSQL 16 : application séquentielle des migrations, contrôle TypeScript et tests d'intégration Testcontainers.
+
 ## Tests attendus
 
 La suite `test/device-admin.approval.spec.ts` couvre les permissions, la liste tenant-scoped, l'approbation, le rejet, la révocation de credential, les transitions et l'isolation inter-tenant. Elle utilise trois rôles PostgreSQL distincts et Testcontainers.
