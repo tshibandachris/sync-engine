@@ -5,7 +5,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
-import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
+import { assertEnrollmentDatabaseIdentity } from '../src/device-enrollment-db-guard.js';
 import { DeviceEnrollmentController } from '../src/device-enrollment.controller.js';
 import { DeviceEnrollmentService } from '../src/device-enrollment.service.js';
 import { createDeviceEnrollmentThrottleModule } from '../src/device-enrollment.throttle.js';
@@ -95,13 +95,13 @@ describe('Initial ES256 proof enrollment (PostgreSQL HTTP integration)', () => {
       imports: [createDeviceEnrollmentThrottleModule(null)],
       controllers: [DeviceEnrollmentController],
       providers: [
-        { provide: 'DRIZZLE_DB', useValue: pg.appDb },
-        { provide: DeviceEnrollmentService, useFactory: (db: any) => new DeviceEnrollmentService(db), inject: ['DRIZZLE_DB'] },
+        { provide: 'DEVICE_ENROLLMENT_DB', useValue: pg.enrollmentDb },
+        { provide: DeviceEnrollmentService, useFactory: (db: any) => new DeviceEnrollmentService(db), inject: ['DEVICE_ENROLLMENT_DB'] },
       ],
     }).overrideGuard(ThrottlerGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
-    await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
+    await assertEnrollmentDatabaseIdentity(pg.enrollmentPool);
     await app.init();
   });
 
