@@ -24,9 +24,9 @@ describe('Device enrollment atomic proof-of-possession', () => {
   async function createCode(code: string, codeTenantId = tenantId) {
     const codeHash = createHash('sha256').update(code).digest('hex');
     await pg.pool.query(
-      \`INSERT INTO device_pairing_codes
+      `INSERT INTO device_pairing_codes
        (tenant_id, store_id, code_hash, created_by, expires_at)
-       VALUES ($1, $2, $3, $4, now() + interval '10 minutes')\`,
+       VALUES ($1, $2, $3, $4, now() + interval '10 minutes')`,
       [codeTenantId, storeId, codeHash, randomUUID()],
     );
   }
@@ -92,10 +92,10 @@ describe('Device enrollment atomic proof-of-possession', () => {
       [tenantId, 'active'],
     );
     const audit = await pg.pool.query(
-      \`SELECT count(*)::int AS count
+      `SELECT count(*)::int AS count
        FROM device_approval_events
        WHERE tenant_id = $1 AND event_type = 'requested'
-         AND to_status = 'pending_approval' AND from_status IS NULL\`,
+         AND to_status = 'pending_approval' AND from_status IS NULL`,
       [tenantId],
     );
 
@@ -159,10 +159,10 @@ describe('Device enrollment atomic proof-of-possession', () => {
 
   it('does not grant sync_app direct credential or approval-event writes', async () => {
     const credentialPrivilege = await pg.pool.query(
-      \`SELECT has_table_privilege('sync_app', 'public.device_credentials', 'INSERT') AS allowed\`,
+      `SELECT has_table_privilege('sync_app', 'public.device_credentials', 'INSERT') AS allowed`,
     );
     const eventPrivilege = await pg.pool.query(
-      \`SELECT has_table_privilege('sync_app', 'public.device_approval_events', 'INSERT') AS allowed\`,
+      `SELECT has_table_privilege('sync_app', 'public.device_approval_events', 'INSERT') AS allowed`,
     );
     expect(credentialPrivilege.rows[0].allowed).toBe(false);
     expect(eventPrivilege.rows[0].allowed).toBe(false);
