@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const {
   calculateJwkThumbprint,
+  createInitialEnrollmentProof,
   createDeviceProof,
   generateDeviceKeyPair,
 } = require('../electron/auth/device-crypto.cjs');
@@ -56,4 +57,41 @@ test('rejects invalid inputs and insecure non-local URLs', () => {
 test('rejects non-P-256 key material', () => {
   const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   assert.throws(() => calculateJwkThumbprint(pair.publicKey.export({ type: 'spki', format: 'pem' })), /P-256/);
+});
+
+
+test('creates an initial enrollment proof bound to the activation code, fingerprint and device UUID', () => {
+  const pair = generateDeviceKeyPair();
+  const deviceId = crypto.randomUUID();
+  const proof = createInitialEnrollmentProof({
+    privateKeyPem: pair.privateKeyPem,
+    activationCode: 'ED26-89AB',
+    fingerprint: 'installation-fingerprint-123',
+    deviceId,
+    nowMs: 1_800_000_000_000,
+  });
+  const [headerB64, payloadB64, signatureB64] = proof.split('.');
+  assert.deepEqual(decode(headerB64), { alg: 'ES256', typ: 'dpop+jwt' });
+  const payload = decode(payloadB64);
+  assert.equal(payload.htm, 'POST');
+  assert.equal(payload.htu, '/api/v1/devices/enroll');
+  assert.equal(payload.iat, 1_800_000_000);
+  assert.equal(payload.code_hash, crypto.createHash('sha256').update('ED26-89AB').digest('base64url'));
+  assert.equal(payload.fingerprint, 'installation-fingerprint-123');
+  assert.equal(payload.device_id, deviceId);
+  const signature = Buffer.from(signatureB64, 'base64url');
+  assert.equal(signature.length, 64);
+  assert.equal(crypto.verify('sha256', Buffer.from(headerB64 + '.' + payloadB64, 'ascii'), {
+    key: pair.publicKeyPem, dsaEncoding: 'ieee-p1363',
+  }, signature), true);
+});
+
+test('rejects an invalid initial enrollment binding', () => {
+  const pair = generateDeviceKeyPair();
+  assert.throws(() => createInitialEnrollmentProof({
+    privateKeyPem: pair.privateKeyPem, activationCode: 'bad', fingerprint: 'fp', deviceId: crypto.randomUUID(),
+  }), /activation code/);
+  assert.throws(() => createInitialEnrollmentProof({
+    privateKeyPem: pair.privateKeyPem, activationCode: 'ED26-89AB', fingerprint: 'fp', deviceId: 'bad',
+  }), /device UUID/);
 });
