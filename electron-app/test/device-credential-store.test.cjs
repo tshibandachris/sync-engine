@@ -108,3 +108,27 @@ test('returns null only when no credential file exists', async () => {
     f.cleanup();
   }
 });
+
+
+test('persists a recoverable pending enrollment and later approved tenant binding', async () => {
+  const f = fixture();
+  try {
+    const value = credential();
+    await f.store.savePending(value);
+    const pending = await f.store.load();
+    assert.equal(pending.pendingEnrollment, true);
+    assert.equal(pending.deviceId, value.deviceId);
+
+    const tenantId = crypto.randomUUID();
+    await f.store.save({ ...pending, pendingEnrollment: false, tenantId, approvalStatus: 'pending_approval' });
+    const registered = await f.store.load();
+    assert.equal(registered.pendingEnrollment, undefined);
+    assert.equal(registered.tenantId, tenantId);
+    assert.equal(registered.approvalStatus, 'pending_approval');
+
+    await f.store.save({ ...registered, approvalStatus: 'approved' });
+    assert.equal((await f.store.load()).approvalStatus, 'approved');
+  } finally {
+    f.cleanup();
+  }
+});
