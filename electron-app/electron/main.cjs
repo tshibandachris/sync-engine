@@ -86,7 +86,7 @@ function readStatus() {
     deviceId: deviceCredential?.deviceId || null,
     deviceThumbprint: deviceCredential?.thumbprint || null,
     deviceCredentialError: deviceCredentialError?.message || null,
-    canOperateLocally: canAccessLocalPOS(agentAuthState),
+    canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
     canRunSync: canRunSync(agentAuthState, deviceTrustState),
     lastCursor: db ? getCursor(db) : status.lastCursor,
     productCount: db ? Number(db.prepare('SELECT count(*) AS n FROM products WHERE deleted_at IS NULL AND is_active = 1').get().n) : 0,
@@ -230,7 +230,7 @@ app.whenReady().then(async () => {
     thumbprint: deviceCredential?.thumbprint || null,
     trustState: deviceTrustState,
     syncState,
-    canOperateLocally: canAccessLocalPOS(agentAuthState),
+    canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
     canRunSync: canRunSync(agentAuthState, deviceTrustState),
   }));
   registerTrustedHandler('eden:device:enroll', async (credentials) => {
