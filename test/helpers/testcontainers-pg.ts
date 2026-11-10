@@ -265,6 +265,7 @@ export class TestPostgres {
     '036_device_enrollment_executor_role.sql',
     '037_device_admin_approval_capability.sql',
     '038_device_enrollment_owner_schema_hardening.sql',
+    '039_purge_expired_device_proof_nonces.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
