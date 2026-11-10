@@ -1,3 +1,5 @@
+const { createDeviceProof } = require('../auth/device-crypto.cjs');
+
 function normalizeBaseUrl(value) {
   if (!value) throw new Error('EDEN_SYNC_URL is required (base URL of the NestJS API).');
   const url = new URL(value);
