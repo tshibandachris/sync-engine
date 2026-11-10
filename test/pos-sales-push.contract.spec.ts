@@ -9,6 +9,8 @@ import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
+import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
+import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET, TEST_TENANT_ID, createTestJwtService, signAgentToken } from './helpers/jwt.js';
 
@@ -35,7 +37,8 @@ describe('POS sales push contract', () => {
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
       ],
-    }).compile();
+    }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true })
+      .overrideGuard(DeviceProofGuard).useValue({ canActivate: () => true }).compile();
     app = moduleRef.createNestApplication();
     await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
     await app.init();
