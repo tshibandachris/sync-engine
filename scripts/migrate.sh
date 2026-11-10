@@ -320,6 +320,11 @@ nonce_purge_owner_ok=$(psql_base -tA -c "
        'public.device_proof_nonces',
        'DELETE'
      )
+     AND NOT pg_catalog.has_table_privilege(
+       'device_proof_maintenance_function_owner',
+       'public.device_proof_nonces',
+       'UPDATE'
+     )
      AND NOT pg_catalog.has_table_privilege('sync_app', 'public.device_proof_nonces', 'DELETE')
      AND pg_catalog.has_function_privilege(
        'sync_app',
