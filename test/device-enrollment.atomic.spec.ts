@@ -199,6 +199,10 @@ describe('Device enrollment atomic pairing-code redemption', () => {
           text, uuid, varchar, varchar, jsonb, text, varchar, uuid
         ) OWNER TO device_enrollment_migration_test
       `);
+      await client.query('ALTER FUNCTION public.redeem_device_pairing_code(text) OWNER TO device_enrollment_migration_test');
+      await client.query(
+        'ALTER FUNCTION public.register_device_enrollment(uuid, uuid, uuid, uuid, varchar, varchar, jsonb) OWNER TO device_enrollment_migration_test',
+      );
       await client.query('SET ROLE device_enrollment_migration_test');
       const migration = readFileSync(
         path.resolve('migrations/036_device_enrollment_executor_role.sql'),
