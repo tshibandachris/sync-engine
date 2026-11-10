@@ -70,8 +70,17 @@ export async function assertDeviceAdminDatabaseIdentity(pool: Pool): Promise<voi
         OR pg_catalog.has_table_privilege(session_user, 'public.devices', 'UPDATE')
         OR pg_catalog.has_table_privilege(session_user, 'public.devices', 'DELETE')
         OR pg_catalog.has_table_privilege(session_user, 'public.device_credentials', 'SELECT')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_credentials', 'INSERT')
         OR pg_catalog.has_table_privilege(session_user, 'public.device_credentials', 'UPDATE')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_credentials', 'DELETE')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_approval_events', 'SELECT')
         OR pg_catalog.has_table_privilege(session_user, 'public.device_approval_events', 'INSERT')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_approval_events', 'UPDATE')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_approval_events', 'DELETE')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_pairing_codes', 'SELECT')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_pairing_codes', 'INSERT')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_pairing_codes', 'UPDATE')
+        OR pg_catalog.has_table_privilege(session_user, 'public.device_pairing_codes', 'DELETE')
         AS has_direct_table_privileges,
       pg_catalog.has_function_privilege('sync_app', $1, 'EXECUTE') AS sync_app_can_execute,
       COALESCE((
