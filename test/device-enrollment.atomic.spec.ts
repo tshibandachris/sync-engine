@@ -32,6 +32,7 @@ describe('Device enrollment atomic proof-of-possession', () => {
   }
 
   function dto(activationCode: string, fingerprint: string, deviceName = 'Caisse test') {
+    const deviceId = randomUUID();
     const pair = generateKeyPairSync('ec', {
       namedCurve: 'prime256v1',
       publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -45,6 +46,7 @@ describe('Device enrollment atomic proof-of-possession', () => {
       iat: Math.floor(Date.now() / 1000),
       code_hash: createHash('sha256').update(activationCode).digest('base64url'),
       fingerprint,
+      device_id: deviceId,
     })).toString('base64url');
     const signingInput = headerB64 + '.' + payloadB64;
     const signature = sign('sha256', Buffer.from(signingInput, 'ascii'), {
@@ -52,6 +54,7 @@ describe('Device enrollment atomic proof-of-possession', () => {
       dsaEncoding: 'ieee-p1363',
     });
     return {
+      deviceId,
       activationCode,
       deviceName,
       fingerprint,
