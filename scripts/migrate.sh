@@ -33,7 +33,19 @@ if [ "$ledger_before" = "0" ] && [ "$legacy_schema" = "1" ]; then
   echo "[migrate] legacy pre-ledger database detected; verifying migration-030 baseline"
   baseline_ok=$(psql_base -tA -c "
     SELECT CASE
-      WHEN to_regclass('public.devices') IS NOT NULL
+      WHEN to_regclass('public.products') IS NOT NULL
+       AND to_regclass('public.staff') IS NOT NULL
+       AND to_regclass('public.cash_sessions') IS NOT NULL
+       AND to_regclass('public.sales') IS NOT NULL
+       AND to_regclass('public.sale_lines') IS NOT NULL
+       AND to_regclass('public.stock_movements') IS NOT NULL
+       AND to_regclass('public.inventory_counts') IS NOT NULL
+       AND to_regclass('public.inventory_count_lines') IS NOT NULL
+       AND to_regclass('public.courriers') IS NOT NULL
+       AND to_regclass('public.courrier_attachments') IS NOT NULL
+       AND to_regclass('public.courrier_assignments') IS NOT NULL
+       AND to_regclass('public.courrier_audit_logs') IS NOT NULL
+       AND to_regclass('public.devices') IS NOT NULL
        AND to_regclass('public.device_pairing_codes') IS NOT NULL
        AND to_regclass('public.device_credentials') IS NULL
       THEN 1 ELSE 0 END
