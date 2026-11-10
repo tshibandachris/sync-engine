@@ -239,6 +239,7 @@ export class TestPostgres {
     '030_create_enrolled_devices.sql',
     '031_device_approval_and_credentials.sql',
     '032_device_security_hardening.sql',
+    '033_atomic_device_enrollment.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
