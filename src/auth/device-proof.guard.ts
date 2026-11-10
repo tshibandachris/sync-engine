@@ -199,6 +199,8 @@ export class DeviceProofGuard implements CanActivate {
 
     const method = typeof request.method === 'string' ? request.method.toUpperCase() : '';
     const originalUrl = typeof request.originalUrl === 'string' ? request.originalUrl : '';
+    // Protocol contract: htu is the exact Express path (including its encoded
+    // path spelling) with the query string removed; no host or query parameters.
     const canonicalPath = originalUrl.split('?', 1)[0];
     if (!canonicalPath.startsWith('/') || canonicalPath.includes('#') ||
         typeof payload.htm !== 'string' || payload.htm !== method ||
