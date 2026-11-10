@@ -104,3 +104,5 @@ Consulter les documents du dossier `docs/`, en particulier :
 
 ---
 Eden Devs Corp — Kinshasa, RDC
+
+<!-- Temporary CI validation snapshot; this branch is not intended for merge. -->
