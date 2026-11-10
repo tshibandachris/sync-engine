@@ -380,7 +380,7 @@ export const devices = pgTable(
       'devices_approval_decision_consistency',
       sql`(${table.approvalStatus} IN ('approved', 'revoked') AND ${table.approvedAt} IS NOT NULL AND ${table.approvedBy} IS NOT NULL) OR (${table.approvalStatus} IN ('pending_approval', 'rejected') AND ${table.approvedAt} IS NULL AND ${table.approvedBy} IS NULL)`,
     ),
-    tenantApprovalStatusIdx: index('idx_devices_tenant_approval_status').on(table.tenantId, table.approvalStatus, table.createdAt),
+    tenantApprovalStatusIdx: index('idx_devices_tenant_approval_status').on(table.tenantId, table.approvalStatus, table.createdAt.desc()),
     tenantStoreIdx: index('idx_devices_tenant_store').on(table.tenantId, table.storeId),
     tenantActiveIdx: index('idx_devices_tenant_active').on(table.tenantId, table.isActive),
   }),
@@ -419,7 +419,9 @@ export const deviceCredentials = pgTable(
     tenantThumbprintUnique: unique('device_credentials_tenant_thumbprint_unique')
       .on(table.tenantId, table.keyThumbprint),
     tenantDeviceIdx: index('idx_device_credentials_tenant_device')
-      .on(table.tenantId, table.deviceId, table.createdAt),
+      .on(table.tenantId, table.deviceId, table.createdAt.desc()),
+    publicKeyNotEmpty: check('device_credentials_public_key_not_empty', sql`length(trim(${table.publicKeyPem})) > 0`),
+    thumbprintNotEmpty: check('device_credentials_thumbprint_not_empty', sql`length(trim(${table.keyThumbprint})) > 0`),
     algorithmCheck: check('device_credentials_algorithm_check', sql`${table.algorithm} = 'ES256'`),
     statusCheck: check('device_credentials_status_check', sql`${table.status} IN ('active', 'revoked')`),
     revocationConsistency: check(
@@ -451,7 +453,7 @@ export const deviceApprovalEvents = pgTable(
       columns: [table.tenantId, table.deviceId],
       foreignColumns: [devices.tenantId, devices.id],
       name: 'fk_device_approval_events_device_tenant',
-    }).onDelete('cascade'),
+    }).onDelete('restrict'),
     tenantDeviceIdx: index('idx_device_approval_events_tenant_device')
       .on(table.tenantId, table.deviceId, table.createdAt),
     eventTypeCheck: check(
@@ -461,6 +463,14 @@ export const deviceApprovalEvents = pgTable(
     statusCheck: check(
       'device_approval_events_status_check',
       sql`${table.toStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked') AND (${table.fromStatus} IS NULL OR ${table.fromStatus} IN ('pending_approval', 'approved', 'rejected', 'revoked'))`,
+    ),
+    metadataObjectCheck: check(
+      'device_approval_events_metadata_object',
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
+    ),
+    transitionLifecycleCheck: check(
+      'chk_event_transition_lifecycle',
+      sql`(${table.eventType} = 'requested' AND ${table.fromStatus} IS NULL AND ${table.toStatus} = 'pending_approval') OR (${table.eventType} = 'approved' AND ${table.fromStatus} IN ('pending_approval', 'rejected') AND ${table.toStatus} = 'approved') OR (${table.eventType} = 'rejected' AND ${table.fromStatus} = 'pending_approval' AND ${table.toStatus} = 'rejected') OR (${table.eventType} = 'revoked' AND ${table.fromStatus} = 'approved' AND ${table.toStatus} = 'revoked') OR (${table.eventType} = 'reactivated' AND ${table.fromStatus} = 'revoked' AND ${table.toStatus} = 'approved')`,
     ),
   }),
 );
