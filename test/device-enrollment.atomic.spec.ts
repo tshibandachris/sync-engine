@@ -125,6 +125,53 @@ describe('Device enrollment atomic pairing-code redemption', () => {
   });
 
 
+
+  it('uses a non-login, non-BYPASSRLS SECURITY DEFINER owner distinct from the executor', async () => {
+    const result = await pg.pool.query(`
+      SELECT
+        r.rolcanlogin,
+        r.rolsuper,
+        r.rolcreatedb,
+        r.rolcreaterole,
+        r.rolinherit,
+        r.rolreplication,
+        r.rolbypassrls,
+        pg_catalog.pg_get_userbyid(p.proowner) AS function_owner,
+        pg_catalog.pg_has_role('device_enrollment_function_owner', 'sync_app', 'MEMBER') AS owner_is_sync_member,
+        pg_catalog.pg_has_role('device_enrollment_function_owner', 'device_enrollment_executor', 'MEMBER') AS owner_is_executor_member,
+        EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members
+          WHERE member = 'device_enrollment_function_owner'::regrole
+        ) AS owner_inherits_another_role,
+        EXISTS (
+          SELECT 1 FROM pg_catalog.pg_class
+          WHERE relowner = 'device_enrollment_function_owner'::regrole
+            AND relname IN (
+              'tenants', 'devices', 'device_pairing_codes', 'device_credentials',
+              'device_approval_events', 'device_proof_nonces', 'device_enrollment_attempts'
+            )
+        ) AS owner_owns_tenant_tables
+      FROM pg_catalog.pg_roles AS r
+      JOIN pg_catalog.pg_proc AS p
+        ON p.oid = 'public.register_device_enrollment_with_credential(text,uuid,character varying,character varying,jsonb,text,character varying,uuid)'::regprocedure
+      WHERE r.rolname = 'device_enrollment_function_owner'
+    `);
+    expect(result.rows[0]).toEqual({
+      rolcanlogin: false,
+      rolsuper: false,
+      rolcreatedb: false,
+      rolcreaterole: false,
+      rolinherit: false,
+      rolreplication: false,
+      rolbypassrls: false,
+      function_owner: 'device_enrollment_function_owner',
+      owner_is_sync_member: false,
+      owner_is_executor_member: false,
+      owner_inherits_another_role: false,
+      owner_owns_tenant_tables: false,
+    });
+  });
+
   it('rejects an enrollment login that has BYPASSRLS even when it inherits the executor role', async () => {
     await pg.pool.query(
       "CREATE ROLE device_enrollment_unsafe LOGIN INHERIT BYPASSRLS PASSWORD 'unsafe_test_pw'",
