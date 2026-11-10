@@ -7,6 +7,7 @@ const { spawnSync } = require('node:child_process');
 
 const { openDatabase, applyPulledPage, getCursor } = require('../electron/db/client.cjs');
 const { pullChanges, pushChanges } = require('../electron/sync/api-client.cjs');
+const { generateDeviceKeyPair } = require('../electron/auth/device-crypto.cjs');
 const { enqueueOutbox, preparePushBatch, getOutboxStatus } = require('../electron/sync/outbox.cjs');
 
 function fixture() {
@@ -23,6 +24,17 @@ function fixture() {
       if (db?.open) db.close();
       fs.rmSync(root, { recursive: true, force: true });
     },
+  };
+}
+
+function createDeviceCredential() {
+  const pair = generateDeviceKeyPair();
+  return {
+    deviceId: '00000000-0000-4000-8000-000000000102',
+    privateKeyPem: pair.privateKeyPem,
+    publicKeyPem: pair.publicKeyPem,
+    thumbprint: pair.thumbprint,
+    algorithm: 'ES256',
   };
 }
 
@@ -91,6 +103,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
   const f = fixture();
   try {
     const page = fieldPullPage(40);
+    const credential = createDeviceCredential();
     let calls = 0;
     const fetchImpl = async (_url, options) => {
       calls++;
@@ -103,7 +116,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
 
     const pulled = await pullChanges({
       baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
-      lastPulledAt: 0, fetchImpl,
+      deviceCredential: credential, lastPulledAt: 0, fetchImpl,
     });
     applyPulledPage(f.db, pulled);
 
@@ -119,7 +132,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
     await assert.rejects(
       pushChanges({
         baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
-        idempotencyKey: batch.idempotencyKey, payload: batch.payload, fetchImpl,
+        deviceCredential: credential, idempotencyKey: batch.idempotencyKey, payload: batch.payload, fetchImpl,
       }),
       /Simulated network cut/,
     );
@@ -133,7 +146,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
     await assert.rejects(
       pullChanges({
         baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
-        lastPulledAt: 40, fetchImpl: async () => { throw new TypeError('Simulated pull disconnect'); },
+        deviceCredential: credential, lastPulledAt: 40, fetchImpl: async () => { throw new TypeError('Simulated pull disconnect'); },
       }),
       /Simulated pull disconnect/,
     );
