@@ -112,8 +112,19 @@ separation_ok=$(psql_base -tA -c "
        'EXECUTE'
      )
      AND NOT EXISTS (
-       SELECT 1
-         FROM pg_catalog.pg_auth_members AS membership
+       SELECT 1 FROM pg_catalog.pg_class AS c
+        WHERE c.relowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'device_enrollment_login')
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_proc AS p
+        WHERE p.proowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'device_enrollment_login')
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_namespace AS n
+        WHERE n.nspowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'device_enrollment_login')
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_auth_members AS membership
          JOIN pg_catalog.pg_roles AS member_role ON member_role.oid = membership.member
          JOIN pg_catalog.pg_roles AS granted_role ON granted_role.oid = membership.roleid
         WHERE member_role.rolname = 'device_enrollment_login'
