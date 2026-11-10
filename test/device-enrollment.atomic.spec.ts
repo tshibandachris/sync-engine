@@ -213,14 +213,24 @@ describe('Device enrollment atomic pairing-code redemption', () => {
 
 
   it('allows sync_app to create only a pending device, never an approved device', async () => {
-    const approvedAttempt = await pg.appPool.query(
-      `INSERT INTO public.devices (
-        id, tenant_id, store_id, name, fingerprint, hardware_info,
-        approval_status, approved_at, approved_by
-      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'approved', now(), $7)`,
-      [randomUUID(), tenantId, storeId, 'Forged approval', 'forged-approved-fingerprint', JSON.stringify({}), randomUUID()],
-    ).catch((error: { code?: string }) => error);
-    expect(approvedAttempt).toMatchObject({ code: '42501' });
+    const client = await pg.appPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        "SELECT set_config('app.current_tenant_id', $1, true)",
+        [tenantId],
+      );
+      await expect(client.query(
+        `INSERT INTO public.devices (
+          id, tenant_id, store_id, name, fingerprint, hardware_info,
+          approval_status, approved_at, approved_by
+        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'approved', now(), $7)`,
+        [randomUUID(), tenantId, storeId, 'Forged approval', 'forged-approved-fingerprint', JSON.stringify({}), randomUUID()],
+      )).rejects.toMatchObject({ code: '42501' });
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
   });
 
   it('applies migration 036 with a pre-provisioned executor and a migration role without CREATEROLE', async () => {
