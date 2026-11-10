@@ -4,7 +4,7 @@ on:
   push:
     branches: [feature/pos-domain-schema]
   pull_request:
-    branches: [main, validation/device-enrollment-db-isolation-base]
+    branches: [main, feat/device-enrollment-db-isolation-v2]
   workflow_dispatch:
 
 jobs:
