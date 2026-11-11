@@ -556,7 +556,7 @@ single-app deployment.
 
 ## Maintenance security and migration execution
 
-- Migrations 039–041 leave migration 039 unchanged, revoke the API/public purge grants in later migrations, and assign the nonce, tombstone, and sync-log purge entry points to the maintenance capability.
+- Migrations 039–041 leave migration 039 unchanged, revoke the API/public purge grants in later migrations, and assign the idempotency/conflict, nonce, tombstone, and sync-log purge entry points to the maintenance capability.
 - `maintenance_login` inherits only `maintenance_purge_executor`; the function owner is a separate `NOLOGIN` role. The login has no direct business-table `INSERT`, `UPDATE`, or `DELETE` privileges.
 - Nonce, tombstone, and sync-log cleanup is tenant-scoped and capped at 5,000 rows per invocation. A later maintenance cycle can process the next batch.
 - `scripts/migrate.sh` applies each migration and its ledger row in one transaction protected by a PostgreSQL advisory transaction lock. The `--migrations-only` switch is a test seam; normal deployment execution still provisions the isolated logins.
