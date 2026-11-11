@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncController } from '../src/sync.controller.js';
 import { SyncPushService } from '../src/sync-push.service.js';
+import { PosSalesPushService } from '../src/pos/pos-sales-push.service.js';
+import { withTenant } from '../src/with-tenant.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
@@ -18,6 +20,7 @@ describe('POS sales push contract', () => {
   let pg: TestPostgres;
   let app: INestApplication;
   let token: string;
+  let agentId: string;
   const tenantId = TEST_TENANT_ID;
   let staffId: string;
   let productId: string;
@@ -26,7 +29,8 @@ describe('POS sales push contract', () => {
   beforeAll(async () => {
     pg = await startTestPostgres();
     const jwt = createTestJwtService();
-    token = signAgentToken(randomUUID(), jwt, tenantId);
+    agentId = randomUUID();
+    token = signAgentToken(agentId, jwt, tenantId);
     const moduleRef = await Test.createTestingModule({
       imports: [JwtModule.register({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '30d' } })],
       controllers: [SyncController],
@@ -138,6 +142,8 @@ describe('POS sales push contract', () => {
     const res = await push([changed]);
     expect(res.body.results[0].status).toBe('conflict');
     expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(1);
     expect((await pg.pool.query('SELECT sale_number FROM sales WHERE id=$1', [item.id])).rows[0].sale_number).toBe(item.sale_number);
   });
 
@@ -210,4 +216,88 @@ describe('POS sales push contract', () => {
     expect(res.body.results[0].reason).toContain('cash session not found');
     expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(0);
   });
+
+  it('retries the same idempotency key after a simulated failure between key insert and POS write', async () => {
+    const item = sale();
+    const key = randomUUID();
+    const prototype = PosSalesPushService.prototype as any;
+    const originalPush = prototype.push;
+    const originalPushInTransaction = prototype.pushInTransaction;
+    const failAfterKeyInsert = async () => {
+      throw new Error('simulated process failure before POS sale writes');
+    };
+
+    prototype.push = failAfterKeyInsert;
+    prototype.pushInTransaction = failAfterKeyInsert;
+    try {
+      const failed = await push([item], token, key);
+      expect(failed.status).toBe(500);
+    } finally {
+      prototype.push = originalPush;
+      if (originalPushInTransaction) prototype.pushInTransaction = originalPushInTransaction;
+      else delete prototype.pushInTransaction;
+    }
+
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sync_idempotency_keys WHERE agent_id=$1 AND idempotency_key=$2', [agentId, key])).rows[0].count)).toBe(0);
+
+    const retried = await push([item], token, key);
+    expect(retried.body.results[0].status).toBe('applied');
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(1);
+  });
+
+  it('serializes concurrent identical sale pushes as applied then idempotent without duplicate stock movements', async () => {
+    const item = sale();
+    const service: any = new PosSalesPushService(pg.appDb);
+    const pushConcurrently = () => typeof service.pushInTransaction === 'function'
+      ? withTenant(pg.appDb, tenantId, tx => service.pushInTransaction(tx, tenantId, [item]))
+      : service.push(tenantId, [item]);
+    const [left, right] = await Promise.all([pushConcurrently(), pushConcurrently()]);
+    expect([left[0].status, right[0].status].sort()).toEqual(['applied', 'idempotent'].sort());
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT COALESCE(SUM(quantity_delta),0) AS stock FROM stock_movements WHERE tenant_id=$1 AND product_id=$2', [tenantId, productId])).rows[0].stock)).toBe(-1);
+  });
+
+  it('does not partially write a sale or record its idempotency key when a later line fails', async () => {
+    const item = sale();
+    const key = randomUUID();
+    const invalidProductId = randomUUID();
+    item.total = 2000;
+    item.cash_amount = 2000;
+    item.lines.push({
+      ...item.lines[0],
+      id: randomUUID(),
+      product_id: invalidProductId,
+      product_name: 'Missing product',
+      subtotal: 1000,
+    });
+    const response = await push([item], token, key);
+    expect(response.body.results[0].status).toBe('invalid');
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sync_idempotency_keys WHERE agent_id=$1 AND idempotency_key=$2', [agentId, key])).rows[0].count)).toBe(0);
+  });
+
+  it('does not change stock or duplicate rows on a complete replay with the same idempotency key', async () => {
+    const item = sale();
+    const key = randomUUID();
+    const first = await push([item], token, key);
+    expect(first.body.results[0].status).toBe('applied');
+    const before = Number((await pg.pool.query('SELECT COALESCE(SUM(quantity_delta),0) AS stock FROM stock_movements WHERE tenant_id=$1 AND product_id=$2', [tenantId, productId])).rows[0].stock);
+
+    const replay = await push([item], token, key);
+    expect(replay.status).toBe(201);
+    expect(replay.body.results[0].status).toBe('idempotent');
+    const after = Number((await pg.pool.query('SELECT COALESCE(SUM(quantity_delta),0) AS stock FROM stock_movements WHERE tenant_id=$1 AND product_id=$2', [tenantId, productId])).rows[0].stock);
+    expect(after).toBe(before);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(1);
+  });
+
 });
