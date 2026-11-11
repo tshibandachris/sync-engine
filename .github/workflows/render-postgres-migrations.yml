@@ -88,8 +88,8 @@ jobs:
         run: |
           set -euo pipefail
           applied="$(psql -X -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tA -c "SELECT count(*) FROM public.schema_migrations")"
-          if [[ "$applied" != "39" ]]; then
-            echo "::error::Expected 39 applied migrations; found $applied."
+          if [[ "$applied" != "40" ]]; then
+            echo "::error::Expected 40 applied migrations; found $applied."
             exit 1
           fi
           echo "Verified $applied migrations."
