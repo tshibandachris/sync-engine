@@ -6,7 +6,7 @@ const path = require('node:path');
 const { openDatabase, hasLocalBusinessData, assertTenantBinding, bindTenant } = require('../electron/db/client.cjs');
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbbinding-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-tenant-binding-'));
   const app = { getPath: () => root };
   let db = openDatabase(app);
   return {
