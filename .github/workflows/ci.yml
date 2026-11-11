@@ -20,7 +20,7 @@ jobs:
           pattern='(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AKIA[0-9A-Z]{16}|postgres(ql)?://[^[:space:]@]+:[^[:space:]@]{16,}@|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd][[:space:]]*[:=][[:space:]]*[A-Za-z0-9_./+=-]{16,}|(SUPABASE_SERVICE_ROLE_KEY|RENDER_DB_PASSWORD|R2_SECRET_ACCESS_KEY)[[:space:]]*=[[:space:]]*[A-Za-z0-9_./+=-]{16,})'
           all_matches="$(git grep -nI -E "$pattern" -- . ':!**/*.lock' || true)"
           # Ignore only known non-secret placeholders and test fixture credentials.
-          matches="$(printf '%s\\n' "$all_matches" | grep -viE 'REPLACE_WITH_|change-me|postgres://x|maintenance_test_pw|admin_test_password|enrollment_test_password|sync_app_test_password|test-maintenance-password|test-only-hmac-key-long-enough' || true)"
+          matches="$(printf '%s\n' "$all_matches" | grep -viE 'REPLACE_WITH_|change-me|postgres://x|maintenance_test_pw|admin_test_password|enrollment_test_password|sync_app_test_password|test-maintenance-password|test-only-hmac-key-long-enough' || true)"
           if [[ -n "$matches" ]]; then
             echo "::error::Potential secret-like value found. Matched values are suppressed; locations only:"
             printf '%s\n' "$matches" | cut -d: -f1,2 | sort -u
