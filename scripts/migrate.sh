@@ -8,7 +8,7 @@ set -eu
 
 : "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
 : "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
-: "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
+: "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"\n: "${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}"
 : "${PGPASSWORD:?PGPASSWORD is required}"
 
 DB_HOST=${DB_HOST:-db}
@@ -165,6 +165,27 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM device_admin_login;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM device_admin_login;
 GRANT device_admin_executor TO device_admin_login WITH INHERIT TRUE, SET FALSE;
 GRANT CONNECT ON DATABASE :"db_name" TO device_admin_login;
+EOSQL
+
+echo "[migrate] provisioning dedicated maintenance login"
+maintenance_role_exists=$(psql_base -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'maintenance_login') THEN 1 ELSE 0 END")
+if [ "$maintenance_role_exists" = "1" ]; then
+  psql_base -v pw="$MAINTENANCE_PASSWORD" -v db_name="$DB_NAME" <<'EOSQL'
+ALTER ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
+EOSQL
+else
+  psql_base -v pw="$MAINTENANCE_PASSWORD" <<'EOSQL'
+CREATE ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
+EOSQL
+fi
+
+psql_base -v db_name="$DB_NAME" <<'EOSQL'
+REVOKE sync_app FROM maintenance_login;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM maintenance_login;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM maintenance_login;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM maintenance_login;
+GRANT maintenance_purge_executor TO maintenance_login WITH INHERIT TRUE, SET FALSE;
+GRANT CONNECT ON DATABASE :"db_name" TO maintenance_login;
 EOSQL
 
 echo "[migrate] verifying login separation"
