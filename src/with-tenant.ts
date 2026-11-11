@@ -72,7 +72,7 @@ export async function withTenant<T>(
     }
 
     return fn(tx);
-  });
+  }, { isolationLevel: 'read committed' });
 
   // Only after COMMIT: a rollback also rolled back the registration.
   if (state.registered) markTenantKnown(tenantId);

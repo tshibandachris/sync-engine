@@ -9,7 +9,7 @@ Mobile stack: **React Native + WatermelonDB** (to be confirmed — see Open ques
 
 - Incremental pull/push of `check_ins`, `missions`, `sites`
 - Conflict detection + resolution (LWW on `sync_seq`)
-- Idempotent push (advisory locks + idempotency keys)
+- Idempotent push: request key and POS sale records share one PostgreSQL transaction; sale UUID retries compare persisted sale, line, and stock-movement content (see POS sales push atomicity below)
 - JWT auth with tenant scoping
 - S3 presigned uploads for incident photos
 
@@ -114,6 +114,42 @@ on the same tenant, a peak at shift start becomes a queue. Documented
 trade-off for correctness. The alternative is a transactional outbox
 fed by a non-cached sequence — a larger refactor, deliberately
 deferred.
+
+### POS sales push atomicity
+
+The `/sync/push` transaction owns the request idempotency-key row,
+POS sale writes, and every other operation in the same request. For a
+request carrying an idempotency key, any invalid or conflicting POS sale
+aborts the outer transaction. PostgreSQL therefore rolls back the key,
+all successful sale savepoints, and all non-POS changes together; the
+client can retry the same key after correcting the payload. The service
+does not delete the key and commit a partially applied request.
+
+Each sale is written inside a PostgreSQL savepoint, so its sale row, all
+sale lines, and all stock movements commit or roll back together. For
+unkeyed POS pushes, per-sale savepoint behavior remains independent:
+valid sales can be accepted while an invalid sale is reported.
+
+A sale UUID is inserted with `ON CONFLICT (id) DO NOTHING`. If another
+request already inserted it, the service reloads the sale and compares
+the persisted client-owned fields, lines, and sale-referenced stock
+movements. Matching content returns `idempotent`; differing content
+returns `conflict`. Client-supplied `created_at` values are preserved.
+The shared `set_sync_fields()` trigger generates `updated_at` on insert,
+so that server-managed value is deliberately excluded from replay
+comparison for sales, lines, and stock movements.
+
+Tenant transactions explicitly use PostgreSQL `READ COMMITTED`.
+This is required for the `ON CONFLICT DO NOTHING` followed by reread
+pattern: after waiting for a concurrent insert, the next statement sees
+the committed row. Production `/sync/push` requests also take the
+existing tenant write lock; the independent concurrency test exercises
+the UUID insert path without that lock, while an HTTP-level test covers
+the production path.
+
+The guarantee is limited to these persisted records and the tested
+request paths; it is not a blanket claim that all client operations can
+never be duplicated.
 
 ### Row-Level Security
 
@@ -266,9 +302,11 @@ Response:
       ]
     }
 
-Push is transactional: on any technical error, the whole batch rolls
-back. Conflicts are recorded but do not roll back the batch — they
-represent a legitimate race the client must resolve.
+Push is transactional: on a technical error, the whole batch rolls
+back. Check-in conflicts are recorded without rolling back the batch.
+For requests carrying an idempotency key, an invalid or conflicting POS
+sale aborts the whole push so no other operation can commit without its
+key.
 
 **Idempotency TTL:** 7 days (row in `sync_idempotency_keys`).
 **Max push size:** not enforced yet — see Debt.
