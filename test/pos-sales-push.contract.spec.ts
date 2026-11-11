@@ -3,6 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncController } from '../src/sync.controller.js';
 import { SyncPushService } from '../src/sync-push.service.js';
@@ -83,11 +84,15 @@ describe('POS sales push contract', () => {
     };
   }
 
-  async function push(sales: unknown[], authToken = token, idempotencyKey?: string) {
+  async function pushChanges(changes: Record<string, unknown>, authToken = token, idempotencyKey?: string) {
     const call = request(app.getHttpServer()).post('/sync/push')
       .set('Authorization', 'Bearer ' + authToken);
     if (idempotencyKey) call.set('Idempotency-Key', idempotencyKey);
-    return call.send({ changes: { sales } });
+    return call.send({ changes });
+  }
+
+  async function push(sales: unknown[], authToken = token, idempotencyKey?: string) {
+    return pushChanges({ sales }, authToken, idempotencyKey);
   }
 
   it('commits valid sale while rolling back invalid sale independently', async () => {
@@ -298,6 +303,80 @@ describe('POS sales push contract', () => {
     expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(1);
     expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(1);
     expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(1);
+  });
+
+
+  it('rolls back non-POS changes and the idempotency key when a keyed mixed push contains a sale conflict', async () => {
+    const item = sale();
+    expect((await push([item])).body.results[0].status).toBe('applied');
+    const key = randomUUID();
+
+    const response = await pushChanges({
+      cash_sessions: [{ id: sessionId, notes: 'must roll back', lastKnownSyncSeq: 0 }],
+      sales: [{ ...item, sale_number: 'different-number' }],
+    }, token, key);
+
+    expect(response.status).toBe(409);
+    expect((await pg.pool.query('SELECT notes FROM cash_sessions WHERE id=$1', [sessionId])).rows[0].notes).toBeNull();
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sync_idempotency_keys WHERE agent_id=$1 AND idempotency_key=$2', [agentId, key])).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect((await pg.pool.query('SELECT sale_number FROM sales WHERE id=$1', [item.id])).rows[0].sale_number).toBe(item.sale_number);
+  });
+
+  it('rolls back earlier successful sales and the idempotency key when a later sale in the keyed batch is invalid', async () => {
+    const good = sale();
+    const bad = sale();
+    bad.lines[0].product_id = randomUUID();
+    bad.stock_movements[0].product_id = bad.lines[0].product_id;
+    const key = randomUUID();
+
+    const response = await push([good, bad], token, key);
+
+    expect(response.status).toBe(400);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales')).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines')).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM stock_movements')).rows[0].count)).toBe(0);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sync_idempotency_keys WHERE agent_id=$1 AND idempotency_key=$2', [agentId, key])).rows[0].count)).toBe(0);
+  });
+
+  it('serializes concurrent identical sales through the production HTTP push path', async () => {
+    const item = sale();
+    const [left, right] = await Promise.all([push([item]), push([item])]);
+    expect([left.status, right.status]).toEqual([201, 201]);
+    expect([left.body.results[0].status, right.body.results[0].status].sort()).toEqual(['applied', 'idempotent'].sort());
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(1);
+    expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(1);
+  });
+
+  it('uses READ COMMITTED for tenant transactions that rely on ON CONFLICT followed by reread', async () => {
+    const isolation = await withTenant(pg.appDb, tenantId, async tx => {
+      const result = await tx.execute(sql`SHOW transaction_isolation`);
+      return (result.rows[0] as Record<string, unknown>).transaction_isolation;
+    }, { write: true });
+    expect(isolation).toBe('read committed');
+  });
+
+  it('persists client-supplied timestamps unchanged and detects changed stock movement timestamps', async () => {
+    const item = sale();
+    expect((await push([item])).body.results[0].status).toBe('applied');
+
+    const storedSale = (await pg.pool.query('SELECT created_at, updated_at FROM sales WHERE id=$1', [item.id])).rows[0];
+    const storedLine = (await pg.pool.query('SELECT created_at, updated_at FROM sale_lines WHERE id=$1', [item.lines[0].id])).rows[0];
+    const storedMovement = (await pg.pool.query('SELECT created_at, updated_at FROM stock_movements WHERE id=$1', [item.stock_movements[0].id])).rows[0];
+    expect(Number(storedSale.created_at)).toBe(item.created_at);
+    expect(Number(storedSale.updated_at)).toBe(item.updated_at);
+    expect(Number(storedLine.created_at)).toBe(item.lines[0].created_at);
+    expect(Number(storedLine.updated_at)).toBe(item.lines[0].updated_at);
+    expect(Number(storedMovement.created_at)).toBe(item.stock_movements[0].created_at);
+    expect(Number(storedMovement.updated_at)).toBe(item.stock_movements[0].updated_at);
+
+    expect((await push([item])).body.results[0].status).toBe('idempotent');
+    const changed = {
+      ...item,
+      stock_movements: item.stock_movements.map(m => ({ ...m, updated_at: m.updated_at + 1 })),
+    };
+    expect((await push([changed])).body.results[0].status).toBe('conflict');
   });
 
 });
