@@ -160,6 +160,12 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: maintenance function owner has unsafe attributes';
   END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_class c
+    WHERE c.relowner = 'maintenance_function_owner'::regrole
+  ) THEN
+    RAISE EXCEPTION 'SECURITY_MIGRATION_FAILED: maintenance function owner must not own tables';
+  END IF;
   IF NOT pg_catalog.has_table_privilege('maintenance_function_owner', 'public.sync_logs', 'SELECT')
      OR NOT pg_catalog.has_table_privilege('maintenance_function_owner', 'public.sync_logs', 'DELETE')
      OR pg_catalog.has_table_privilege('maintenance_purge_executor', 'public.sync_logs', 'DELETE') THEN
