@@ -310,9 +310,10 @@ describe('POS sales push contract', () => {
     const item = sale();
     expect((await push([item])).body.results[0].status).toBe('applied');
     const key = randomUUID();
+    const sessionVersion = Number((await pg.pool.query('SELECT sync_seq FROM cash_sessions WHERE id=$1', [sessionId])).rows[0].sync_seq);
 
     const response = await pushChanges({
-      cash_sessions: [{ id: sessionId, notes: 'must roll back', lastKnownSyncSeq: 0 }],
+      cash_sessions: [{ id: sessionId, notes: 'must roll back', lastKnownSyncSeq: sessionVersion }],
       sales: [{ ...item, sale_number: 'different-number' }],
     }, token, key);
 
