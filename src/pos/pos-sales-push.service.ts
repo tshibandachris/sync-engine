@@ -98,7 +98,7 @@ export class PosSalesPushService {
                 r.reference_id === m.reference_id && r.reference_type === m.reference_type &&
                 (r.unit_cost == null ? null : Number(r.unit_cost)) === (m.unit_cost ?? null) &&
                 (r.notes ?? null) === (m.notes ?? null) && Number(r.created_at) === m.created_at &&
-                (r.created_by ?? null) === (m.created_by ?? null)));
+                Number(r.updated_at) === m.updated_at && (r.created_by ?? null) === (m.created_by ?? null)));
             if (!lineMatch || !movementMatch) throw new ConflictException('sale UUID already exists with different content');
             return 'idempotent' as const;
           }
