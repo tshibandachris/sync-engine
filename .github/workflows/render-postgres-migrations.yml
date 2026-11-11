@@ -1,0 +1,87 @@
+name: Render PostgreSQL migrations
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_target:
+        description: "Type eden-sync-engine-db to confirm the target database"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-postgres-migrations
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Verify target and apply SQL migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ inputs.confirm_target == 'eden-sync-engine-db' }}
+    env:
+      DB_HOST: ${{ secrets.RENDER_DB_HOST }}
+      DB_PORT: ${{ secrets.RENDER_DB_PORT }}
+      DB_NAME: ${{ secrets.RENDER_DB_NAME }}
+      DB_USER: ${{ secrets.RENDER_DB_USER }}
+      PGPASSWORD: ${{ secrets.RENDER_DB_PASSWORD }}
+      PGSSLMODE: require
+      PGCONNECT_TIMEOUT: "10"
+      SYNC_APP_PASSWORD: ${{ secrets.SYNC_APP_PASSWORD }}
+      DEVICE_ENROLLMENT_PASSWORD: ${{ secrets.DEVICE_ENROLLMENT_PASSWORD }}
+      DEVICE_ADMIN_PASSWORD: ${{ secrets.DEVICE_ADMIN_PASSWORD }}
+      MIGRATIONS_DIR: migrations
+
+    steps:
+      - name: Checkout deployment branch
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in DB_HOST DB_PORT DB_NAME DB_USER PGPASSWORD SYNC_APP_PASSWORD DEVICE_ENROLLMENT_PASSWORD DEVICE_ADMIN_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub Actions secret for $name"
+              exit 1
+            fi
+          done
+          if [[ "$DB_NAME" != "sync_engine" ]]; then
+            echo "::error::Unexpected database name. Refusing to migrate."
+            exit 1
+          fi
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Check Render database privileges and identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          role_capability="$(psql -X -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tA -c "SELECT CASE WHEN rolcreaterole THEN 'yes' ELSE 'no' END FROM pg_catalog.pg_roles WHERE rolname = current_user")"
+          if [[ "$role_capability" != "yes" ]]; then
+            echo "::error::The configured Render database user cannot create the isolated roles required by the security migrations. No migration was run."
+            exit 1
+          fi
+          echo "Database identity and CREATEROLE capability verified."
+
+      - name: Apply migrations and provision least-privilege logins
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh scripts/migrate.sh
+
+      - name: Verify migration ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          applied="$(psql -X -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tA -c "SELECT count(*) FROM public.schema_migrations")"
+          if [[ "$applied" != "39" ]]; then
+            echo "::error::Expected 39 applied migrations; found $applied."
+            exit 1
+          fi
+          echo "Verified $applied migrations."
