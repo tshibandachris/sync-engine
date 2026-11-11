@@ -27,3 +27,26 @@ test('validateDeviceToken rejects expired or malformed expiration claims', () =>
   assert.throws(() => validateDeviceToken(jwt({ payload: { exp: 1 } }), 2000), /expiré/);
   assert.throws(() => validateDeviceToken(jwt({ payload: { exp: 'tomorrow' } })), /expiré/);
 });
+
+
+test('extractTenantIdFromDeviceToken reads the signed tenant claim for local continuity', () => {
+  const { extractTenantIdFromDeviceToken } = require('../electron/auth/device-enrollment.cjs');
+  assert.equal(extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', exp: 4102444800 } })), 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  assert.equal(extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', tenant_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', exp: 4102444800 } })), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+});
+
+test('extractTenantIdFromDeviceToken rejects tokens without a tenant claim', () => {
+  const { extractTenantIdFromDeviceToken } = require('../electron/auth/device-enrollment.cjs');
+  assert.throws(
+    () => extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', exp: 4102444800 } })),
+    /UUID valide/,
+  );
+});
+
+test('extractTenantIdFromDeviceToken rejects non-UUID tenant claims', () => {
+  const { extractTenantIdFromDeviceToken } = require('../electron/auth/device-enrollment.cjs');
+  assert.throws(
+    () => extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', tenantId: 'tenant-a', exp: 4102444800 } })),
+    /UUID valide/,
+  );
+});
