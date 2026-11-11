@@ -1078,7 +1078,7 @@ afterAll(async () => {
       [id3, TEST_TENANT_ID, agentA, entityId, oldResolved],
     );
 
-    const result = await maintenance.purge({ ttlIdempotencyDays: 7, ttlConflictsDays: 30 });
+    const result = await maintenance.purge(TEST_TENANT_ID, { ttlIdempotencyDays: 7, ttlConflictsDays: 30 });
     expect(result.conflictsDeleted).toBe(1);
 
     const remaining = await pool.query('SELECT id, status FROM sync_conflicts ORDER BY id');
