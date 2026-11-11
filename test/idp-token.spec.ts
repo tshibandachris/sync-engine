@@ -57,6 +57,26 @@ describe('verifyToken — Supabase asymmetric JWKS', () => {
       });
   });
 
+  it('accepts ES256 as the other approved asymmetric algorithm', async () => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256');
+    const jwk: JWK = await exportJWK(publicKey);
+    jwk.kid = 'es256-key';
+    jwk.alg = 'ES256';
+    jwk.use = 'sig';
+    const jwks = createLocalJWKSet({ keys: [jwk] });
+    const token = await new SignJWT({ agent_id: AGENT, tenantId: TENANT })
+      .setProtectedHeader({ alg: 'ES256', kid: 'es256-key' })
+      .setIssuer(ISSUER)
+      .setAudience(AUDIENCE)
+      .setSubject(USER)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(privateKey);
+    await expect(verifyToken(token, jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).resolves.toMatchObject({ agentId: AGENT, tenantId: TENANT });
+  });
+
   it('rejects a token signed by a different key', async () => {
     const trusted = await makeKeys();
     const attacker = await makeKeys();
