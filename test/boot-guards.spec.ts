@@ -119,6 +119,29 @@ describe('boot guards', () => {
       ).toThrow(/JWKS_URL/);
     });
 
+  it('requires JWT_ISSUER in production when JWKS_URL is set', () => {
+    expect(() =>
+      assertAuthStrategy({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgres://localhost/db',
+        JWKS_URL: 'https://idp.example/.well-known/jwks.json',
+        JWT_AUDIENCE: 'authenticated',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/JWT_ISSUER/);
+  });
+
+  it('accepts complete production JWKS configuration', () => {
+    expect(() =>
+      assertAuthStrategy({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgres://localhost/db',
+        JWKS_URL: 'https://idp.example/.well-known/jwks.json',
+        JWT_AUDIENCE: 'authenticated',
+        JWT_ISSUER: 'https://idp.example/',
+      } as NodeJS.ProcessEnv),
+    ).not.toThrow();
+  });
+
   it('requires JWT_AUDIENCE in production when JWKS_URL is set', () => {
     expect(() =>
       assertAuthStrategy({
