@@ -2,11 +2,32 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, deploy/render-free-bootstrap-v1]
   pull_request:
-    branches: [main]
+    branches: [main, validation/full-device-approval-signed-sync-v4]
 
 jobs:
+  workflow-validation:
+    name: Validate GitHub Actions and migration shell syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go for actionlint
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+      - name: Validate all workflow files
+        run: "$(go env GOPATH)/bin/actionlint -color"
+
+      - name: Validate migration shell syntax
+        run: sh -n scripts/migrate.sh
+
   test:
     name: Typecheck + integration tests
     runs-on: ubuntu-latest
