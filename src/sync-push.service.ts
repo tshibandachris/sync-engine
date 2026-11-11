@@ -732,14 +732,18 @@ export class SyncPushService {
       if (dto.changes.sales !== undefined) {
         response.results = await new PosSalesPushService(this.db)
           .pushInTransaction(tx, tenantId, dto.changes.sales);
-        if (idempotencyKey && response.results.some(result =>
-          result.status === 'invalid' || result.status === 'conflict')) {
-          await tx.execute(sql`
-            DELETE FROM sync_idempotency_keys
-            WHERE tenant_id = ${tenantId}::uuid
-              AND agent_id = ${agentId}::uuid
-              AND idempotency_key = ${idempotencyKey}
-          `);
+        if (idempotencyKey) {
+          const failedSale = response.results.find(result =>
+            result.status === 'invalid' || result.status === 'conflict');
+          if (failedSale?.status === 'conflict') {
+            // Throw inside the outer withTenant transaction: this rolls back
+            // the idempotency key, every sale savepoint that succeeded, and
+            // all non-POS operations in the same push.
+            throw new ConflictException('Push atomique annulé : une vente est en conflit.');
+          }
+          if (failedSale?.status === 'invalid') {
+            throw new BadRequestException('Push atomique annulé : une vente est invalide.');
+          }
         }
       }
 
