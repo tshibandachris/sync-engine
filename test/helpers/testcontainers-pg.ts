@@ -275,6 +275,7 @@ export class TestPostgres {
     '038_device_enrollment_owner_schema_hardening.sql',
     '039_purge_expired_device_proof_nonces.sql',
     '040_maintenance_purge_executor.sql',
+    '041_maintenance_purge_batch_limits.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(

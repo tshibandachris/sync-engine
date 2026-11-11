@@ -16,7 +16,7 @@ describe('maintenance privilege boundary', () => {
       "CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) acl " +
       "LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee " +
       "WHERE p.pronamespace = 'public'::regnamespace " +
-      "AND p.proname LIKE 'purge\\\\_%' ESCAPE '\\\\' " +
+      "AND left(p.proname, 6) = 'purge_' " +
       "AND acl.privilege_type = 'EXECUTE' " +
       "AND (acl.grantee = 0 OR acl.grantee = 'sync_app'::regrole) " +
       "ORDER BY function_name, grantee"

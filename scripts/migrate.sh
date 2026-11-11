@@ -6,6 +6,16 @@
 #
 set -eu
 
+MIGRATIONS_ONLY=0
+if [ "${1:-}" = "--migrations-only" ]; then
+  MIGRATIONS_ONLY=1
+  shift
+fi
+if [ "$#" -gt 0 ]; then
+  echo "[migrate] ERROR: unexpected argument: $1" >&2
+  exit 2
+fi
+
 : "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
 : "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
 : "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
@@ -125,6 +135,11 @@ INSERT INTO public.schema_migrations (filename) VALUES (\047%s\047);
   fi
   rm -f "$tmp"
 done
+
+if [ "$MIGRATIONS_ONLY" = "1" ]; then
+  echo "[migrate] migrations-only test mode complete; login provisioning skipped"
+  exit 0
+fi
 
 echo "[migrate] restricting migration ledger and enabling application login"
 psql_base <<'EOSQL'
