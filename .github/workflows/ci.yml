@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/maintenance-boundary-migration-resume-v1]
+    branches: [main, deploy/render-clean]
   pull_request:
     branches: [main, validation/full-device-approval-signed-sync-v4]
 
