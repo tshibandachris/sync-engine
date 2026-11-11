@@ -24,7 +24,7 @@ export class TestPostgres {
 
   readonly adminPool: Pool;
 
-  readonly adminDb: ReturnType<typeof drizzle<typeof schema>>;
+  readonly adminDb: ReturnType<typeof drizzle<typeof schema>>;\n\n  readonly maintenancePool: Pool;\n\n  readonly maintenanceDb: ReturnType<typeof drizzle<typeof schema>>;
 
   readonly connectionOptions: { host: string; port: number; database: string };
 
@@ -265,7 +265,7 @@ export class TestPostgres {
     '036_device_enrollment_executor_role.sql',
     '037_device_admin_approval_capability.sql',
     '038_device_enrollment_owner_schema_hardening.sql',
-    '039_purge_expired_device_proof_nonces.sql',
+    '039_purge_expired_device_proof_nonces.sql',\n    '040_maintenance_purge_executor.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
@@ -356,6 +356,18 @@ export class TestPostgres {
     });
     const adminDb = drizzle(adminPool, { schema });
 
+    // Dedicated LOGIN with only the maintenance purge capability.
+    await pool.query("CREATE ROLE maintenance_test LOGIN INHERIT PASSWORD 'maintenance_test_pw'");
+    await pool.query('GRANT maintenance_purge_executor TO maintenance_test WITH INHERIT TRUE, SET FALSE');
+    const maintenancePool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: 'maintenance_test',
+      password: 'maintenance_test_pw',
+    });
+    const maintenanceDb = drizzle(maintenancePool, { schema });
+
     return new TestPostgres(
       container,
       pool,
@@ -371,7 +383,7 @@ export class TestPostgres {
   }
 
   async stop(): Promise<void> {
-    await this.adminPool.end();
+    await this.maintenancePool.end();\n    await this.adminPool.end();
     await this.enrollmentPool.end();
     await this.appPool.end();
     await this.pool.end();
