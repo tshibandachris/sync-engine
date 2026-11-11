@@ -31,7 +31,7 @@ jobs:
       PGCONNECT_TIMEOUT: "10"
       SYNC_APP_PASSWORD: ${{ secrets.SYNC_APP_PASSWORD }}
       DEVICE_ENROLLMENT_PASSWORD: ${{ secrets.DEVICE_ENROLLMENT_PASSWORD }}
-      DEVICE_ADMIN_PASSWORD: ${{ secrets.DEVICE_ADMIN_PASSWORD }}
+      DEVICE_ADMIN_PASSWORD: ${{ secrets.DEVICE_ADMIN_PASSWORD }}\n      MAINTENANCE_PASSWORD: ${{ secrets.MAINTENANCE_PASSWORD }}
       MIGRATIONS_DIR: migrations
 
     steps:
@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in DB_HOST DB_PORT DB_NAME DB_USER PGPASSWORD SYNC_APP_PASSWORD DEVICE_ENROLLMENT_PASSWORD DEVICE_ADMIN_PASSWORD; do
+          for name in DB_HOST DB_PORT DB_NAME DB_USER PGPASSWORD SYNC_APP_PASSWORD DEVICE_ENROLLMENT_PASSWORD DEVICE_ADMIN_PASSWORD MAINTENANCE_PASSWORD; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::Missing required GitHub Actions secret for $name"
               exit 1
