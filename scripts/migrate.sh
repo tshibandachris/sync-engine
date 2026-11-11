@@ -397,6 +397,27 @@ nonce_purge_owner_ok=$(psql_base -tA -c "
     THEN 1 ELSE 0 END
 ")
 if [ "$nonce_purge_owner_ok" != "1" ]; then
+  echo "[migrate] nonce purge privilege diagnostic:"
+  psql_base -c "
+    SELECT
+      EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = 'device_proof_maintenance_function_owner'
+        AND NOT r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolcreatedb AND NOT r.rolcreaterole
+        AND NOT r.rolinherit AND NOT r.rolreplication AND NOT r.rolbypassrls) AS owner_role_ok,
+      NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
+        WHERE m.member = 'device_proof_maintenance_function_owner'::regrole) AS no_owner_membership,
+      NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c
+        WHERE c.relowner = 'device_proof_maintenance_function_owner'::regrole
+          AND c.relname = 'device_proof_nonces') AS owner_not_table_owner,
+      pg_catalog.has_table_privilege('device_proof_maintenance_function_owner', 'public.device_proof_nonces', 'SELECT') AS owner_select,
+      pg_catalog.has_table_privilege('device_proof_maintenance_function_owner', 'public.device_proof_nonces', 'DELETE') AS owner_delete,
+      NOT pg_catalog.has_table_privilege('device_proof_maintenance_function_owner', 'public.device_proof_nonces', 'UPDATE') AS owner_no_update,
+      NOT pg_catalog.has_table_privilege('sync_app', 'public.device_proof_nonces', 'DELETE') AS app_no_delete,
+      pg_catalog.has_function_privilege('maintenance_login', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE') AS maintenance_execute,
+      NOT pg_catalog.has_function_privilege('sync_app', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE') AS app_no_execute,
+      (SELECT pg_catalog.pg_get_userbyid(p.proowner) = 'device_proof_maintenance_function_owner'
+        FROM pg_catalog.pg_proc p
+        WHERE p.oid = 'public.purge_expired_device_proof_nonces(uuid,integer)'::regprocedure) AS function_owner_ok
+  "
   echo "[migrate] ERROR: PostgreSQL nonce maintenance privilege boundary verification failed."
   exit 1
 fi
