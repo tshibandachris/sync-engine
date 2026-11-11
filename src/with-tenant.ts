@@ -29,6 +29,8 @@ export interface WithTenantOptions {
    * serialises every write of the tenant and hurts throughput.
    */
   write?: boolean;
+  /** Skip tenant-registry INSERTs for the read-only maintenance capability. */
+  registerTenant?: boolean;
 }
 
 /**
@@ -61,7 +63,9 @@ export async function withTenant<T>(
     // Tenant registry (migration 016), so maintenance knows which tenants
     // to walk. Runs before the write lock: waiting on this INSERT must
     // not hold the advisory lock.
-    state.registered = await ensureTenantRegistered(tx, tenantId);
+    if (options.registerTenant !== false) {
+      state.registered = await ensureTenantRegistered(tx, tenantId);
+    }
 
     if (options.write) {
       // Must run before any INSERT/UPDATE that fires the sync_seq

@@ -1,7 +1,7 @@
 #!/bin/sh
 #
-# Apply pending SQL migrations exactly once, then provision the application, enrollment and device-admin logins
-# from independent deployment secrets. The migration ledger also
+# Apply pending SQL migrations exactly once, then provision the API, enrollment,
+# device-admin and maintenance logins from independent deployment secrets. The migration ledger also
 # allows existing pre-ledger installations to advance beyond migration 030.
 #
 set -eu
@@ -9,6 +9,7 @@ set -eu
 : "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
 : "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
 : "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
+: "${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}"
 : "${PGPASSWORD:?PGPASSWORD is required}"
 
 DB_HOST=${DB_HOST:-db}
@@ -91,19 +92,29 @@ for f in $MIGRATIONS_DIR/*.sql; do
   # standalone transaction-control lines so the migration and its ledger row
   # can commit atomically in one psql transaction.
   {
-    printf '%s\n' "BEGIN;"
-    printf '%s\n' "SELECT pg_advisory_xact_lock(7303::bigint);"
-    printf '%s\n' "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE filename = '$name') AS migration_already_applied \\gset"
-    printf '%s\n' "\\if :migration_already_applied"
-    printf '%s\n' "\\echo [migrate]   already applied: $name"
-    printf '%s\n' "\\else"
+    printf '%s
+' "BEGIN;"
+    printf '%s
+' "SELECT pg_advisory_xact_lock(7303::bigint);"
+    printf '%s
+' "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE filename = '$name') AS migration_already_applied \\gset"
+    printf '%s
+' "\\if :migration_already_applied"
+    printf '%s
+' "\\echo [migrate]   already applied: $name"
+    printf '%s
+' "\\else"
     awk '
       !/^[[:space:]]*BEGIN;[[:space:]]*$/ &&
       !/^[[:space:]]*COMMIT;[[:space:]]*$/ { print }
     ' "$f"
-    printf '\nINSERT INTO public.schema_migrations (filename) VALUES (\047%s\047);\n' "$name"
-    printf '%s\n' "\\endif"
-    printf '%s\n' "COMMIT;"
+    printf '
+INSERT INTO public.schema_migrations (filename) VALUES (\047%s\047);
+' "$name"
+    printf '%s
+' "\\endif"
+    printf '%s
+' "COMMIT;"
   } > "$tmp"
 
   echo "[migrate]   checking/applying: $name"
@@ -166,6 +177,53 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM device_admin_login;
 GRANT device_admin_executor TO device_admin_login WITH INHERIT TRUE, SET FALSE;
 GRANT CONNECT ON DATABASE :"db_name" TO device_admin_login;
 EOSQL
+
+echo "[migrate] provisioning dedicated maintenance login"
+maintenance_role_exists=$(psql_base -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'maintenance_login') THEN 1 ELSE 0 END")
+if [ "$maintenance_role_exists" = "1" ]; then
+  psql_base -v pw="$MAINTENANCE_PASSWORD" -v db_name="$DB_NAME" <<'EOSQL'
+ALTER ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
+EOSQL
+else
+  psql_base -v pw="$MAINTENANCE_PASSWORD" <<'EOSQL'
+CREATE ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
+EOSQL
+fi
+
+psql_base -v db_name="$DB_NAME" <<'EOSQL'
+REVOKE sync_app FROM maintenance_login;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM maintenance_login;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM maintenance_login;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM maintenance_login;
+GRANT maintenance_purge_executor TO maintenance_login WITH INHERIT TRUE, SET FALSE;
+GRANT CONNECT ON DATABASE :"db_name" TO maintenance_login;
+EOSQL
+
+echo "[migrate] verifying maintenance role boundary"
+maintenance_login_ok=$(psql_base -tA -c "
+  SELECT CASE
+    WHEN pg_catalog.pg_has_role('maintenance_login', 'maintenance_purge_executor', 'USAGE')
+     AND NOT pg_catalog.pg_has_role('maintenance_login', 'sync_app', 'MEMBER')
+     AND NOT (SELECT rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication
+                FROM pg_catalog.pg_roles WHERE rolname = 'maintenance_login')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.attachments', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.attachments', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.check_ins', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.missions', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.sites', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.sync_purge_state', 'UPDATE')
+     AND pg_catalog.has_table_privilege('maintenance_login', 'public.tenants', 'SELECT')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_tombstones(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_pending_attachments(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.list_tenant_attachment_object_keys(uuid)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_sync_logs(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE')
+    THEN 1 ELSE 0 END
+")
+if [ "$maintenance_login_ok" != "1" ]; then
+  echo "[migrate] ERROR: maintenance_login privilege boundary verification failed."
+  exit 1
+fi
 
 echo "[migrate] verifying login separation"
 separation_ok=$(psql_base -tA -c "
@@ -327,6 +385,11 @@ nonce_purge_owner_ok=$(psql_base -tA -c "
      )
      AND NOT pg_catalog.has_table_privilege('sync_app', 'public.device_proof_nonces', 'DELETE')
      AND pg_catalog.has_function_privilege(
+       'maintenance_login',
+       'public.purge_expired_device_proof_nonces(uuid,integer)',
+       'EXECUTE'
+     )
+     AND NOT pg_catalog.has_function_privilege(
        'sync_app',
        'public.purge_expired_device_proof_nonces(uuid,integer)',
        'EXECUTE'
@@ -339,6 +402,27 @@ nonce_purge_owner_ok=$(psql_base -tA -c "
     THEN 1 ELSE 0 END
 ")
 if [ "$nonce_purge_owner_ok" != "1" ]; then
+  echo "[migrate] nonce purge privilege diagnostic:"
+  psql_base -c "
+    SELECT
+      EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname = 'device_proof_maintenance_function_owner'
+        AND NOT r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolcreatedb AND NOT r.rolcreaterole
+        AND NOT r.rolinherit AND NOT r.rolreplication AND NOT r.rolbypassrls) AS owner_role_ok,
+      NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
+        WHERE m.member = 'device_proof_maintenance_function_owner'::regrole) AS no_owner_membership,
+      NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c
+        WHERE c.relowner = 'device_proof_maintenance_function_owner'::regrole
+          AND c.relname = 'device_proof_nonces') AS owner_not_table_owner,
+      pg_catalog.has_table_privilege('device_proof_maintenance_function_owner', 'public.device_proof_nonces', 'SELECT') AS owner_select,
+      pg_catalog.has_table_privilege('device_proof_maintenance_function_owner', 'public.device_proof_nonces', 'DELETE') AS owner_delete,
+      NOT pg_catalog.has_table_privilege('device_proof_maintenance_function_owner', 'public.device_proof_nonces', 'UPDATE') AS owner_no_update,
+      NOT pg_catalog.has_table_privilege('sync_app', 'public.device_proof_nonces', 'DELETE') AS app_no_delete,
+      pg_catalog.has_function_privilege('maintenance_login', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE') AS maintenance_execute,
+      NOT pg_catalog.has_function_privilege('sync_app', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE') AS app_no_execute,
+      (SELECT pg_catalog.pg_get_userbyid(p.proowner) = 'device_proof_maintenance_function_owner'
+        FROM pg_catalog.pg_proc p
+        WHERE p.oid = 'public.purge_expired_device_proof_nonces(uuid,integer)'::regprocedure) AS function_owner_ok
+  "
   echo "[migrate] ERROR: PostgreSQL nonce maintenance privilege boundary verification failed."
   exit 1
 fi

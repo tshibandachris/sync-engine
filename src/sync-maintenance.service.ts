@@ -1,5 +1,5 @@
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import type { AttachmentStorage } from './attachment-storage.js';
@@ -130,7 +130,7 @@ export class SyncMaintenanceService {
         ? (payload.orphaned_object_keys as string[])
         : [],
     };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -160,7 +160,7 @@ export class SyncMaintenanceService {
       }
 
       return { logsDeleted: Number(payload.logs_deleted ?? 0) };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -214,7 +214,7 @@ export class SyncMaintenanceService {
       const row = result.rows[0] as Record<string, unknown> | undefined;
       if (!row) throw new Error('purge_expired_device_proof_nonces a retourne un resultat vide.');
       return { deleted: Number(row.deleted ?? 0) };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -246,12 +246,11 @@ export class SyncMaintenanceService {
     const scanned = objects.length;
 
     const known = await withTenant(this.db, tenantId, async (tx) => {
-      const rows = await tx
-        .select({ objectKey: schema.attachments.objectKey })
-        .from(schema.attachments)
-        .where(eq(schema.attachments.tenantId, tenantId));
-      return new Set(rows.map((r) => r.objectKey));
-    });
+      const result = await tx.execute(sql`
+        SELECT public.list_tenant_attachment_object_keys(${tenantId}::uuid) AS object_key
+      `);
+      return new Set(result.rows.map((row) => String((row as Record<string, unknown>).object_key)));
+    }, { registerTenant: false });
 
     const orphans = objects
       .map((o) => o.key)
@@ -302,9 +301,8 @@ export class SyncMaintenanceService {
    * either the client never PUT anything, or the object was written but
    * never confirmed, in which case scanTenantOrphans will find it later.
    *
-   * Simple DELETE, no SECURITY DEFINER: sync_app holds the DELETE
-   * privilege on attachments (migration 011), and RLS scopes the row set
-   * to the tenant once withTenant has set the context.
+   * A narrow SECURITY DEFINER function owns the DELETE privilege; the
+   * maintenance login can invoke it only with a matching tenant context.
    */
   async purgeTenantPendingAttachments(
     tenantId: string,
@@ -313,18 +311,16 @@ export class SyncMaintenanceService {
     if (!tenantId) throw new Error('tenantId requis.');
     if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
 
-    const cutoffMs = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
-
     return withTenant(this.db, tenantId, async (tx) => {
-      const removed = await tx
-        .delete(schema.attachments)
-        .where(and(
-          eq(schema.attachments.tenantId, tenantId),
-          eq(schema.attachments.status, 'pending'),
-          lt(schema.attachments.createdAt, cutoffMs),
-        ))
-        .returning({ id: schema.attachments.id });
-      return { deleted: removed.length };
-    });
+      const result = await tx.execute(sql`
+        SELECT public.purge_tenant_pending_attachments(
+          ${tenantId}::uuid,
+          ${ttlDays}::int
+        ) AS deleted
+      `);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new Error('purge_tenant_pending_attachments a retourne un resultat vide.');
+      return { deleted: Number(row.deleted ?? 0) };
+    }, { registerTenant: false });
   }
 }

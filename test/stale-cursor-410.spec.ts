@@ -135,7 +135,7 @@ describe('sync pull / stale cursor (410 GONE)', () => {
         { provide: SyncPullService, useFactory: (d: any) => new SyncPullService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
-        { provide: SyncMaintenanceService, useFactory: (d: any) => new SyncMaintenanceService(d), inject: ['DRIZZLE_DB'] },
+        { provide: SyncMaintenanceService, useValue: new SyncMaintenanceService(pg.maintenanceDb) },
         JwtAuthGuard,
       ],
     }).overrideGuard(DeviceApprovalGuard).useValue({ canActivate: () => true })

@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
  * The maintenance runner deletes data tenant by tenant, relying on RLS (and on the
  * SECURITY DEFINER guards) to keep each purge inside its tenant. Under a superuser or a
  * BYPASSRLS role the policies silently stop applying: nothing fails, the purge just loses
- * its isolation. A wrong DATABASE_URL must therefore stop the run, not pass unnoticed.
+ * its isolation. A wrong MAINTENANCE_DATABASE_URL must therefore stop the run, not pass unnoticed.
  *
  * The error message never includes the connection string.
  */
@@ -27,7 +27,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
       'Refus de demarrer : le role "' +
         row.role +
         '" est superuser ou BYPASSRLS, la RLS ne s\'appliquerait pas a la maintenance. ' +
-        'Utilise le role sync_app dans DATABASE_URL.',
+        'Utilise le role maintenance_login dans MAINTENANCE_DATABASE_URL.',
     );
   }
 }
