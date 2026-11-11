@@ -162,7 +162,7 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
   });
 
   it('purges only expired nonces for the requested tenant in bounded batches', async () => {
-    const maintenance = new SyncMaintenanceService(pg.appDb);
+    const maintenance = new SyncMaintenanceService(pg.maintenanceDb);
     const owner = await pg.pool.query(`
       SELECT r.rolcanlogin, r.rolsuper, r.rolbypassrls,
              pg_catalog.has_table_privilege(r.oid, 'public.device_proof_nonces', 'SELECT') AS can_select,
@@ -219,7 +219,7 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
       appClient.release();
     }
 
-    const mismatchedContext = await pg.appPool.connect();
+    const mismatchedContext = await pg.maintenancePool.connect();
     try {
       await mismatchedContext.query('BEGIN');
       await mismatchedContext.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantA]);
@@ -243,7 +243,7 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
   });
 
   it('rejects unsafe nonce purge batch sizes', async () => {
-    const maintenance = new SyncMaintenanceService(pg.appDb);
+    const maintenance = new SyncMaintenanceService(pg.maintenanceDb);
     await expect(maintenance.purgeExpiredDeviceProofNonces(tenantA, 0)).rejects.toThrow(/batchSize/);
     await expect(maintenance.purgeExpiredDeviceProofNonces(tenantA, 10001)).rejects.toThrow(/batchSize/);
   });
