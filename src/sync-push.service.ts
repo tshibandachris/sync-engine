@@ -179,7 +179,14 @@ export class SyncPushService {
         const existing = await tx.execute(
           sql`SELECT 1 FROM sync_idempotency_keys WHERE agent_id = ${agentId}::uuid AND idempotency_key = ${idempotencyKey}`,
         );
-        if (existing.rows.length > 0) return { ...EMPTY_RESPONSE, [IDEMPOTENCY_REPLAY]: true };
+        if (existing.rows.length > 0) {
+          const replay: PushResponse = { ...EMPTY_RESPONSE };
+          if (dto.changes.sales !== undefined) {
+            replay.results = await new PosSalesPushService(this.db)
+              .pushInTransaction(tx, tenantId, dto.changes.sales, true);
+          }
+          return { ...replay, [IDEMPOTENCY_REPLAY]: true };
+        }
       }
 
       const response: PushResponse = { applied: { created: 0, updated: 0, deleted: 0 }, conflicts: [] };
@@ -722,11 +729,22 @@ export class SyncPushService {
         `);
       }
 
+      if (dto.changes.sales !== undefined) {
+        response.results = await new PosSalesPushService(this.db)
+          .pushInTransaction(tx, tenantId, dto.changes.sales);
+        if (idempotencyKey && response.results.some(result =>
+          result.status === 'invalid' || result.status === 'conflict')) {
+          await tx.execute(sql`
+            DELETE FROM sync_idempotency_keys
+            WHERE tenant_id = ${tenantId}::uuid
+              AND agent_id = ${agentId}::uuid
+              AND idempotency_key = ${idempotencyKey}
+          `);
+        }
+      }
+
       return response;
     }, { write: true });
-      if (dto.changes.sales !== undefined) {
-        response.results = await new PosSalesPushService(this.db).push(tenantId, dto.changes.sales);
-      }
       return response;
     } catch (err) {
       const pgError = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };

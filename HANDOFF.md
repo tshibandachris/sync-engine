@@ -9,7 +9,7 @@ Mobile stack: **React Native + WatermelonDB** (to be confirmed — see Open ques
 
 - Incremental pull/push of `check_ins`, `missions`, `sites`
 - Conflict detection + resolution (LWW on `sync_seq`)
-- Idempotent push (advisory locks + idempotency keys)
+- Idempotent push: request key and POS sale records share one PostgreSQL transaction; sale UUID retries compare persisted sale, line, and stock-movement content (see POS sales push atomicity below)
 - JWT auth with tenant scoping
 - S3 presigned uploads for incident photos
 
@@ -114,6 +114,24 @@ on the same tenant, a peak at shift start becomes a queue. Documented
 trade-off for correctness. The alternative is a transactional outbox
 fed by a non-cached sequence — a larger refactor, deliberately
 deferred.
+
+### POS sales push atomicity
+
+The `/sync/push` transaction owns both the request idempotency-key row and
+POS sale writes. A failure before commit rolls back both. Each sale is
+written inside a PostgreSQL savepoint, so its sale row, all sale lines,
+and all stock movements commit or roll back together. When a request with
+an idempotency key contains an invalid or conflicting sale, that key is
+removed before the outer transaction commits so the request is not
+recorded as successfully applied.
+
+A sale UUID is inserted with `ON CONFLICT (id) DO NOTHING`. If another
+request already inserted it, the service reloads the sale and compares
+the sale fields, lines, and sale-referenced stock movements. Matching
+content returns `idempotent`; differing content returns `conflict`.
+The guarantee is limited to these persisted records and the tested
+request paths; it is not a blanket claim that all client operations can
+never be duplicated.
 
 ### Row-Level Security
 
