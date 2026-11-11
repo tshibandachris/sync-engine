@@ -24,8 +24,8 @@ import { assertNonPrivilegedRole } from './role-guard.js';
  * equivalent. See HANDOFF.md.
  */
 export async function bootstrapMaintenance(): Promise<number> {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error('DATABASE_URL requis.');
+  const databaseUrl = process.env.MAINTENANCE_DATABASE_URL;
+  if (!databaseUrl) throw new Error('MAINTENANCE_DATABASE_URL requis : connexion dédiée au rôle maintenance_login.');
   const bucket = process.env.S3_BUCKET;
   if (!bucket) throw new Error('S3_BUCKET requis.');
 
