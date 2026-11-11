@@ -107,8 +107,8 @@ REVOKE CREATE ON SCHEMA public FROM maintenance_function_owner;
 REVOKE ALL ON FUNCTION public.purge_tenant_tombstones(uuid, integer) FROM PUBLIC, sync_app;
 REVOKE ALL ON FUNCTION public.purge_tenant_pending_attachments(uuid, integer) FROM PUBLIC, sync_app;
 REVOKE ALL ON FUNCTION public.list_tenant_attachment_object_keys(uuid) FROM PUBLIC, sync_app;
-REVOKE ALL ON FUNCTION public.purge_tenant_sync_logs(uuid, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.purge_expired_device_proof_nonces(uuid, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.purge_tenant_sync_logs(uuid, integer) FROM PUBLIC, sync_app;
+REVOKE ALL ON FUNCTION public.purge_expired_device_proof_nonces(uuid, integer) FROM PUBLIC, sync_app;
 
 GRANT EXECUTE ON FUNCTION public.purge_tenant_tombstones(uuid, integer) TO maintenance_purge_executor;
 GRANT EXECUTE ON FUNCTION public.purge_tenant_pending_attachments(uuid, integer) TO maintenance_purge_executor;
