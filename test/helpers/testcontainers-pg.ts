@@ -24,7 +24,11 @@ export class TestPostgres {
 
   readonly adminPool: Pool;
 
-  readonly adminDb: ReturnType<typeof drizzle<typeof schema>>;\n\n  readonly maintenancePool: Pool;\n\n  readonly maintenanceDb: ReturnType<typeof drizzle<typeof schema>>;
+  readonly adminDb: ReturnType<typeof drizzle<typeof schema>>;
+
+  readonly maintenancePool: Pool;
+
+  readonly maintenanceDb: ReturnType<typeof drizzle<typeof schema>>;
 
   readonly connectionOptions: { host: string; port: number; database: string };
 
@@ -40,6 +44,8 @@ export class TestPostgres {
     enrollmentDb: ReturnType<typeof drizzle<typeof schema>>,
     adminPool: Pool,
     adminDb: ReturnType<typeof drizzle<typeof schema>>,
+    maintenancePool: Pool,
+    maintenanceDb: ReturnType<typeof drizzle<typeof schema>>,
     connectionOptions: { host: string; port: number; database: string },
   ) {
     this.container = container;
@@ -51,6 +57,8 @@ export class TestPostgres {
     this.enrollmentDb = enrollmentDb;
     this.adminPool = adminPool;
     this.adminDb = adminDb;
+    this.maintenancePool = maintenancePool;
+    this.maintenanceDb = maintenanceDb;
     this.connectionOptions = connectionOptions;
   }
 
@@ -265,7 +273,8 @@ export class TestPostgres {
     '036_device_enrollment_executor_role.sql',
     '037_device_admin_approval_capability.sql',
     '038_device_enrollment_owner_schema_hardening.sql',
-    '039_purge_expired_device_proof_nonces.sql',\n    '040_maintenance_purge_executor.sql',
+    '039_purge_expired_device_proof_nonces.sql',
+    '040_maintenance_purge_executor.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
@@ -378,12 +387,15 @@ export class TestPostgres {
       enrollmentDb,
       adminPool,
       adminDb,
+      maintenancePool,
+      maintenanceDb,
       { host: container.getHost(), port: container.getPort(), database: container.getDatabase() },
     );
   }
 
   async stop(): Promise<void> {
-    await this.maintenancePool.end();\n    await this.adminPool.end();
+    await this.maintenancePool.end();
+    await this.adminPool.end();
     await this.enrollmentPool.end();
     await this.appPool.end();
     await this.pool.end();
