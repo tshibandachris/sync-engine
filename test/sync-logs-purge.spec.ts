@@ -206,7 +206,7 @@ describe('purge_tenant_sync_logs', () => {
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0].prosecdef).toBe(true);
     expect((r.rows[0].proconfig ?? []).some((c: string) => c.startsWith('search_path='))).toBe(true);
-    expect(r.rows[0].acl).toMatch(/sync_app=X\//);
-    expect(r.rows[0].acl).not.toMatch(/[{,]=X\//); // une entrée « =X/ » serait PUBLIC
+    expect(r.rows[0].acl).toMatch(/maintenance_purge_executor=X\//);
+    expect(r.rows[0].acl).not.toMatch(/sync_app=X\//);\n    expect(r.rows[0].acl).not.toMatch(/[{,]=X\//); // une entrée « =X/ » serait PUBLIC
   });
 });
