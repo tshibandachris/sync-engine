@@ -60,7 +60,7 @@ describe('runMaintenanceCycle : echecs silencieux', () => {
   });
 
   const run = (svc: MaintenanceServiceLike) =>
-    runMaintenanceCycle({ pool: pg.pool as Pool, db: pg.appDb, storage, service: svc });
+    runMaintenanceCycle({ pool: pg.pool as Pool, db: pg.maintenanceDb, storage, service: svc });
 
   it('un scan interrompu par le garde-fou de ratio est un echec, pas un tenant propre', async () => {
     const report = await run(
