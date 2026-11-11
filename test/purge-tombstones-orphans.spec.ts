@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -74,19 +75,12 @@ describe('purge_tenant_tombstones: orphaned object keys', () => {
     check_ins_deleted: number;
     orphaned_object_keys: string[];
   }> {
-    const client = await pg.maintenancePool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
-      const res = await client.query('SELECT purge_tenant_tombstones($1::uuid, $2::int) AS result', [tenantId, ttlDays]);
-      await client.query('COMMIT');
-      return res.rows[0].result;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
+    const result = await new SyncMaintenanceService(pg.maintenanceDb)
+      .purgeTenantTombstones(tenantId, ttlDays);
+    return {
+      check_ins_deleted: result.checkInsDeleted,
+      orphaned_object_keys: result.orphanedObjectKeys,
+    };
   }
 
   it('retourne un tableau vide quand rien ne cascade', async () => {
