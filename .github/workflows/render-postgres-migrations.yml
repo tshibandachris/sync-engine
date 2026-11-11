@@ -20,10 +20,10 @@ jobs:
     name: Verify target and apply SQL migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ inputs.confirm_target == 'eden-sync-engine-db' }}
     env:
       DB_HOST: ${{ secrets.RENDER_DB_HOST }}
       DB_PORT: ${{ secrets.RENDER_DB_PORT }}
+      PGPORT: ${{ secrets.RENDER_DB_PORT }}
       DB_NAME: ${{ secrets.RENDER_DB_NAME }}
       DB_USER: ${{ secrets.RENDER_DB_USER }}
       PGPASSWORD: ${{ secrets.RENDER_DB_PASSWORD }}
@@ -37,6 +37,14 @@ jobs:
     steps:
       - name: Checkout deployment branch
         uses: actions/checkout@v4
+
+      - name: Confirm exact database target
+        shell: bash
+        run: |
+          if [[ "${{ inputs.confirm_target }}" != "eden-sync-engine-db" ]]; then
+            echo "::error::Confirmation does not match. Refusing to run migrations."
+            exit 1
+          fi
 
       - name: Validate required secrets
         shell: bash
