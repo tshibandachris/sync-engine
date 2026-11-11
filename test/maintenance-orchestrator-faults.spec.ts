@@ -67,7 +67,7 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
   });
 
   const run = (service: MaintenanceServiceLike) =>
-    runMaintenanceCycle({ pool: pg.pool as Pool, db: pg.appDb, storage, service });
+    runMaintenanceCycle({ pool: pg.pool as Pool, db: pg.maintenanceDb, storage, service });
 
   it('une étape en échec ne bloque pas les suivantes et ne perd pas les compteurs acquis', async () => {
     const calls: string[] = [];
@@ -199,14 +199,14 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
 
   it('si le déverrouillage échoue, la connexion du verrou est détruite (ce qui libère le verrou)', async () => {
     const { pool, released } = poolWithUnlock(false);
-    const report = await runMaintenanceCycle({ pool, db: pg.appDb, storage }, { tenantFilter: [] });
+    const report = await runMaintenanceCycle({ pool, db: pg.maintenanceDb, storage }, { tenantFilter: [] });
     expect(report.tenantsProcessed).toBe(0);
     expect(released).toEqual([true]);
   });
 
   it('quand le déverrouillage réussit, la connexion est rendue normalement au pool', async () => {
     const { pool, released } = poolWithUnlock(true);
-    await runMaintenanceCycle({ pool, db: pg.appDb, storage }, { tenantFilter: [] });
+    await runMaintenanceCycle({ pool, db: pg.maintenanceDb, storage }, { tenantFilter: [] });
     expect(released).toEqual([false]);
   });
 });
