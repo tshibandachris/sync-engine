@@ -78,6 +78,11 @@ export function assertAuthStrategy(env: NodeJS.ProcessEnv): void {
             'and JWKS_URL is set.',
         );
       }
+      if (!env.JWT_ISSUER?.trim()) {
+        throw new Error(
+          'Boot guard: JWT_ISSUER is required when NODE_ENV=production and JWKS_URL is set.',
+        );
+      }
       return;
     }
 
