@@ -21,7 +21,7 @@ jobs:
           matches="$(git grep -nI -E "$pattern" -- . ':!.env.example' ':!docs/**' ':!test/**' ':!**/*.lock' || true)"
           if [[ -n "$matches" ]]; then
             echo "::error::Potential secret-like value found. Matched values are suppressed; locations only:"
-            printf '%s\\n' "$matches" | cut -d: -f1,2 | sort -u
+            printf '%s\n' "$matches" | cut -d: -f1,2 | sort -u
             exit 1
           fi
           echo "No high-confidence secret patterns found (example, documentation and test fixtures excluded)."
