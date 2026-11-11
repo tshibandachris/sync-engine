@@ -41,8 +41,10 @@ jobs:
 
       - name: Confirm exact database target
         shell: bash
+        env:
+          CONFIRM_TARGET: ${{ inputs.confirm_target }}
         run: |
-          if [[ "${{ inputs.confirm_target }}" != "eden-sync-engine-db" ]]; then
+          if [[ "$CONFIRM_TARGET" != "eden-sync-engine-db" ]]; then
             echo "::error::Confirmation does not match. Refusing to run migrations."
             exit 1
           fi
@@ -89,8 +91,9 @@ jobs:
         run: |
           set -euo pipefail
           applied="$(psql -X -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tA -c "SELECT count(*) FROM public.schema_migrations")"
-          if [[ "$applied" != "40" ]]; then
-            echo "::error::Expected 40 applied migrations; found $applied."
+          expected="$(find migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d '[:space:]')"
+          if [[ "$applied" != "$expected" ]]; then
+            echo "::error::Expected $expected applied migrations from the repository; found $applied."
             exit 1
           fi
-          echo "Verified $applied migrations."
+          echo "Verified $applied migrations against $expected SQL files."
