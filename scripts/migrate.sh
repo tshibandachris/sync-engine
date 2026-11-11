@@ -233,6 +233,7 @@ maintenance_login_ok=$(psql_base -tA -c "
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.list_tenant_attachment_object_keys(uuid)', 'EXECUTE')
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_sync_logs(uuid,integer)', 'EXECUTE')
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_sync_tables(integer,integer)', 'EXECUTE')
     THEN 1 ELSE 0 END
 ")
 if [ "$maintenance_login_ok" != "1" ]; then

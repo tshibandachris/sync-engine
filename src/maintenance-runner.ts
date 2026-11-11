@@ -64,7 +64,7 @@ export async function bootstrapMaintenance(): Promise<number> {
     if (role.rows[0]?.current_user !== 'maintenance_login') {
       throw new Error('Refus de maintenance : MAINTENANCE_DATABASE_URL doit utiliser le rôle maintenance_login.');
     }
-    const report: MaintenanceReport = await runMaintenanceCycle({ pool, db, storage });
+    const report: MaintenanceReport = await runMaintenanceCycle({ pool, db: maintenanceDb, storage });
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
 
     if (!report.skipped && report.tenantsProcessed === 0) {
