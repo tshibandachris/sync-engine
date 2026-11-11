@@ -198,9 +198,11 @@ function hasLocalBusinessData(db) {
 }
 
 function assertTenantBinding(db, tenantId, { allowLegacyMigration = false } = {}) {
-  if (typeof tenantId !== 'string' || !tenantId.trim() || tenantId.length > 255) {
-    throw new Error('Jeton d’appareil invalide : identifiant d’entreprise absent.');
+  const tenantUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (typeof tenantId !== 'string' || !tenantUuid.test(tenantId)) {
+    throw new Error('Jeton d’appareil invalide : identifiant d’entreprise UUID absent ou invalide.');
   }
+  tenantId = tenantId.toLowerCase();
   const binding = db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get();
   if (binding) {
     if (binding.tenant_id !== tenantId) {
