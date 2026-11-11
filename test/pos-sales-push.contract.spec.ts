@@ -363,7 +363,7 @@ describe('POS sales push contract', () => {
 
     const storedSale = (await pg.pool.query('SELECT created_at, updated_at FROM sales WHERE id=$1', [item.id])).rows[0];
     const storedLine = (await pg.pool.query('SELECT created_at, updated_at FROM sale_lines WHERE id=$1', [item.lines[0].id])).rows[0];
-    const storedMovement = (await pg.pool.query('SELECT created_at, updated_at FROM stock_movements WHERE id=$1', [item.stock_movements[0].id])).rows[0;
+    const storedMovement = (await pg.pool.query('SELECT created_at, updated_at FROM stock_movements WHERE id=$1', [item.stock_movements[0].id])).rows[0];
     expect(Number(storedSale.created_at)).toBe(item.created_at);
     expect(Number(storedSale.updated_at)).toBe(item.updated_at);
     expect(Number(storedLine.created_at)).toBe(item.lines[0].created_at);
