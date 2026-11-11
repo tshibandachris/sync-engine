@@ -1,5 +1,5 @@
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import type { AttachmentStorage } from './attachment-storage.js';
@@ -301,9 +301,8 @@ export class SyncMaintenanceService {
    * either the client never PUT anything, or the object was written but
    * never confirmed, in which case scanTenantOrphans will find it later.
    *
-   * Simple DELETE, no SECURITY DEFINER: sync_app holds the DELETE
-   * privilege on attachments (migration 011), and RLS scopes the row set
-   * to the tenant once withTenant has set the context.
+   * A narrow SECURITY DEFINER function owns the DELETE privilege; the
+   * maintenance login can invoke it only with a matching tenant context.
    */
   async purgeTenantPendingAttachments(
     tenantId: string,
