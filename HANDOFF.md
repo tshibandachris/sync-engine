@@ -33,30 +33,15 @@ Mobile stack: **React Native + WatermelonDB** (to be confirmed — see Open ques
     npm run typecheck
     npx vitest run
 
-Requirements: Docker running. The first run pulls `postgres:16-alpine`
-(~60s). Subsequent test runs take ~120s end to end (5 test files, each
-spins its own container).
+Requirements: Docker running for Testcontainers. CI runs the backend, PostgreSQL 16 migration/recovery, Electron, and Windows packaging checks; local duration depends on Docker and machine capacity.
 
 ### Running the app locally
 
     cp .env.example .env
-    # edit .env with your DATABASE_URL, JWT_SECRET, S3_* values
-    npm run dev
+    # fill the variables in .env.example; keep .env local and uncommitted
+    npx tsx src/main.ts
 
-`npm run dev` is not defined yet — see Debt / "no dev script".
-In the meantime, `npx tsx src/main.ts` works.
-
-`.env.example`:
-
-    DATABASE_URL=postgres://postgres:postgres@localhost:5432/sync
-    JWT_SECRET=change-me-at-least-32-characters-long
-    PORT=3000
-    AUTH_ALLOW_DEV_TOKEN=true
-    S3_BUCKET=sync-attachments-dev
-    S3_REGION=us-east-1
-    S3_ENDPOINT=http://localhost:9000
-    S3_ACCESS_KEY_ID=minio
-    S3_SECRET_ACCESS_KEY=minio123
+`npm run dev` is not defined yet — see Debt / "no dev script". The checked-in `.env.example` is the source of truth for the current separate application, device-admin, device-enrollment, and maintenance credentials, plus the JWKS and S3 settings.
 
 ## Architecture
 
@@ -211,7 +196,7 @@ S3 is never proxied. The client uploads directly.
 **S3 key format:** `tenants/<tenant_id>/checkins/<check_in_id>/<attachment_id>.<ext>`.
 This allows per-tenant lifecycle rules and bulk deletion later.
 
-**Known limitation:** presigned PUT cannot enforce every upload constraint at the object-store edge. The confirmation path must remain the authoritative check for object metadata; verify its exact checks before changing the accepted content contract.
+**Known limitation:** presigned PUT cannot enforce size/type at the object-store edge. `confirm` performs a HEAD request but currently checks existence only; it does not compare the stored content length or content type with the attachment row. Keep this as an open debt until a test proves those checks.
 
 ### Multi-tenancy
 
@@ -619,8 +604,7 @@ file.
         volumes:
           - /var/run/docker.sock:/var/run/docker.sock:ro
 
-Every day at 03:00 the daemon runs `docker exec sync-engine node
-/app/dist/maintenance-runner.js`. Logs land in `docker logs sync-engine`.
+When the self-hosted Docker Compose stack is running, ofelia schedules `node dist/maintenance-runner.js` daily at 03:00; logs are available with `docker logs sync-engine`. This is the Compose scheduler only, not a Render Free cron. Render's manual migration and scheduled maintenance workflows are prepared on PR #96 and are not enabled on the default branch. No real database migration or deployment has been run.
 
 Two properties of the runner worth knowing before trusting it with a
 production database:
@@ -637,11 +621,7 @@ production database:
 
 ### Container image
 
-The compose example above runs `dist/maintenance-runner.js`, so the
-production image must ship compiled JS, not TypeScript. Add a build
-step (`tsc`) to the Dockerfile and point the API entrypoint and the
-runner at the `dist/` output. `tsx` is a dev dependency: the runner
-works under it locally, the image uses the compiled version.
+The checked-in Dockerfile already builds TypeScript in a Node 22 builder stage, copies `dist/` into a production runtime image, and runs as the non-root `node` user. The API and maintenance runner use compiled JavaScript. CI builds the image and smoke-tests its entrypoint; this does not mean the image has been deployed.
 
 ### Scheduler caveats
 
@@ -667,15 +647,25 @@ works under it locally, the image uses the compiled version.
 
 | Var | Required in prod |
 |---|---|
-| DATABASE_URL | yes |
-| JWT_SECRET | yes (min 32 chars — add boot check) |
-| PORT | no (default 3000) |
-| AUTH_ALLOW_DEV_TOKEN | **must be false in prod** (add boot check) |
-| S3_BUCKET | yes |
+| DATABASE_URL | yes — API login |
+| JWKS_URL | yes in production unless shared-secret mode is explicitly enabled |
+| JWT_AUDIENCE | yes with JWKS verification |
+| JWT_ISSUER | no — optional provider check |
+| JWT_TENANT_CLAIM | no — defaults to `tenantId` |
+| JWT_SECRET | development/local; production only with explicit shared-secret opt-in (minimum 32 chars) |
+| AUTH_ALLOW_SHARED_SECRET | no — default false; required to opt into production shared-secret mode |
+| AUTH_ALLOW_DEV_TOKEN | no — must be false in production; boot guard rejects it otherwise |
+| MAINTENANCE_DATABASE_URL | yes for the scheduled maintenance runner; must use `maintenance_login` |
+| MAINTENANCE_PASSWORD | yes for migration-time provisioning of `maintenance_login` |
+| DEVICE_ENROLLMENT_PASSWORD | yes for migration-time provisioning |
+| DEVICE_ADMIN_PASSWORD | yes for migration-time provisioning |
+| S3_BUCKET | yes for attachment storage and maintenance |
 | S3_REGION | yes |
-| S3_ENDPOINT | no (MinIO) |
+| S3_ENDPOINT | depends on provider (required for R2/MinIO; optional for AWS S3) |
 | S3_ACCESS_KEY_ID | yes |
 | S3_SECRET_ACCESS_KEY | yes |
+| S3_PUBLIC_ENDPOINT | no — optional public endpoint for presigned URLs |
+| PORT | no (default 3000) |
 
 ## Contact
 
