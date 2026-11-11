@@ -9,7 +9,7 @@ on:
 
 jobs:
   pos-migrations:
-    name: Apply migrations 001-039 through the production runner and verify replay safety
+    name: Apply migrations 001-040 through the production runner and verify replay safety
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -42,6 +42,7 @@ jobs:
           SYNC_APP_PASSWORD: sync_app_test_password
           DEVICE_ENROLLMENT_PASSWORD: enrollment_test_password
           DEVICE_ADMIN_PASSWORD: admin_test_password
+          MAINTENANCE_PASSWORD: maintenance_test_password
           PGHOST: localhost
           PGPORT: 5432
           PGUSER: postgres
@@ -51,8 +52,9 @@ jobs:
           sh scripts/migrate.sh
           sh scripts/migrate.sh
           applied="$(psql -v ON_ERROR_STOP=1 -tA -c 'SELECT count(*) FROM public.schema_migrations')"
-          test "$applied" = "39"
+          test "$applied" = "40"
           echo "Verified $applied migrations and an idempotent second run."
+          sh test/migration-runner-recovery.sh
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
