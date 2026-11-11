@@ -11,8 +11,8 @@ import { assertNonPrivilegedRole } from './role-guard.js';
 /**
  * CLI entry point for the maintenance cycle.
  *
- * Runs as a batch job, not as part of the API. Reads the same env vars
- * the API reads (DATABASE_URL, S3_*), builds its own pool and storage,
+ * Runs as a batch job, not as part of the API. Uses a dedicated
+ * MAINTENANCE_DATABASE_URL and restricted S3_* credentials.
  * runs one cycle, prints the report as JSON on stdout, and exits.
  *
  * Exit code:
