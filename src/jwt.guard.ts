@@ -7,21 +7,9 @@ import { IdpVerificationError, verifyToken } from './idp-token.js';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Verifies the bearer token on every request.
- *
- * Two strategies, chosen once at boot by readIdpConfig:
- *
- *   - JWKS mode (JWKS_URL set): the token is signed by an external identity
- *     provider. We fetch their public keys from the JWKS endpoint and
- *     validate signature, expiry, audience, and issuer. The agent and tenant
- *     are read from the configured claims.
- *
- *   - dev-secret mode (JWKS_URL empty, non-production): the token is signed
- *     locally with JWT_SECRET. Used by /auth/token and by the test suite.
- *     The boot guards refuse to start in production without JWKS_URL.
- *
- * Either way, request.agentId and request.tenantId are set to validated
- * UUIDs. Services never see a request that reached them without both.
+ * Verifies bearer tokens. Production JWKS mode accepts asymmetric ES256/RS256
+ * signatures only and requires server-controlled agent_id + tenantId claims.
+ * Local shared-secret verification remains development-only.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -30,9 +18,7 @@ export class JwtAuthGuard implements CanActivate {
 
   constructor(@Inject(JwtService) private readonly jwt: JwtService) {
     this.config = readIdpConfig();
-
     if (this.config.mode === 'jwks' && this.config.jwksUrl) {
-      // Fails fast at construction if the URL is malformed.
       this.jwks = createRemoteJWKSet(new URL(this.config.jwksUrl));
     }
   }
@@ -53,7 +39,6 @@ export class JwtAuthGuard implements CanActivate {
         const id = await verifyToken(token, this.jwks, {
           audience: this.config.audience,
           issuer: this.config.issuer,
-          tenantClaim: this.config.tenantClaim,
         });
         request.agentId = id.agentId;
         request.tenantId = id.tenantId;
@@ -63,8 +48,15 @@ export class JwtAuthGuard implements CanActivate {
         return true;
       }
 
-      // dev-secret mode
-      const payload = await this.jwt.verifyAsync<{ sub: string; tenantId: string; permissions?: unknown; scope?: unknown; service_ids?: unknown; serviceIds?: unknown; token_use?: unknown }>(token);
+      const payload = await this.jwt.verifyAsync<{
+        sub: string;
+        tenantId: string;
+        permissions?: unknown;
+        scope?: unknown;
+        service_ids?: unknown;
+        serviceIds?: unknown;
+        token_use?: unknown;
+      }>(token);
 
       if (!payload.sub || !UUID_RE.test(payload.sub)) {
         throw new UnauthorizedException('Payload JWT invalide : sub manquant.');
@@ -78,7 +70,7 @@ export class JwtAuthGuard implements CanActivate {
       const rawPermissions = payload.permissions;
       request.permissions = Array.isArray(rawPermissions)
         ? rawPermissions.filter((value): value is string => typeof value === 'string')
-        : typeof payload.scope === 'string' ? payload.scope.split(/\s+/).filter(Boolean) : [];
+        : typeof payload.scope === 'string' ? payload.scope.split(/\\s+/).filter(Boolean) : [];
       const rawServiceIds = payload.service_ids ?? payload.serviceIds;
       request.serviceIds = Array.isArray(rawServiceIds)
         ? rawServiceIds.filter((value): value is string => typeof value === 'string' && UUID_RE.test(value))
