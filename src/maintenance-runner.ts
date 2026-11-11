@@ -60,6 +60,10 @@ export async function bootstrapMaintenance(): Promise<number> {
 
   try {
     await assertNonPrivilegedRole(pool);
+    const role = await pool.query<{ current_user: string }>('SELECT current_user');
+    if (role.rows[0]?.current_user !== 'maintenance_login') {
+      throw new Error('Refus de maintenance : MAINTENANCE_DATABASE_URL doit utiliser le rôle maintenance_login.');
+    }
     const report: MaintenanceReport = await runMaintenanceCycle({ pool, db, storage });
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
 
