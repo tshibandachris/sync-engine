@@ -52,13 +52,15 @@ describe('maintenance_purge_executor database boundary', () => {
       orphan_listing: boolean;
       sync_logs: boolean;
       nonces: boolean;
+      sync_tables: boolean;
     }>(`
       SELECT
         has_function_privilege(current_user, 'public.purge_tenant_tombstones(uuid,integer)', 'EXECUTE') AS tombstones,
         has_function_privilege(current_user, 'public.purge_tenant_pending_attachments(uuid,integer)', 'EXECUTE') AS pending,
         has_function_privilege(current_user, 'public.list_tenant_attachment_object_keys(uuid)', 'EXECUTE') AS orphan_listing,
         has_function_privilege(current_user, 'public.purge_tenant_sync_logs(uuid,integer)', 'EXECUTE') AS sync_logs,
-        has_function_privilege(current_user, 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE') AS nonces
+        has_function_privilege(current_user, 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE') AS nonces,
+        has_function_privilege(current_user, 'public.purge_sync_tables(integer,integer)', 'EXECUTE') AS sync_tables
     `);
     expect(result.rows[0]).toEqual({
       tombstones: false,
@@ -66,6 +68,7 @@ describe('maintenance_purge_executor database boundary', () => {
       orphan_listing: false,
       sync_logs: false,
       nonces: false,
+      sync_tables: false,
     });
   });
 
@@ -105,6 +108,7 @@ describe('maintenance_purge_executor database boundary', () => {
       orphan_listing: boolean;
       sync_logs: boolean;
       nonces: boolean;
+      sync_tables: boolean;
       device_approval: boolean;
     }>(`
       SELECT
@@ -113,6 +117,7 @@ describe('maintenance_purge_executor database boundary', () => {
         has_function_privilege(current_user, 'public.list_tenant_attachment_object_keys(uuid)', 'EXECUTE') AS orphan_listing,
         has_function_privilege(current_user, 'public.purge_tenant_sync_logs(uuid,integer)', 'EXECUTE') AS sync_logs,
         has_function_privilege(current_user, 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE') AS nonces,
+        has_function_privilege(current_user, 'public.purge_sync_tables(integer,integer)', 'EXECUTE') AS sync_tables,
         has_function_privilege(current_user, 'public.transition_device_approval(uuid,uuid,uuid,text,character varying)', 'EXECUTE') AS device_approval
     `);
     expect(result.rows[0]).toEqual({
@@ -121,6 +126,7 @@ describe('maintenance_purge_executor database boundary', () => {
       orphan_listing: true,
       sync_logs: true,
       nonces: true,
+      sync_tables: true,
       device_approval: false,
     });
   });

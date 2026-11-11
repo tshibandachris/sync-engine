@@ -1,9 +1,94 @@
 -- 041: close the legacy PUBLIC purge entry point and bound tenant retention batches.
 BEGIN;
 
--- This legacy function has no application call site. Keep it unavailable to
--- PUBLIC and sync_app; maintenance now uses the dedicated tenant functions.
+-- The legacy idempotency/conflict cleanup is retained, but is now
+-- executed only through the maintenance capability and tenant RLS context.
+GRANT SELECT, DELETE ON public.sync_idempotency_keys, public.sync_conflicts
+  TO maintenance_function_owner;
+
+CREATE OR REPLACE FUNCTION public.purge_sync_tables(
+  ttl_idempotency_days integer,
+  ttl_conflicts_days integer
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $function$
+DECLARE
+  v_tenant uuid;
+  v_cutoff_idempotency timestamptz;
+  v_cutoff_conflicts bigint;
+  v_idempotency_ctids tid[] := ARRAY[]::tid[];
+  v_conflict_ctids tid[] := ARRAY[]::tid[];
+  deleted_idempotency integer := 0;
+  deleted_conflicts integer := 0;
+BEGIN
+  v_tenant := NULLIF(current_setting('app.current_tenant_id', true), '')::uuid;
+  IF v_tenant IS NULL THEN
+    RAISE EXCEPTION 'tenant context is required for sync retention purge'
+      USING ERRCODE = '42501';
+  END IF;
+  IF ttl_idempotency_days IS NULL OR ttl_idempotency_days < 0
+     OR ttl_conflicts_days IS NULL OR ttl_conflicts_days < 0 THEN
+    RAISE EXCEPTION 'retention TTLs must be >= 0' USING ERRCODE = '22023';
+  END IF;
+
+  v_cutoff_idempotency := clock_timestamp() - make_interval(days => ttl_idempotency_days);
+  v_cutoff_conflicts :=
+    (EXTRACT(EPOCH FROM (clock_timestamp() - make_interval(days => ttl_conflicts_days))) * 1000)::bigint;
+
+  SELECT COALESCE(array_agg(ctid), ARRAY[]::tid[])
+    INTO v_idempotency_ctids
+    FROM (
+      SELECT ctid
+        FROM public.sync_idempotency_keys
+       WHERE tenant_id = v_tenant AND created_at < v_cutoff_idempotency
+       ORDER BY created_at
+       LIMIT 5000
+       FOR UPDATE
+    ) selected;
+  IF cardinality(v_idempotency_ctids) > 0 THEN
+    DELETE FROM public.sync_idempotency_keys
+     WHERE ctid = ANY(v_idempotency_ctids) AND tenant_id = v_tenant;
+    GET DIAGNOSTICS deleted_idempotency = ROW_COUNT;
+  END IF;
+
+  SELECT COALESCE(array_agg(ctid), ARRAY[]::tid[])
+    INTO v_conflict_ctids
+    FROM (
+      SELECT ctid
+        FROM public.sync_conflicts
+       WHERE tenant_id = v_tenant
+         AND status = 'resolved'
+         AND resolved_at IS NOT NULL
+         AND resolved_at < v_cutoff_conflicts
+       ORDER BY resolved_at
+       LIMIT 5000
+       FOR UPDATE
+    ) selected;
+  IF cardinality(v_conflict_ctids) > 0 THEN
+    DELETE FROM public.sync_conflicts
+     WHERE ctid = ANY(v_conflict_ctids) AND tenant_id = v_tenant;
+    GET DIAGNOSTICS deleted_conflicts = ROW_COUNT;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'idempotency_deleted', deleted_idempotency,
+    'conflicts_deleted', deleted_conflicts
+  );
+END;
+$function$;
+
+ALTER FUNCTION public.purge_sync_tables(integer, integer)
+  OWNER TO maintenance_function_owner;
+ALTER FUNCTION public.purge_sync_tables(integer, integer)
+  SET search_path TO pg_catalog, public;
+ALTER FUNCTION public.purge_sync_tables(integer, integer)
+  SET row_security TO on;
 REVOKE ALL ON FUNCTION public.purge_sync_tables(integer, integer) FROM PUBLIC, sync_app;
+GRANT EXECUTE ON FUNCTION public.purge_sync_tables(integer, integer) TO maintenance_purge_executor;
 
 CREATE OR REPLACE FUNCTION public.purge_tenant_tombstones(
   p_tenant_id uuid,

@@ -27,11 +27,12 @@ describe('maintenance privilege boundary', () => {
   it('returns SQLSTATE 42501 when sync_app invokes nonce, tombstone, or sync-log purge', async () => {
     const tenantId = randomUUID();
     const client = await pg.appPool.connect();
-    const calls = [
+    const calls: Array<[string, unknown[]]> = [
       ['SELECT public.purge_expired_device_proof_nonces($1::uuid, 1)', [tenantId]],
       ['SELECT public.purge_tenant_tombstones($1::uuid, 30)', [tenantId]],
       ['SELECT public.purge_tenant_sync_logs($1::uuid, 30)', [tenantId]],
-    ] as const;
+      ['SELECT public.purge_sync_tables(7, 30)', []],
+    ];
     try {
       for (const [statement, values] of calls) {
         await client.query('BEGIN');
@@ -51,6 +52,7 @@ describe('maintenance privilege boundary', () => {
       await client.query('SELECT public.purge_expired_device_proof_nonces($1::uuid, 1)', [tenantId]);
       await client.query('SELECT public.purge_tenant_tombstones($1::uuid, 30)', [tenantId]);
       await client.query('SELECT public.purge_tenant_sync_logs($1::uuid, 30)', [tenantId]);
+      await client.query('SELECT public.purge_sync_tables(7, 30)');
       await client.query('ROLLBACK');
     } finally { client.release(); }
   });
