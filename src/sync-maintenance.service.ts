@@ -250,7 +250,7 @@ export class SyncMaintenanceService {
         SELECT public.list_tenant_attachment_object_keys(${tenantId}::uuid) AS object_key
       `);
       return new Set(result.rows.map((row) => String((row as Record<string, unknown>).object_key)));
-    });
+    }, { registerTenant: false });
 
     const orphans = objects
       .map((o) => o.key)
