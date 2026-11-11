@@ -132,11 +132,12 @@ valid sales can be accepted while an invalid sale is reported.
 
 A sale UUID is inserted with `ON CONFLICT (id) DO NOTHING`. If another
 request already inserted it, the service reloads the sale and compares
-the persisted client-supplied fields, lines, and sale-referenced stock
+the persisted client-owned fields, lines, and sale-referenced stock
 movements. Matching content returns `idempotent`; differing content
-returns `conflict`. Client-supplied `created_at` and `updated_at`
-values are persisted as supplied; movement timestamp fields are also
-included in replay comparison.
+returns `conflict`. Client-supplied `created_at` values are preserved.
+The shared `set_sync_fields()` trigger generates `updated_at` on insert,
+so that server-managed value is deliberately excluded from replay
+comparison for sales, lines, and stock movements.
 
 Tenant transactions explicitly use PostgreSQL `READ COMMITTED`.
 This is required for the `ON CONFLICT DO NOTHING` followed by reread
