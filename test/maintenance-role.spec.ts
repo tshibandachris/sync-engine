@@ -34,7 +34,7 @@ describe('maintenance_purge_executor database boundary', () => {
         pg_has_role(current_user, 'sync_app', 'MEMBER') AS is_sync_app_member
     `);
     expect(result.rows[0]).toMatchObject({
-      current_user: 'maintenance_test',
+      current_user: 'maintenance_login',
       can_read_tenants: true,
       can_insert_tenants: false,
       can_read_attachments: false,
