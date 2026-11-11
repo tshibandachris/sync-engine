@@ -130,7 +130,7 @@ export class SyncMaintenanceService {
         ? (payload.orphaned_object_keys as string[])
         : [],
     };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -160,7 +160,7 @@ export class SyncMaintenanceService {
       }
 
       return { logsDeleted: Number(payload.logs_deleted ?? 0) };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -214,7 +214,7 @@ export class SyncMaintenanceService {
       const row = result.rows[0] as Record<string, unknown> | undefined;
       if (!row) throw new Error('purge_expired_device_proof_nonces a retourne un resultat vide.');
       return { deleted: Number(row.deleted ?? 0) };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -321,6 +321,6 @@ export class SyncMaintenanceService {
       const row = result.rows[0] as Record<string, unknown> | undefined;
       if (!row) throw new Error('purge_tenant_pending_attachments a retourne un resultat vide.');
       return { deleted: Number(row.deleted ?? 0) };
-    });
+    }, { registerTenant: false });
   }
 }
