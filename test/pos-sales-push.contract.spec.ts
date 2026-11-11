@@ -281,7 +281,7 @@ describe('POS sales push contract', () => {
       subtotal: 1000,
     });
     const response = await push([item], token, key);
-    expect(response.body.results[0].status).toBe('invalid');
+    expect(response.status).toBe(400);
     expect(Number((await pg.pool.query('SELECT count(*) FROM sales WHERE id=$1', [item.id])).rows[0].count)).toBe(0);
     expect(Number((await pg.pool.query('SELECT count(*) FROM sale_lines WHERE sale_id=$1', [item.id])).rows[0].count)).toBe(0);
     expect(Number((await pg.pool.query("SELECT count(*) FROM stock_movements WHERE reference_id=$1 AND reference_type='sale'", [item.id])).rows[0].count)).toBe(0);
