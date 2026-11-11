@@ -71,7 +71,7 @@ describe('maintenance privilege boundary', () => {
         "pg_catalog.has_table_privilege(current_user, c.oid, 'DELETE') OR " +
         "pg_catalog.has_any_column_privilege(current_user, c.oid, 'INSERT') OR " +
         "pg_catalog.has_any_column_privilege(current_user, c.oid, 'UPDATE') OR " +
-        "pg_catalog.has_any_column_privilege(current_user, c.oid, 'DELETE'))"
+        "pg_catalog.has_any_column_privilege(current_user, c.oid, 'UPDATE'))"
       );
       expect(grants.rows).toEqual([]);
       for (const table of tables) {

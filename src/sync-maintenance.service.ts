@@ -142,7 +142,7 @@ export class SyncMaintenanceService {
     ttlDays: number = 30,
   ): Promise<PurgeSyncLogsResult> {
     if (!tenantId) throw new Error('tenantId requis.');
-    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+    if (ttlDays < 30) throw new Error('ttl_days doit etre >= 30.');
 
     return withTenant(this.db, tenantId, async (tx) => {
       const result = await tx.execute(sql`
