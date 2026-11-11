@@ -25,7 +25,8 @@ Create these **repository Actions secrets** only after confirming the database I
 - `RENDER_DB_PASSWORD`
 - `SYNC_APP_PASSWORD`
 - `DEVICE_ENROLLMENT_PASSWORD`
-- `DEVICE_ADMIN_PASSWORD`\n- `MAINTENANCE_PASSWORD` — long, unique password for the dedicated `maintenance_login` role
+- `DEVICE_ADMIN_PASSWORD`
+- `MAINTENANCE_PASSWORD` — long, unique password for the dedicated `maintenance_login` role
 
 Use long, unique random values for the three application passwords. Never commit them, paste them into issues/PR comments, or send them in chat. The migration workflow must stop if the Render database user lacks the required role-management capability.
 
