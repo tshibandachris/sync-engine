@@ -110,7 +110,7 @@ describe('purge_tenant_sync_logs', () => {
   });
 
   it('sync_app ne peut ni supprimer les logs ni appeler la purge réservée à maintenance_login', async () => {
-    const client = await pg.maintenancePool.connect();
+    const client = await pg.appPool.connect();
     try {
       await client.query('BEGIN');
       await client.query(`SELECT set_config('app.current_tenant_id', $1, true)`, [tenantA]);
@@ -142,7 +142,7 @@ describe('purge_tenant_sync_logs', () => {
     await purge(tenantA, 30);
 
     const newId = randomUUID();
-    const client = await pg.maintenancePool.connect();
+    const client = await pg.appPool.connect();
     try {
       await client.query('BEGIN');
       await client.query(`SELECT set_config('app.current_tenant_id', $1, true)`, [tenantA]);
@@ -207,6 +207,8 @@ describe('purge_tenant_sync_logs', () => {
     expect(r.rows[0].prosecdef).toBe(true);
     expect((r.rows[0].proconfig ?? []).some((c: string) => c.startsWith('search_path='))).toBe(true);
     expect(r.rows[0].acl).toMatch(/maintenance_purge_executor=X\//);
-    expect(r.rows[0].acl).not.toMatch(/sync_app=X\//);\n    expect(r.rows[0].acl).not.toMatch(/[{,]=X\//); // une entrée « =X/ » serait PUBLIC
+    expect(r.rows[0].acl).not.toMatch(/sync_app=X\//);
+    expect(r.rows[0].acl).not.toMatch(/sync_app=X\//);
+    expect(r.rows[0].acl).not.toMatch(/[{,]=X\//); // une entrée « =X/ » serait PUBLIC
   });
 });
