@@ -385,6 +385,11 @@ nonce_purge_owner_ok=$(psql_base -tA -c "
      )
      AND NOT pg_catalog.has_table_privilege('sync_app', 'public.device_proof_nonces', 'DELETE')
      AND pg_catalog.has_function_privilege(
+       'maintenance_login',
+       'public.purge_expired_device_proof_nonces(uuid,integer)',
+       'EXECUTE'
+     )
+     AND NOT pg_catalog.has_function_privilege(
        'sync_app',
        'public.purge_expired_device_proof_nonces(uuid,integer)',
        'EXECUTE'
