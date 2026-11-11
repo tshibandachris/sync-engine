@@ -13,15 +13,15 @@ Mobile stack: **React Native + WatermelonDB** (to be confirmed — see Open ques
 - JWT auth with tenant scoping
 - S3 presigned uploads for incident photos
 
-**Current state: tag `v0.5-sync-engine`, 58 tests green.**
+**Current state:** the repository now includes signed device approval/sync, atomic POS push handling, tenant RLS, and a separate maintenance runner. This document describes repository code only; it does not imply that a real database migration or deployment has occurred.
 
 ## Stack
 
-- Node.js 20+ (tested on v24)
+- Node.js 22+ (CI runtime)
 - TypeScript (ESM, `type: module`)
-- NestJS 10.4 for HTTP
+- NestJS 12 for HTTP
 - Drizzle ORM + PostgreSQL 16
-- Vitest 2
+- Vitest 5
 - Testcontainers (real PostgreSQL per test file)
 - AWS SDK v3 (S3)
 
@@ -29,7 +29,7 @@ Mobile stack: **React Native + WatermelonDB** (to be confirmed — see Open ques
 
     git clone https://github.com/tshibandachris/sync-engine.git
     cd sync-engine
-    npm install
+    npm ci
     npm run typecheck
     npx vitest run
 
@@ -100,9 +100,7 @@ tenant-level advisory lock for the whole transaction:
 - Paths that take it: `SyncPushService.pushChanges`,
   `SyncConflictService.resolveConflict` (only when resolution is
   `client`, which writes to `check_ins`).
-- Path that does **not** take it: `SyncMaintenanceService.purge` — it
-  only touches `sync_conflicts` and `sync_idempotency_keys`, neither
-  of which carries a `sync_seq` column.
+- Maintenance retention functions use the dedicated maintenance database login and do not participate in the sync-sequence write path.
 
 **Why:** `nextval('global_sync_seq')` is not transactional. Without a
 lock, a transaction that obtains seq N can commit after one that
@@ -213,9 +211,7 @@ S3 is never proxied. The client uploads directly.
 **S3 key format:** `tenants/<tenant_id>/checkins/<check_in_id>/<attachment_id>.<ext>`.
 This allows per-tenant lifecycle rules and bulk deletion later.
 
-**Known limitation:** presigned PUT does not enforce size or type on
-the S3 side. `confirm` does a HEAD but currently only checks
-existence. See Roadmap v0.5.5.
+**Known limitation:** presigned PUT cannot enforce every upload constraint at the object-store edge. The confirmation path must remain the authoritative check for object metadata; verify its exact checks before changing the accepted content contract.
 
 ### Multi-tenancy
 
@@ -318,11 +314,11 @@ key.
 - `403` — resource not accessible (wrong tenant or agent)
 - `404` — resource not found
 - `409` — idempotency conflict or already-resolved conflict
-- `410` — cursor too old, client must resync from scratch (not implemented, see Debt)
+- `410` — cursor too old; the client must resync from scratch.
 
 ## Project layout
 
-    migrations/          SQL migrations 001 to 007
+    migrations/          SQL migrations 001 to 041
     src/
       schema.ts
       sync-pull.service.ts
@@ -473,10 +469,7 @@ request_id, operation, status, timing, record counts, conflicts,
 idempotency, error code. Metrics cover requests, duration, records,
 conflicts, idempotency, stale cursors, payload size.
 
-**Remaining for a later pass:** the cron that calls
-`SyncMaintenanceService.purgeSyncLogs` for every row in `tenants`. It
-runs outside the app (systemd timer, k8s CronJob, or an equivalent
-scheduler) once the deployment strategy is known.
+The scheduled maintenance path is implemented by `src/maintenance-orchestrator.ts` and `src/maintenance-runner.ts`. It connects through `MAINTENANCE_DATABASE_URL` as `maintenance_login`, not through the API login.
 
 ### v0.8 — S3 purge and orphans (done)
 
@@ -514,9 +507,7 @@ with `status='pending'` older than the cutoff, inside `withTenant`. No
 S3 object to touch: either the client never PUT anything, or the object
 was written but never confirmed, and the scan from step 2 finds it.
 
-All three run per tenant. The cron that walks `tenants` and calls each
-of the maintenance methods is **still outside the repository** (see the
-note under v0.7.5).
+All three run per tenant. `runMaintenanceCycle` walks the tenant registry and calls the maintenance service; the runner keeps the orphan-object scan in dry-run mode.
 
 ### v0.9 — SSE
 
@@ -557,17 +548,19 @@ single-app deployment.
 
 | Item | Severity | Notes |
 |---|---|---|
-| No real IdP | High | `/auth/token` is dev-only. |
-| No prod guard on `AUTH_ALLOW_DEV_TOKEN` | High | App boots with dev flag in production. Add `NODE_ENV` check. |
-| Purge vs offline clients | High | A client offline longer than retention never learns of deletions. Needs `410 GONE` on stale cursor. |
 | Upload validation incomplete | Medium | Presigned PUT cannot enforce size or content-type. HEAD `confirm` must reject on mismatch. v0.5.4. |
-| Orphan attachments | Medium | Pending rows never confirmed, and S3 objects without rows, are not cleaned up. v0.5.4. |
-| S3 purge after soft-delete | Medium | Objects stay in bucket forever. v0.5.5. |
-| No CI | Medium | A GitHub Action on `ubuntu-latest` answers the "does it run on Mac/Linux" question on every commit. |
 | No dev script | Low | `npm run dev` referenced but not defined. Add `tsx watch src/main.ts`. |
 | Test execution ~90s | Low | Each test file spawns its own PG container. Vitest `globalSetup` + schema-per-file would cut this to ~30s. |
 | Schema drift potential | Low | `src/schema.ts` and migrations can desync silently. Add a test that applies migrations to a fresh container and compares with the Drizzle schema. |
 | Max push size not enforced | Low | A client can send an arbitrarily large batch. |
+
+## Maintenance security and migration execution
+
+- Migrations 039–041 leave migration 039 unchanged, revoke the API/public purge grants in later migrations, and assign the nonce, tombstone, and sync-log purge entry points to the maintenance capability.
+- `maintenance_login` inherits only `maintenance_purge_executor`; the function owner is a separate `NOLOGIN` role. The login has no direct business-table `INSERT`, `UPDATE`, or `DELETE` privileges.
+- Nonce, tombstone, and sync-log cleanup is tenant-scoped and capped at 5,000 rows per invocation. A later maintenance cycle can process the next batch.
+- `scripts/migrate.sh` applies each migration and its ledger row in one transaction protected by a PostgreSQL advisory transaction lock. The `--migrations-only` switch is a test seam; normal deployment execution still provisions the isolated logins.
+- `test/migrate-resume.spec.ts` exercises failure rollback, corrected retry, replay, concurrent runners, and the failure of `CREATE INDEX CONCURRENTLY` inside the transactional runner. CI status is the source of truth for whether these tests have passed.
 
 ## Working conventions
 
