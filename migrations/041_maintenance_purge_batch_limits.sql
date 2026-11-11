@@ -30,6 +30,9 @@ BEGIN
     RAISE EXCEPTION 'tenant context is required for sync retention purge'
       USING ERRCODE = '42501';
   END IF;
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(v_tenant::text, 4123)
+  );
   IF ttl_idempotency_days IS NULL OR ttl_idempotency_days < 0
      OR ttl_conflicts_days IS NULL OR ttl_conflicts_days < 0 THEN
     RAISE EXCEPTION 'retention TTLs must be >= 0' USING ERRCODE = '22023';
@@ -47,7 +50,6 @@ BEGIN
        WHERE tenant_id = v_tenant AND created_at < v_cutoff_idempotency
        ORDER BY created_at
        LIMIT 5000
-       FOR UPDATE
     ) selected;
   IF cardinality(v_idempotency_ctids) > 0 THEN
     DELETE FROM public.sync_idempotency_keys
@@ -66,7 +68,6 @@ BEGIN
          AND resolved_at < v_cutoff_conflicts
        ORDER BY resolved_at
        LIMIT 5000
-       FOR UPDATE
     ) selected;
   IF cardinality(v_conflict_ctids) > 0 THEN
     DELETE FROM public.sync_conflicts
@@ -121,6 +122,9 @@ BEGIN
   IF NULLIF(current_setting('app.current_tenant_id', true), '')::uuid IS DISTINCT FROM p_tenant_id THEN
     RAISE EXCEPTION 'tenant context does not match tombstone purge tenant' USING ERRCODE = '42501';
   END IF;
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_tenant_id::text, 4123)
+  );
 
   cutoff_ms :=
     (EXTRACT(EPOCH FROM (clock_timestamp() - (ttl_days || ' days')::interval)) * 1000)::bigint;
@@ -138,7 +142,6 @@ BEGIN
          AND deleted_at < cutoff_ms
        ORDER BY deleted_at, id
        LIMIT 5000
-       FOR UPDATE
     ) selected;
 
   IF cardinality(selected_ctids) > 0 THEN
@@ -178,7 +181,6 @@ BEGIN
          )
        ORDER BY m.deleted_at, m.id
        LIMIT 5000
-       FOR UPDATE
     ) selected;
 
   IF cardinality(selected_ctids) > 0 THEN
@@ -209,7 +211,6 @@ BEGIN
          )
        ORDER BY s.deleted_at, s.id
        LIMIT 5000
-       FOR UPDATE
     ) selected;
 
   IF cardinality(selected_ctids) > 0 THEN
@@ -278,6 +279,9 @@ BEGIN
   END IF;
 
   prev_tenant := current_setting('app.current_tenant_id', true);
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_tenant_id::text, 4123)
+  );
   PERFORM set_config('app.current_tenant_id', p_tenant_id::text, true);
 
   cutoff_ms :=
@@ -292,7 +296,6 @@ BEGIN
          AND started_at < cutoff_ms
        ORDER BY started_at, id
        LIMIT 5000
-       FOR UPDATE
     ) selected;
 
   IF cardinality(selected_ctids) > 0 THEN

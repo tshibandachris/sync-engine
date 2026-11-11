@@ -45,7 +45,7 @@ export async function bootstrapMaintenance(): Promise<number> {
     process.exit(1);
   }, Number(process.env.MAINTENANCE_DEADLINE_MS ?? 3_600_000));
   deadline.unref();
-  const db = drizzle(pool, { schema });
+  const maintenanceDb = drizzle(pool, { schema });
   const storage = new S3AttachmentStorage({
     bucket,
     region: process.env.S3_REGION,

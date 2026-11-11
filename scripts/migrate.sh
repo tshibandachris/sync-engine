@@ -240,6 +240,30 @@ if [ "$maintenance_login_ok" != "1" ]; then
   exit 1
 fi
 
+purge_acl_violations=$(psql_base -tA -c "
+  SELECT count(*)
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+     AND left(p.proname, 6) = 'purge_'
+     AND (
+       pg_catalog.has_function_privilege('sync_app', p.oid, 'EXECUTE')
+       OR EXISTS (
+         SELECT 1
+           FROM pg_catalog.aclexplode(
+             COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+           ) acl
+          WHERE acl.grantee = 0
+            AND acl.privilege_type = 'EXECUTE'
+       )
+     )
+")
+if [ "$purge_acl_violations" != "0" ]; then
+  echo "[migrate] ERROR: sync_app or PUBLIC can execute a purge_* function."
+  exit 1
+fi
+
+
 echo "[migrate] verifying login separation"
 separation_ok=$(psql_base -tA -c "
   SELECT CASE

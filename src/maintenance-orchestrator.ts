@@ -84,7 +84,7 @@ export interface MaintenanceReport {
 export interface MaintenanceDeps {
   /** The pool used only for the advisory lock on a dedicated connection. */
   pool: Pool;
-  /** The database used for everything else. */
+  /** Must be built from MAINTENANCE_DATABASE_URL; never pass the API DATABASE_URL. */
   db: NodePgDatabase<typeof schema>;
   storage: AttachmentStorage;
   /** Override the service, for tests. */

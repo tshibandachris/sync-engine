@@ -9,7 +9,7 @@ beforeAll(async () => { pg = await startTestPostgres(); }, 180_000);
 afterAll(async () => { await pg?.stop(); }, 30_000);
 
 describe('maintenance privilege boundary', () => {
-  it('denies EXECUTE to sync_app and PUBLIC for every public purge_* function', async () => {
+  it('denies EXECUTE to sync_app and PUBLIC for every application-schema purge_* function', async () => {
     const result = await pg.pool.query(
       "SELECT p.oid::regprocedure::text AS function_name, " +
       "CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END AS grantee " +
@@ -20,7 +20,8 @@ describe('maintenance privilege boundary', () => {
       "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') " +
       "AND left(p.proname, 6) = 'purge_' " +
       "AND acl.privilege_type = 'EXECUTE' " +
-      "AND (acl.grantee = 0 OR acl.grantee = 'sync_app'::regrole) " +
+      "AND (acl.grantee = 0 OR acl.grantee = 'sync_app'::regrole " +
+      "OR pg_catalog.has_function_privilege('sync_app', p.oid, 'EXECUTE')) " +
       "ORDER BY function_name, grantee"
     );
     expect(result.rows).toEqual([]);
