@@ -72,7 +72,10 @@ async function query(db: string, sql: string): Promise<any> {
   });
   try {
     const r = await pool.query(sql);
-    return r.rows[0] ? Object.values(r.rows[0])[0] : undefined;
+    const value = r.rows[0] ? Object.values(r.rows[0])[0] : undefined;
+    return typeof value === 'string' && value !== '' && Number.isFinite(Number(value))
+      ? Number(value)
+      : value;
   } finally { await pool.end(); }
 }
 async function ledger(db: string): Promise<string[]> {
