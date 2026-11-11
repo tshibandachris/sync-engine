@@ -357,26 +357,32 @@ describe('POS sales push contract', () => {
     expect(isolation).toBe('read committed');
   });
 
-  it('persists client-supplied timestamps unchanged and detects changed stock movement timestamps', async () => {
+  it('ignores server-generated updated_at values when comparing a replay', async () => {
     const item = sale();
+    item.updated_at = 1;
+    item.lines[0].updated_at = 1;
+    item.stock_movements[0].updated_at = 1;
+
     expect((await push([item])).body.results[0].status).toBe('applied');
 
     const storedSale = (await pg.pool.query('SELECT created_at, updated_at FROM sales WHERE id=$1', [item.id])).rows[0];
     const storedLine = (await pg.pool.query('SELECT created_at, updated_at FROM sale_lines WHERE id=$1', [item.lines[0].id])).rows[0];
     const storedMovement = (await pg.pool.query('SELECT created_at, updated_at FROM stock_movements WHERE id=$1', [item.stock_movements[0].id])).rows[0];
-    expect(Number(storedSale.created_at)).toBe(item.created_at);
-    expect(Number(storedSale.updated_at)).toBe(item.updated_at);
-    expect(Number(storedLine.created_at)).toBe(item.lines[0].created_at);
-    expect(Number(storedLine.updated_at)).toBe(item.lines[0].updated_at);
-    expect(Number(storedMovement.created_at)).toBe(item.stock_movements[0].created_at);
-    expect(Number(storedMovement.updated_at)).toBe(item.stock_movements[0].updated_at);
 
-    expect((await push([item])).body.results[0].status).toBe('idempotent');
-    const changed = {
+    expect(Number(storedSale.created_at)).toBe(item.created_at);
+    expect(Number(storedLine.created_at)).toBe(item.lines[0].created_at);
+    expect(Number(storedMovement.created_at)).toBe(item.stock_movements[0].created_at);
+    expect(Number(storedSale.updated_at)).toBeGreaterThan(1);
+    expect(Number(storedLine.updated_at)).toBeGreaterThan(1);
+    expect(Number(storedMovement.updated_at)).toBeGreaterThan(1);
+
+    const replayWithDifferentClientUpdatedAt = {
       ...item,
-      stock_movements: item.stock_movements.map(m => ({ ...m, updated_at: m.updated_at + 1 })),
+      updated_at: 2,
+      lines: item.lines.map(line => ({ ...line, updated_at: 2 })),
+      stock_movements: item.stock_movements.map(movement => ({ ...movement, updated_at: 2 })),
     };
-    expect((await push([changed])).body.results[0].status).toBe('conflict');
+    expect((await push([replayWithDifferentClientUpdatedAt])).body.results[0].status).toBe('idempotent');
   });
 
 });
