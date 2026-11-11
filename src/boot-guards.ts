@@ -55,13 +55,8 @@ export function assertNotDevAuthInProd(env: NodeJS.ProcessEnv): void {
 }
 
 /**
- * Chooses between the two auth strategies and enforces the one the
- * environment asked for.
- *
- *   Production:  JWKS_URL and JWT_AUDIENCE are required. JWT_SECRET is not
- *                used (the app never signs tokens in production).
- *   Elsewhere:   if JWKS_URL is absent, fall back to a strong local
- *                JWT_SECRET so the dev mint at /auth/token works.
+ * Production accepts only asymmetric JWKS verification with an explicit
+ * issuer and audience. Local shared-secret signing is restricted to development.
  */
 export function assertAuthStrategy(env: NodeJS.ProcessEnv): void {
   const isProd = env.NODE_ENV === 'production';

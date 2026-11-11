@@ -97,3 +97,10 @@ This environment is for a disposable integration test only. Upgrade and define b
 ## Rollback and recovery
 
 Render Free Postgres has no backups. There is no safe production rollback path for schema changes on a Free database. This runbook is test-only: for a failed disposable test, recreate the test database and replay the complete migration chain. Never attempt ad-hoc reverse SQL against a real database. Before production, use a paid database with verified backups and a tested restore procedure; take a backup before every schema change.
+
+## Références officielles des limites des offres gratuites
+
+- Render : https://render.com/docs/free
+- Supabase : https://supabase.com/docs/guides/platform/free-project-pausing
+
+Vérifiées le 11 novembre 2026. Les limites peuvent évoluer ; revérifier ces pages avant tout pilote.

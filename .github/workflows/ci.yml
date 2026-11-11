@@ -7,6 +7,25 @@ on:
     branches: [main, validation/full-device-approval-signed-sync-v4]
 
 jobs:
+  secret-scan:
+    name: Scan tracked source for high-confidence secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan without printing matched values
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AKIA[0-9A-Z]{16}|postgres(ql)?://[^[:space:]@]+:[^[:space:]@]{16,}@|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd][[:space:]]*[:=][[:space:]]*[A-Za-z0-9_./+=-]{16,}|(SUPABASE_SERVICE_ROLE_KEY|RENDER_DB_PASSWORD|R2_SECRET_ACCESS_KEY)[[:space:]]*=[[:space:]]*[A-Za-z0-9_./+=-]{16,})'
+          matches="$(git grep -nI -E "$pattern" -- . ':!.env.example' ':!docs/**' ':!test/**' ':!**/*.lock' || true)"
+          if [[ -n "$matches" ]]; then
+            echo "::error::Potential secret-like value found. Matched values are suppressed; locations only:"
+            printf '%s\\n' "$matches" | cut -d: -f1,2 | sort -u
+            exit 1
+          fi
+          echo "No high-confidence secret patterns found (example, documentation and test fixtures excluded)."
+
   workflow-validation:
     name: Validate workflows and migration shell
     runs-on: ubuntu-latest
