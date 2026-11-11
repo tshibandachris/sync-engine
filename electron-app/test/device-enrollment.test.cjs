@@ -39,7 +39,7 @@ test('extractTenantIdFromDeviceToken rejects tokens without a tenant claim', () 
   const { extractTenantIdFromDeviceToken } = require('../electron/auth/device-enrollment.cjs');
   assert.throws(
     () => extractTenantIdFromDeviceToken(jwt({ payload: { sub: 'device-1', exp: 4102444800 } })),
-    /identifiant d’entreprise valide/,
+    /UUID valide/,
   );
 });
 
