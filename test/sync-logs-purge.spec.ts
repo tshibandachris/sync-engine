@@ -39,10 +39,10 @@ describe('purge_tenant_sync_logs', () => {
     return new Set(r.rows.map((row: { id: string }) => String(row.id)));
   }
 
-  // Appel en tant que sync_app. context = tenant du contexte posé avant l'appel (null = aucun,
+  // Appel en tant que maintenance_login. context = tenant du contexte posé avant l'appel (null = aucun,
   // la fonction est autonome). COMMIT si l'appel réussit, ROLLBACK sinon.
   async function purge(tenantId: string, ttlDays: number, context: string | null = null): Promise<number> {
-    const client = await pg.appPool.connect();
+    const client = await pg.maintenancePool.connect();
     try {
       await client.query('BEGIN');
       if (context) {
@@ -109,7 +109,7 @@ describe('purge_tenant_sync_logs', () => {
     expect((await listLogIds(tenantA)).has(old)).toBe(false);
   });
 
-  it('sync_app ne peut pas faire DELETE directement, la fonction si', async () => {
+  it('sync_app ne peut ni supprimer les logs ni appeler la purge réservée à maintenance_login', async () => {
     const client = await pg.appPool.connect();
     try {
       await client.query('BEGIN');
@@ -123,6 +123,17 @@ describe('purge_tenant_sync_logs', () => {
     }
 
     const old = await seedLog(tenantA, Date.now() - 40 * DAY_MS);
+    const appClient = await pg.appPool.connect();
+    try {
+      await appClient.query('BEGIN');
+      await appClient.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantA]);
+      await expect(appClient.query(
+        'SELECT purge_tenant_sync_logs($1::uuid, 30)', [tenantA],
+      )).rejects.toThrow(/permission denied/);
+      await appClient.query('ROLLBACK');
+    } finally {
+      appClient.release();
+    }
     expect(await purge(tenantA, 30)).toBe(1);
     expect((await listLogIds(tenantA)).has(old)).toBe(false);
   });
@@ -162,7 +173,7 @@ describe('purge_tenant_sync_logs', () => {
   });
 
   it("restaure le contexte de l'appelant : purger B ne bascule pas la transaction de A", async () => {
-    const client = await pg.appPool.connect();
+    const client = await pg.maintenancePool.connect();
     try {
       await client.query('BEGIN');
       await client.query(`SELECT set_config('app.current_tenant_id', $1, true)`, [tenantA]);
@@ -176,7 +187,7 @@ describe('purge_tenant_sync_logs', () => {
   });
 
   it("sans contexte au départ, aucun contexte ne subsiste après la purge", async () => {
-    const client = await pg.appPool.connect();
+    const client = await pg.maintenancePool.connect();
     try {
       await client.query('BEGIN');
       await client.query('SELECT purge_tenant_sync_logs($1::uuid, 30)', [tenantA]);
@@ -188,14 +199,16 @@ describe('purge_tenant_sync_logs', () => {
     }
   });
 
-  it('la fonction est SECURITY DEFINER, search_path figé, EXECUTE pour sync_app et pas pour PUBLIC', async () => {
+  it('la fonction est SECURITY DEFINER, search_path figé, EXECUTE pour maintenance_purge_executor et pas pour sync_app/PUBLIC', async () => {
     const r = await pg.pool.query(
       `SELECT prosecdef, proconfig, proacl::text AS acl FROM pg_proc WHERE proname = 'purge_tenant_sync_logs'`,
     );
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0].prosecdef).toBe(true);
     expect((r.rows[0].proconfig ?? []).some((c: string) => c.startsWith('search_path='))).toBe(true);
-    expect(r.rows[0].acl).toMatch(/sync_app=X\//);
+    expect(r.rows[0].acl).toMatch(/maintenance_purge_executor=X\//);
+    expect(r.rows[0].acl).not.toMatch(/sync_app=X\//);
+    expect(r.rows[0].acl).not.toMatch(/sync_app=X\//);
     expect(r.rows[0].acl).not.toMatch(/[{,]=X\//); // une entrée « =X/ » serait PUBLIC
   });
 });

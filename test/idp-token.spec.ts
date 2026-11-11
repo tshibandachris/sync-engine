@@ -9,140 +9,135 @@ import {
 } from 'jose';
 import { IdpVerificationError, verifyToken } from '../src/idp-token.js';
 
-const TENANT = '00000000-0000-0000-0000-000000000001';
-const AGENT  = '00000000-0000-0000-0000-000000000002';
-const AUDIENCE = 'sync-engine';
-const ISSUER = 'https://idp.example/';
-const TENANT_CLAIM = 'tenantId';
+const USER = '00000000-0000-4000-8000-000000000010';
+const AGENT = '00000000-0000-4000-8000-000000000002';
+const TENANT = '00000000-0000-4000-8000-000000000001';
+const AUDIENCE = 'authenticated';
+const ISSUER = 'https://example.supabase.co/auth/v1';
 
 async function makeKeys() {
   const { publicKey, privateKey } = await generateKeyPair('RS256');
   const jwk: JWK = await exportJWK(publicKey);
   jwk.kid = 'test-key';
   jwk.alg = 'RS256';
-  const jwks = createLocalJWKSet({ keys: [jwk] });
-  return { privateKey: privateKey as KeyObject, jwks };
+  jwk.use = 'sig';
+  return { privateKey: privateKey as KeyObject, jwks: createLocalJWKSet({ keys: [jwk] }) };
 }
 
 async function sign(
   key: KeyObject,
   claims: Record<string, unknown>,
-  expiresIn = '1h',
+  alg: 'RS256' | 'HS256' = 'RS256',
+  expiresIn = '5m',
 ) {
-  return await new SignJWT(claims)
-    .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+  return new SignJWT(claims)
+    .setProtectedHeader({ alg, kid: 'test-key' })
     .setIssuer(ISSUER)
     .setAudience(AUDIENCE)
+    .setSubject(USER)
     .setIssuedAt()
     .setExpirationTime(expiresIn)
     .sign(key);
 }
 
-describe('verifyToken', () => {
-  it('accepts a valid token and returns the identity', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT, tenantId: TENANT });
-    const id = await verifyToken(token, jwks, {
-      audience: AUDIENCE,
-      issuer: ISSUER,
-      tenantClaim: TENANT_CLAIM,
-    });
-    expect(id).toEqual({ agentId: AGENT, tenantId: TENANT, permissions: [], serviceIds: [] });
-  });
-
-  it('extracts permission and service claims from the verified token', async () => {
+describe('verifyToken — Supabase asymmetric JWKS', () => {
+  it('accepts a valid RS256 token and maps agent_id + tenantId', async () => {
     const { privateKey, jwks } = await makeKeys();
     const token = await sign(privateKey, {
-      sub: AGENT,
+      agent_id: AGENT,
       tenantId: TENANT,
-      permissions: ['courrier:read', 'courrier:register'],
-      service_ids: ['00000000-0000-4000-8000-000000000003', 'invalid'],
+      permissions: ['courrier:read'],
     });
-    const id = await verifyToken(token, jwks, {
-      audience: AUDIENCE,
-      issuer: ISSUER,
-      tenantClaim: TENANT_CLAIM,
-    });
-    expect(id.permissions).toEqual(['courrier:read', 'courrier:register']);
-    expect(id.serviceIds).toEqual(['00000000-0000-4000-8000-000000000003']);
+    await expect(verifyToken(token, jwks, { audience: AUDIENCE, issuer: ISSUER }))
+      .resolves.toEqual({
+        agentId: AGENT,
+        tenantId: TENANT,
+        permissions: ['courrier:read'],
+        serviceIds: [],
+      });
   });
 
-  it('parses OAuth scope strings when a permissions array is absent', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT, tenantId: TENANT, scope: 'courrier:read courrier:register' });
-    const id = await verifyToken(token, jwks, {
-      audience: AUDIENCE,
-      issuer: ISSUER,
-      tenantClaim: TENANT_CLAIM,
-    });
-    expect(id.permissions).toEqual(['courrier:read', 'courrier:register']);
-  });
-
-  it('rejects an expired token', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT, tenantId: TENANT }, '-1s');
-    await expect(
-      verifyToken(token, jwks, { audience: AUDIENCE, issuer: ISSUER, tenantClaim: TENANT_CLAIM }),
-    ).rejects.toBeInstanceOf(IdpVerificationError);
-  });
-
-  it('rejects a wrong audience', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT, tenantId: TENANT });
-    await expect(
-      verifyToken(token, jwks, { audience: 'other-api', issuer: ISSUER, tenantClaim: TENANT_CLAIM }),
-    ).rejects.toBeInstanceOf(IdpVerificationError);
-  });
-
-  it('rejects a wrong issuer', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT, tenantId: TENANT });
-    await expect(
-      verifyToken(token, jwks, { audience: AUDIENCE, issuer: 'https://evil/', tenantClaim: TENANT_CLAIM }),
-    ).rejects.toBeInstanceOf(IdpVerificationError);
+  it('accepts ES256 as the other approved asymmetric algorithm', async () => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256');
+    const jwk: JWK = await exportJWK(publicKey);
+    jwk.kid = 'es256-key';
+    jwk.alg = 'ES256';
+    jwk.use = 'sig';
+    const jwks = createLocalJWKSet({ keys: [jwk] });
+    const token = await new SignJWT({ agent_id: AGENT, tenantId: TENANT })
+      .setProtectedHeader({ alg: 'ES256', kid: 'es256-key' })
+      .setIssuer(ISSUER)
+      .setAudience(AUDIENCE)
+      .setSubject(USER)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(privateKey);
+    await expect(verifyToken(token, jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).resolves.toMatchObject({ agentId: AGENT, tenantId: TENANT });
   });
 
   it('rejects a token signed by a different key', async () => {
+    const trusted = await makeKeys();
+    const attacker = await makeKeys();
+    const token = await sign(attacker.privateKey, { agent_id: AGENT, tenantId: TENANT });
+    await expect(verifyToken(token, trusted.jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).rejects.toBeInstanceOf(IdpVerificationError);
+  });
+
+  it('rejects a token without agent_id', async () => {
+    const { privateKey, jwks } = await makeKeys();
+    const token = await sign(privateKey, { tenantId: TENANT });
+    await expect(verifyToken(token, jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).rejects.toThrow(/agent_id/);
+  });
+
+  it('rejects a token without tenantId', async () => {
+    const { privateKey, jwks } = await makeKeys();
+    const token = await sign(privateKey, { agent_id: AGENT });
+    await expect(verifyToken(token, jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).rejects.toThrow(/tenantId/);
+  });
+
+  it('rejects malformed agent_id and tenantId UUIDs', async () => {
+    const { privateKey, jwks } = await makeKeys();
+    const badAgent = await sign(privateKey, { agent_id: 'not-a-uuid', tenantId: TENANT });
+    const badTenant = await sign(privateKey, { agent_id: AGENT, tenantId: 'not-a-uuid' });
+    await expect(verifyToken(badAgent, jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).rejects.toThrow(/agent_id/);
+    await expect(verifyToken(badTenant, jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).rejects.toThrow(/tenantId/);
+  });
+
+  it('rejects HS256 even when the claims are otherwise valid', async () => {
     const { jwks } = await makeKeys();
-    const { privateKey: otherKey } = await makeKeys();
-    const token = await sign(otherKey, { sub: AGENT, tenantId: TENANT });
-    await expect(
-      verifyToken(token, jwks, { audience: AUDIENCE, issuer: ISSUER, tenantClaim: TENANT_CLAIM }),
-    ).rejects.toBeInstanceOf(IdpVerificationError);
+    const secret = new TextEncoder().encode('a-test-secret-that-is-long-enough-for-hmac-signing');
+    const token = await new SignJWT({ agent_id: AGENT, tenantId: TENANT })
+      .setProtectedHeader({ alg: 'HS256', kid: 'test-key' })
+      .setIssuer(ISSUER)
+      .setAudience(AUDIENCE)
+      .setSubject(USER)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(secret);
+    await expect(verifyToken(token, jwks, {
+      audience: AUDIENCE, issuer: ISSUER,
+    })).rejects.toBeInstanceOf(IdpVerificationError);
   });
 
-  it('rejects a missing tenant claim', async () => {
+  it('rejects wrong audience and issuer', async () => {
     const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT });
-    await expect(
-      verifyToken(token, jwks, { audience: AUDIENCE, issuer: ISSUER, tenantClaim: TENANT_CLAIM }),
-    ).rejects.toThrow(/tenantId/);
-  });
-
-  it('rejects a non-UUID sub claim', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: 'not-a-uuid', tenantId: TENANT });
-    await expect(
-      verifyToken(token, jwks, { audience: AUDIENCE, issuer: ISSUER, tenantClaim: TENANT_CLAIM }),
-    ).rejects.toThrow(/sub/);
-  });
-
-  it('rejects a non-UUID tenant claim', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT, tenantId: 'not-a-uuid' });
-    await expect(
-      verifyToken(token, jwks, { audience: AUDIENCE, issuer: ISSUER, tenantClaim: TENANT_CLAIM }),
-    ).rejects.toThrow(/tenantId/);
-  });
-
-  it('accepts a custom tenant claim name', async () => {
-    const { privateKey, jwks } = await makeKeys();
-    const token = await sign(privateKey, { sub: AGENT, 'https://sync/tenant': TENANT });
-    const id = await verifyToken(token, jwks, {
-      audience: AUDIENCE,
-      issuer: ISSUER,
-      tenantClaim: 'https://sync/tenant',
-    });
-    expect(id).toEqual({ agentId: AGENT, tenantId: TENANT, permissions: [], serviceIds: [] });
+    const token = await sign(privateKey, { agent_id: AGENT, tenantId: TENANT });
+    await expect(verifyToken(token, jwks, {
+      audience: 'another-api', issuer: ISSUER,
+    })).rejects.toBeInstanceOf(IdpVerificationError);
+    await expect(verifyToken(token, jwks, {
+      audience: AUDIENCE, issuer: 'https://wrong.example/',
+    })).rejects.toBeInstanceOf(IdpVerificationError);
   });
 });

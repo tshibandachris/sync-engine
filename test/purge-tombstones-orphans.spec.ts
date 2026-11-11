@@ -74,7 +74,7 @@ describe('purge_tenant_tombstones: orphaned object keys', () => {
     check_ins_deleted: number;
     orphaned_object_keys: string[];
   }> {
-    const client = await pg.appPool.connect();
+    const client = await pg.maintenancePool.connect();
     try {
       await client.query('BEGIN');
       await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
