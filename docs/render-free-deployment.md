@@ -28,7 +28,7 @@ Create these **repository Actions secrets** only after confirming the database I
 - `DEVICE_ADMIN_PASSWORD`
 - `MAINTENANCE_PASSWORD` — long, unique password for the dedicated `maintenance_login` role
 
-Use long, unique random values for the three application passwords. Never commit them, paste them into issues/PR comments, or send them in chat. The migration workflow must stop if the Render database user lacks the required role-management capability.
+Use long, unique random values for all four application passwords. Never commit them, paste them into issues/PR comments, or send them in chat. The migration workflow must stop if the Render database user lacks the required role-management capability.
 
 The workflow applies the repository's 40 SQL migration files, provisions `maintenance_login` with membership only in `maintenance_purge_executor`, and verifies the migration ledger. A successful workflow run is required before starting the API. The maintenance login is not an API credential.
 
