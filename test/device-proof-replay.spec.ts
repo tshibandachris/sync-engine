@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TestPostgres } from './helpers/testcontainers-pg.js';
 import { startTestPostgres } from './helpers/testcontainers-pg.js';
@@ -219,18 +220,17 @@ describe('Device proof replay registry (PostgreSQL / RLS)', () => {
       appClient.release();
     }
 
-    const mismatchedContext = await pg.maintenancePool.connect();
+    let mismatchError: unknown;
     try {
-      await mismatchedContext.query('BEGIN');
-      await mismatchedContext.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantA]);
-      await expect(mismatchedContext.query(
-        'SELECT public.purge_expired_device_proof_nonces($1::uuid, 1)',
-        [tenantB],
-      )).rejects.toMatchObject({ code: '42501' });
-      await mismatchedContext.query('ROLLBACK');
-    } finally {
-      mismatchedContext.release();
+      await pg.maintenanceDb.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`);
+        await tx.execute(sql`SELECT public.purge_expired_device_proof_nonces(${tenantB}::uuid, 1)`);
+      });
+    } catch (error) {
+      mismatchError = error;
     }
+    const pgError = mismatchError as { code?: string; cause?: { code?: string } } | undefined;
+    expect(pgError?.cause?.code ?? pgError?.code).toBe('42501');
 
     await expect(maintenance.purgeExpiredDeviceProofNonces(tenantA, 1)).resolves.toEqual({ deleted: 1 });
     const remaining = await pg.pool.query(

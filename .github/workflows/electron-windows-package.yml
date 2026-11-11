@@ -2,15 +2,9 @@ name: Eden Gestion Desktop — Windows installer
 
 on:
   pull_request:
-    branches: [main]
-    paths:
-      - 'electron-app/**'
-      - '.github/workflows/electron-windows-package.yml'
+    branches: [main, validation/full-device-approval-signed-sync-v4]
   push:
-    branches: [main]
-    paths:
-      - 'electron-app/**'
-      - '.github/workflows/electron-windows-package.yml'
+    branches: [main, fix/maintenance-boundary-migration-resume-v1]
   workflow_dispatch:
 
 permissions:

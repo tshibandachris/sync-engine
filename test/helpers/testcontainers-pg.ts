@@ -275,6 +275,7 @@ export class TestPostgres {
     '038_device_enrollment_owner_schema_hardening.sql',
     '039_purge_expired_device_proof_nonces.sql',
     '040_maintenance_purge_executor.sql',
+    '041_maintenance_purge_batch_limits.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
@@ -366,14 +367,14 @@ export class TestPostgres {
     const adminDb = drizzle(adminPool, { schema });
 
     // Dedicated LOGIN with only the maintenance purge capability.
-    await pool.query("CREATE ROLE maintenance_test LOGIN INHERIT PASSWORD 'maintenance_test_pw'");
-    await pool.query('GRANT maintenance_purge_executor TO maintenance_test WITH INHERIT TRUE, SET FALSE');
+    await pool.query("CREATE ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'maintenance_login_pw'");
+    await pool.query('GRANT maintenance_purge_executor TO maintenance_login WITH INHERIT TRUE, SET FALSE');
     const maintenancePool = new Pool({
       host: container.getHost(),
       port: container.getPort(),
       database: container.getDatabase(),
-      user: 'maintenance_test',
-      password: 'maintenance_test_pw',
+      user: 'maintenance_login',
+      password: 'maintenance_login_pw',
     });
     const maintenanceDb = drizzle(maintenancePool, { schema });
 

@@ -6,6 +6,16 @@
 #
 set -eu
 
+MIGRATIONS_ONLY=0
+if [ "${1:-}" = "--migrations-only" ]; then
+  MIGRATIONS_ONLY=1
+  shift
+fi
+if [ "$#" -gt 0 ]; then
+  echo "[migrate] ERROR: unexpected argument: $1" >&2
+  exit 2
+fi
+
 : "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
 : "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
 : "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
@@ -126,6 +136,11 @@ INSERT INTO public.schema_migrations (filename) VALUES (\047%s\047);
   rm -f "$tmp"
 done
 
+if [ "$MIGRATIONS_ONLY" = "1" ]; then
+  echo "[migrate] migrations-only test mode complete; login provisioning skipped"
+  exit 0
+fi
+
 echo "[migrate] restricting migration ledger and enabling application login"
 psql_base <<'EOSQL'
 REVOKE ALL ON TABLE public.schema_migrations FROM PUBLIC, sync_app;
@@ -218,12 +233,37 @@ maintenance_login_ok=$(psql_base -tA -c "
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.list_tenant_attachment_object_keys(uuid)', 'EXECUTE')
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_sync_logs(uuid,integer)', 'EXECUTE')
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_sync_tables(integer,integer)', 'EXECUTE')
     THEN 1 ELSE 0 END
 ")
 if [ "$maintenance_login_ok" != "1" ]; then
   echo "[migrate] ERROR: maintenance_login privilege boundary verification failed."
   exit 1
 fi
+
+purge_acl_violations=$(psql_base -tA -c "
+  SELECT count(*)
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+     AND left(p.proname, 6) = 'purge_'
+     AND (
+       pg_catalog.has_function_privilege('sync_app', p.oid, 'EXECUTE')
+       OR EXISTS (
+         SELECT 1
+           FROM pg_catalog.aclexplode(
+             COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+           ) acl
+          WHERE acl.grantee = 0
+            AND acl.privilege_type = 'EXECUTE'
+       )
+     )
+")
+if [ "$purge_acl_violations" != "0" ]; then
+  echo "[migrate] ERROR: sync_app or PUBLIC can execute a purge_* function."
+  exit 1
+fi
+
 
 echo "[migrate] verifying login separation"
 separation_ok=$(psql_base -tA -c "

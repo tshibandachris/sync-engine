@@ -74,32 +74,29 @@ export class SyncMaintenanceService {
     this.db = db;
   }
 
-  async purge(options: PurgeOptions = {}): Promise<PurgeResult> {
+  async purge(tenantId: string, options: PurgeOptions = {}): Promise<PurgeResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
     const ttlIdempotencyDays = options.ttlIdempotencyDays ?? 7;
     const ttlConflictsDays = options.ttlConflictsDays ?? 30;
-
     if (ttlIdempotencyDays < 0 || ttlConflictsDays < 0) {
       throw new Error('TTL ne peut pas etre negatif.');
     }
 
-    const result = await this.db.execute(sql`
-      SELECT purge_sync_tables(
-        ${ttlIdempotencyDays}::int,
-        ${ttlConflictsDays}::int
-      ) AS result
-    `);
-
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    const payload = row?.result as Record<string, unknown> | undefined;
-
-    if (!payload) {
-      throw new Error('purge_sync_tables a retourne un resultat vide.');
-    }
-
-    return {
-      idempotencyDeleted: Number(payload.idempotency_deleted ?? 0),
-      conflictsDeleted: Number(payload.conflicts_deleted ?? 0),
-    };
+    return withTenant(this.db, tenantId, async (tx) => {
+      const result = await tx.execute(sql`
+        SELECT public.purge_sync_tables(
+          ${ttlIdempotencyDays}::int,
+          ${ttlConflictsDays}::int
+        ) AS result
+      `);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      const payload = row?.result as Record<string, unknown> | undefined;
+      if (!payload) throw new Error('purge_sync_tables a retourne un resultat vide.');
+      return {
+        idempotencyDeleted: Number(payload.idempotency_deleted ?? 0),
+        conflictsDeleted: Number(payload.conflicts_deleted ?? 0),
+      };
+    }, { registerTenant: false });
   }
 
   async purgeTenantTombstones(
@@ -145,7 +142,7 @@ export class SyncMaintenanceService {
     ttlDays: number = 30,
   ): Promise<PurgeSyncLogsResult> {
     if (!tenantId) throw new Error('tenantId requis.');
-    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+    if (ttlDays < 30) throw new Error('ttl_days doit etre >= 30.');
 
     return withTenant(this.db, tenantId, async (tx) => {
       const result = await tx.execute(sql`
