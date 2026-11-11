@@ -1,14 +1,15 @@
 #!/bin/sh
 #
-# Apply pending SQL migrations exactly once, then provision the application, enrollment and device-admin logins
-# from independent deployment secrets. The migration ledger also
+# Apply pending SQL migrations exactly once, then provision the API, enrollment,
+# device-admin and maintenance logins from independent deployment secrets. The migration ledger also
 # allows existing pre-ledger installations to advance beyond migration 030.
 #
 set -eu
 
 : "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
 : "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
-: "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"\n: "${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}"
+: "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
+: "${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}"
 : "${PGPASSWORD:?PGPASSWORD is required}"
 
 DB_HOST=${DB_HOST:-db}
@@ -91,19 +92,29 @@ for f in $MIGRATIONS_DIR/*.sql; do
   # standalone transaction-control lines so the migration and its ledger row
   # can commit atomically in one psql transaction.
   {
-    printf '%s\n' "BEGIN;"
-    printf '%s\n' "SELECT pg_advisory_xact_lock(7303::bigint);"
-    printf '%s\n' "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE filename = '$name') AS migration_already_applied \\gset"
-    printf '%s\n' "\\if :migration_already_applied"
-    printf '%s\n' "\\echo [migrate]   already applied: $name"
-    printf '%s\n' "\\else"
+    printf '%s
+' "BEGIN;"
+    printf '%s
+' "SELECT pg_advisory_xact_lock(7303::bigint);"
+    printf '%s
+' "SELECT EXISTS (SELECT 1 FROM public.schema_migrations WHERE filename = '$name') AS migration_already_applied \\gset"
+    printf '%s
+' "\\if :migration_already_applied"
+    printf '%s
+' "\\echo [migrate]   already applied: $name"
+    printf '%s
+' "\\else"
     awk '
       !/^[[:space:]]*BEGIN;[[:space:]]*$/ &&
       !/^[[:space:]]*COMMIT;[[:space:]]*$/ { print }
     ' "$f"
-    printf '\nINSERT INTO public.schema_migrations (filename) VALUES (\047%s\047);\n' "$name"
-    printf '%s\n' "\\endif"
-    printf '%s\n' "COMMIT;"
+    printf '
+INSERT INTO public.schema_migrations (filename) VALUES (\047%s\047);
+' "$name"
+    printf '%s
+' "\\endif"
+    printf '%s
+' "COMMIT;"
   } > "$tmp"
 
   echo "[migrate]   checking/applying: $name"
@@ -187,6 +198,32 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM maintenance_login;
 GRANT maintenance_purge_executor TO maintenance_login WITH INHERIT TRUE, SET FALSE;
 GRANT CONNECT ON DATABASE :"db_name" TO maintenance_login;
 EOSQL
+
+echo "[migrate] verifying maintenance role boundary"
+maintenance_login_ok=$(psql_base -tA -c "
+  SELECT CASE
+    WHEN pg_catalog.pg_has_role('maintenance_login', 'maintenance_purge_executor', 'USAGE')
+     AND NOT pg_catalog.pg_has_role('maintenance_login', 'sync_app', 'MEMBER')
+     AND NOT (SELECT rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication
+                FROM pg_catalog.pg_roles WHERE rolname = 'maintenance_login')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.attachments', 'SELECT')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.attachments', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.check_ins', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.missions', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.sites', 'DELETE')
+     AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.sync_purge_state', 'UPDATE')
+     AND pg_catalog.has_table_privilege('maintenance_login', 'public.tenants', 'SELECT')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_tombstones(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_pending_attachments(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.list_tenant_attachment_object_keys(uuid)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_tenant_sync_logs(uuid,integer)', 'EXECUTE')
+     AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE')
+    THEN 1 ELSE 0 END
+")
+if [ "$maintenance_login_ok" != "1" ]; then
+  echo "[migrate] ERROR: maintenance_login privilege boundary verification failed."
+  exit 1
+fi
 
 echo "[migrate] verifying login separation"
 separation_ok=$(psql_base -tA -c "
