@@ -6,8 +6,6 @@ const ALLOWED_IDP_ALGORITHMS = ['ES256', 'RS256'] as const;
 export interface VerifyOptions {
   audience?: string;
   issuer?: string;
-  /** @deprecated Tenant identity is always read from the fixed tenantId claim. */
-  tenantClaim?: string;
 }
 export interface VerifiedIdentity { agentId: string; tenantId: string; permissions: string[]; serviceIds: string[]; }
 export class IdpVerificationError extends Error {

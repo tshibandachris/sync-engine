@@ -13,7 +13,6 @@
 
 export interface IdpConfig {
   mode: 'jwks' | 'dev-secret';
-  tenantClaim: string;
   /** Only in 'jwks' mode. */
   jwksUrl?: string;
   audience?: string;
@@ -26,12 +25,11 @@ export function readIdpConfig(env: NodeJS.ProcessEnv = process.env): IdpConfig {
   const jwksUrl = env.JWKS_URL?.trim() || undefined;
   const audience = env.JWT_AUDIENCE?.trim() || undefined;
   const issuer = env.JWT_ISSUER?.trim() || undefined;
-  const tenantClaim = env.JWT_TENANT_CLAIM?.trim() || 'tenantId';
   const jwtSecret = env.JWT_SECRET?.trim() || undefined;
 
   if (jwksUrl) {
-    return { mode: 'jwks', jwksUrl, audience, issuer, tenantClaim };
+    return { mode: 'jwks', jwksUrl, audience, issuer };
   }
 
-  return { mode: 'dev-secret', jwtSecret, tenantClaim };
+  return { mode: 'dev-secret', jwtSecret };
 }
