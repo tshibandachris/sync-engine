@@ -10,7 +10,7 @@ The application must not be exposed publicly until all of these are resolved:
 2. **Database identities:** the migration creates/updates three separate logins: `sync_app`, `device_enrollment_login`, and `device_admin_login`. The API must use three separate connection URLs. Never put the Render owner/admin connection URL in the Web Service environment.
 3. **Identity provider:** production boot guards require `JWKS_URL` and `JWT_AUDIENCE`, unless the operator explicitly opts into shared-secret mode. Shared-secret mode grants broad tenant access to anyone holding the secret and is not an appropriate default for a public internet-facing service. Configure a real OIDC/JWKS issuer before public deployment.
 4. **S3-compatible object storage:** the app requires a bucket and S3 credentials. The Compose SeaweedFS container is not part of Render. Configure an external S3-compatible service and ensure `S3_PUBLIC_ENDPOINT` is reachable by mobile clients over HTTPS. Do not use localhost or an internal-only hostname for presigned URLs.
-5. **Maintenance:** `maintenance-runner.js` is a separate batch process. The Free web service cannot run one-off jobs and Render Cron Jobs are not a Free service type. Do not silently move destructive maintenance into the API startup path. Until a scheduler is selected, schedule no destructive purge; review maintenance reports separately.
+5. **Maintenance:** `maintenance-runner.js` is a separate batch process, run by `.github/workflows/maintenance-purge.yml` (daily at 03:17 UTC). The workflow uses a dedicated `maintenance_login` role and bucket-scoped R2 credentials. GitHub-hosted runner IPs change, so use Render's external PostgreSQL URL with TLS; do not put this credential in the API service environment. Scheduled workflows run from the default branch, so this workflow is not active until it is merged to the default branch.
 
 ## GitHub migration workflow
 
@@ -25,11 +25,11 @@ Create these **repository Actions secrets** only after confirming the database I
 - `RENDER_DB_PASSWORD`
 - `SYNC_APP_PASSWORD`
 - `DEVICE_ENROLLMENT_PASSWORD`
-- `DEVICE_ADMIN_PASSWORD`
+- `DEVICE_ADMIN_PASSWORD`\n- `MAINTENANCE_PASSWORD` — long, unique password for the dedicated `maintenance_login` role
 
 Use long, unique random values for the three application passwords. Never commit them, paste them into issues/PR comments, or send them in chat. The migration workflow must stop if the Render database user lacks the required role-management capability.
 
-The workflow applies the repository's 39 SQL migration files and verifies the migration ledger. A successful workflow run is required before starting the API.
+The workflow applies the repository's 40 SQL migration files, provisions `maintenance_login` with membership only in `maintenance_purge_executor`, and verifies the migration ledger. A successful workflow run is required before starting the API. The maintenance login is not an API credential.
 
 ## Render Web Service configuration (after the blockers are resolved)
 
@@ -64,6 +64,23 @@ Required environment variables:
 | `TRUST_PROXY_HOPS` | Set only after verifying Render's proxy topology and the required hop count |
 
 Do not set `AUTH_ALLOW_SHARED_SECRET=true` for a public service without an explicit security review. Do not expose `METRICS_PORT` publicly.
+
+## Scheduled maintenance secrets and network access
+
+Add these **GitHub Actions secrets** for `.github/workflows/maintenance-purge.yml`:
+
+- `RENDER_MAINTENANCE_DATABASE_URL`: Render **External Database URL** using username `maintenance_login`, with `sslmode=require`. This role is provisioned by the migration workflow. GitHub-hosted runner IP addresses are dynamic; do not pin a short-lived runner IP. The database must permit external TLS connections.
+- `R2_BUCKET`: exact bucket name.
+- `R2_ENDPOINT`: `https://<account-id>.r2.cloudflarestorage.com`.
+- `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`: S3 API token credentials with **Object Read & Write** permission scoped to this bucket only.
+
+The maintenance role has no direct SELECT/DELETE rights on tenant tables. It can enumerate tenant UUIDs and execute only the narrowly granted maintenance functions; those functions enforce tenant context and the database retains FORCE RLS. The maintenance runner verifies that its current database user is exactly `maintenance_login`. Never reuse `sync_app`, the Render owner user, or an API connection string.
+
+The workflow is scheduled at 03:17 UTC and can also be manually dispatched. GitHub only runs scheduled workflows from the default branch; the file must reach that branch before the schedule becomes active.
+
+## Supabase Auth
+
+See [Supabase Auth setup](supabase-auth.md). Production requires an asymmetric ES256/RS256 signing key and a Custom Access Token Hook that copies `agent_id` and `tenantId` from server-managed `app_metadata`. User-editable `user_metadata` is never an identity source. The free Supabase project is for testing only; upgrade before a live commercial pilot.
 
 ## Important Free-plan limitations
 
