@@ -25,6 +25,7 @@ describe('production configuration excludes shared-secret authentication', () =>
     )).toBe(true);
     expect(targets.some((path) => path.endsWith('.test.yml') || path.includes('.test.'))).toBe(false);
     expect(targets.some((path) => path.startsWith('docs/'))).toBe(false);
+    expect(targets.some((path) => path.startsWith('test/'))).toBe(false);
     expect(targets).not.toContain('test/production-auth-config.spec.ts');
     expect(targets).not.toContain('test/boot-guards.spec.ts');
 
