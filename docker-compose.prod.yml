@@ -37,10 +37,11 @@ services:
       db:
         condition: service_healthy
     environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:?}
-      SYNC_APP_PASSWORD: ${SYNC_APP_PASSWORD:?}
-      DEVICE_ENROLLMENT_PASSWORD: ${DEVICE_ENROLLMENT_PASSWORD:?}
-      DEVICE_ADMIN_PASSWORD: ${DEVICE_ADMIN_PASSWORD:?}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      SYNC_APP_PASSWORD: ${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}
+      DEVICE_ENROLLMENT_PASSWORD: ${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}
+      DEVICE_ADMIN_PASSWORD: ${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}
+      MAINTENANCE_PASSWORD: ${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}
     volumes:
       - ./migrations:/migrations:ro
       - ./scripts/migrate.sh:/migrate.sh:ro
@@ -61,13 +62,12 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgres://sync_app:${SYNC_APP_PASSWORD:?}@db:5432/sync_engine
-      DEVICE_ENROLLMENT_DATABASE_URL: postgres://device_enrollment_login:${DEVICE_ENROLLMENT_PASSWORD:?}@db:5432/sync_engine
-      DEVICE_ADMIN_DATABASE_URL: postgres://device_admin_login:${DEVICE_ADMIN_PASSWORD:?}@db:5432/sync_engine
-            # Shared-secret mode: no external IdP. Opt in explicitly and
-      # accept the tradeoff (see HANDOFF.md, "Auth modes").
-      AUTH_ALLOW_SHARED_SECRET: "true"
-      JWT_SECRET: ${JWT_SECRET:?}
+      DATABASE_URL: postgres://sync_app:${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}@db:5432/sync_engine
+      DEVICE_ENROLLMENT_DATABASE_URL: postgres://device_enrollment_login:${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}@db:5432/sync_engine
+      DEVICE_ADMIN_DATABASE_URL: postgres://device_admin_login:${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}@db:5432/sync_engine
+      JWKS_URL: ${JWKS_URL:?JWKS_URL is required}
+      JWT_ISSUER: ${JWT_ISSUER:?JWT_ISSUER is required}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:?JWT_AUDIENCE is required}
       METRICS_PORT: 9464
       OPS_METRICS_TOKEN: ${OPS_METRICS_TOKEN:?}
       S3_BUCKET: ${S3_BUCKET:?}
