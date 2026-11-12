@@ -80,7 +80,7 @@ echo "[maintenance-createrole] migration 042 succeeds under CREATEROLE without S
 run_042_as_admin >/dev/null
 
 echo "[maintenance-createrole] provisioning a fresh maintenance login under CREATEROLE"
-psql_as_bootstrap -c "DROP ROLE maintenance_login" >/dev/null
+psql_as_bootstrap -c "DROP OWNED BY maintenance_login; DROP ROLE maintenance_login" >/dev/null
 run_maintenance_provisioning_as_admin >/dev/null
 
 echo "[maintenance-createrole] provisioning rejects a pre-existing pg_* membership"
