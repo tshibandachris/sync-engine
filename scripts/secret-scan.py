@@ -32,12 +32,45 @@ def self_test(allowlist: dict) -> None:
     sample = "PASS" + "WORD=FakeTestCredential123456 # change-me"
     if not scan_line("test/secret-scan-self-test.txt", sample, 7, allowlist):
         raise SystemExit("Self-test failed: line containing change-me was not detected.")
-    placeholder = "REPLACE_WITH_A_LONG_RANDOM_SECRET"
-    if not is_allowlisted(".env.example", placeholder, allowlist):
-        raise SystemExit("Self-test failed: exact placeholder exception missing.")
-    if is_allowlisted("test/secret-scan-self-test.txt", placeholder, allowlist):
-        raise SystemExit("Self-test failed: allowlist leaked across paths.")
-    print("Secret scanner self-test passed: change-me does not suppress a finding.")
+
+    expected_paths = {
+        ".env.example",
+        ".github/workflows/pos-migrations.yml",
+        ".env.prod.example",
+        ".env.test.example",
+        "test/helpers/testcontainers-pg.ts",
+    }
+    if set(allowlist) != expected_paths:
+        raise SystemExit("Self-test failed: allowlist paths differ from the five reviewed paths.")
+
+    # For every allowlisted path, put a fake secret next to an allowed captured
+    # value. The allowed value must be ignored, but the adjacent fake must fail.
+    for path, values in allowlist.items():
+        if not values:
+            raise SystemExit(f"Self-test failed: empty allowlist for {path}.")
+        marker = values[0]
+        line = f"PASSWORD={marker} PASSWORD=FakeTestCredential123456"
+        findings = scan_line(path, line, 11, allowlist)
+        if findings != [(path, 11)]:
+            raise SystemExit(
+                f"Self-test failed: adjacent fake secret was not detected for {path}."
+            )
+
+    # Exact-value and exact-path checks: neither a changed value nor another
+    # file may inherit an exception.
+    for path, values in allowlist.items():
+        for value in values:
+            if not is_allowlisted(path, value, allowlist):
+                raise SystemExit(f"Self-test failed: exact exception missing for {path}.")
+            if is_allowlisted(path, value + "_extra", allowlist):
+                raise SystemExit(f"Self-test failed: non-exact value accepted for {path}.")
+            if is_allowlisted("unrelated/" + path, value, allowlist):
+                raise SystemExit(f"Self-test failed: exception leaked from {path}.")
+
+    print(
+        "Secret scanner self-test passed: exact captured values only; "
+        "adjacent fake secrets detected in all five allowlisted files."
+    )
 
 def main() -> int:
     allowlist = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
