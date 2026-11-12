@@ -68,13 +68,55 @@ revoke execute on function public.eden_custom_access_token_hook(jsonb) from auth
 
 Activer ce hook dans **Authentication → Hooks → Custom Access Token**. Les valeurs `app_metadata` doivent être écrites par un processus d'administration fiable utilisant le service role ou une opération backend autorisée. Ne jamais exposer la clé service role dans le client. L'API exige `sub`, `agent_id` et `tenantId` au format UUID ; les valeurs imbriquées dans `user_metadata` ne sont jamais acceptées.
 
-## 3. Tests obligatoires avant ouverture
+## 3. Procédure de test avec un compte Supabase dédié
 
-- Obtenir un access token du projet et vérifier `iss`, `aud`, `sub`, `agent_id`, `tenantId` et son algorithme.
-- Vérifier que la clé publique du JWKS correspond à la clé de signature active.
-- Vérifier qu'un utilisateur sans les deux claims ne peut pas appeler l'API.
-- Vérifier qu'un changement de `user_metadata` ne modifie jamais le tenant contenu dans le token.
-- Exécuter `npm test -- test/idp-token.spec.ts` : mauvaise signature, HS256, claims absents et UUID mal formés doivent être rejetés.
+Effectuer ces vérifications dans un projet Supabase de test isolé, avec un utilisateur jetable et des UUID de test. Ne jamais réutiliser un compte ou des données de production.
+
+1. Créer un utilisateur de test dans **Authentication → Users**.
+2. Par un mécanisme d'administration de confiance (dashboard ou backend protégé), attribuer à cet utilisateur des valeurs UUID de test dans `app_metadata.agent_id` et `app_metadata.tenantId`. Ne jamais placer ces valeurs de confiance dans `user_metadata`.
+3. Activer le Custom Access Token Hook décrit plus haut et configurer l'API de test avec le JWKS URL, l'issuer et l'audience du projet.
+4. Obtenir un access token depuis le compte de test. Garder l'adresse et le mot de passe dans les variables d'environnement locales, jamais dans ce dépôt :
+
+```sh
+export SUPABASE_URL='https://<project-ref>.supabase.co'
+export SUPABASE_ANON_KEY='<clé-anon-du-projet-de-test>'
+export TEST_USER_EMAIL='<adresse-du-compte-de-test>'
+export TEST_USER_PASSWORD='<mot-de-passe-saisi-localement>'
+export API_URL='http://127.0.0.1:3000'
+```
+
+```sh
+curl --fail-with-body --silent --show-error \
+  "$SUPABASE_URL/auth/v1/token?grant_type=password" \
+  -H "apikey: $SUPABASE_ANON_KEY" \
+  -H 'Content-Type: application/json' \
+  --data "$(jq -n --arg email "$TEST_USER_EMAIL" --arg password "$TEST_USER_PASSWORD" '{email:$email,password:$password}')" \
+  > /tmp/supabase-test-session.json
+
+export ACCESS_TOKEN="$(jq -r '.access_token' /tmp/supabase-test-session.json)"
+test -n "$ACCESS_TOKEN" && test "$ACCESS_TOKEN" != "null"
+```
+
+5. Décoder localement le payload du jeton et vérifier `iss`, `aud`, `sub`, `agent_id`, `tenantId`, `exp` et l'algorithme ES256 ou RS256. La validation cryptographique réelle est faite par l'API, pas par un simple décodage local.
+6. Appeler une route protégée avec le jeton :
+
+```sh
+curl --fail-with-body --silent --show-error \
+  "$API_URL/sync/pull" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"last_pulled_at":0,"limit":1}'
+```
+
+L'URL et le corps doivent correspondre à l'API de test réellement démarrée. Un jeton sans claims métier valides doit être refusé.
+
+### Test manuel de non-confiance de user_metadata
+
+Avec le même utilisateur jetable, ajouter volontairement des valeurs UUID différentes dans les champs modifiables `user_metadata.agent_id` et `user_metadata.tenantId` (via le parcours utilisateur ou un client de test). Rafraîchir la session pour obtenir un nouveau jeton, puis vérifier que les claims `agent_id` et `tenantId` correspondent toujours aux valeurs administratives de `app_metadata`, et non aux valeurs modifiables. Vérifier également que l'accès aux données d'un autre tenant reste refusé.
+
+Ne jamais copier de mot de passe, clé service role, jeton d'accès ou secret réel dans les fichiers du dépôt ou dans un rapport de test.
+
+Exécuter enfin `npm test -- test/idp-token.spec.ts` : mauvaise signature, HS256, claims absents et UUID mal formés doivent être rejetés.
 
 ## 4. Variables Render
 
