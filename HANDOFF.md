@@ -527,6 +527,7 @@ single-app deployment.
 
 ## Debt / Known issues
 
+- **The API currently holds the maintenance-role credential.** The production Compose setup injects `MAINTENANCE_DATABASE_URL` into the API process so the maintenance runner can execute in that container. This gives the API process access to the `maintenance_login` role. Before using real data, separate the maintenance runner into its own container or dedicated command/process with its own narrowly scoped credential; do not treat the current shared process arrangement as production-ready.
 - **Cloudflare R2 production storage is not covered by any test.**
   The current upload/download E2E exercises an isolated local S3-compatible
   test store only. Before validating R2, create a dedicated R2 test bucket,
