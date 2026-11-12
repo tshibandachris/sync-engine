@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { assertNonPrivilegedRole } from '../src/role-guard.js';
 
 let pg: TestPostgres;
 
@@ -130,4 +133,95 @@ describe('maintenance_purge_executor database boundary', () => {
       device_approval: false,
     });
   });
+
+describe('maintenance role hardening migration 042', () => {
+  const migrationPath = path.resolve('migrations/042_maintenance_function_owner_hardening.sql');
+
+  it('keeps the nonce function owner non-login, non-privileged and without role memberships', async () => {
+    const result = await pg.pool.query(\`
+      SELECT
+        r.rolcanlogin,
+        r.rolsuper,
+        r.rolcreatedb,
+        r.rolcreaterole,
+        r.rolreplication,
+        r.rolbypassrls,
+        EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members m
+          WHERE m.member = r.oid OR m.roleid = r.oid
+        ) AS has_role_memberships
+      FROM pg_catalog.pg_roles r
+      WHERE r.rolname = 'device_proof_maintenance_function_owner'
+    \`);
+    expect(result.rows[0]).toEqual({
+      rolcanlogin: false,
+      rolsuper: false,
+      rolcreatedb: false,
+      rolcreaterole: false,
+      rolreplication: false,
+      rolbypassrls: false,
+      has_role_memberships: false,
+    });
+  });
+
+  it('rejects a pre-existing nonce function owner that can LOGIN', async () => {
+    const migration = fs.readFileSync(migrationPath, 'utf8');
+    await pg.pool.query('ALTER ROLE device_proof_maintenance_function_owner LOGIN');
+    try {
+      await expect(pg.pool.query(migration)).rejects.toThrow(/SECURITY_MIGRATION_FAILED/);
+    } finally {
+      await pg.pool.query('ALTER ROLE device_proof_maintenance_function_owner NOLOGIN');
+    }
+  });
+
+  it('rejects a pre-existing nonce function owner that is a member of a pg_* role', async () => {
+    const migration = fs.readFileSync(migrationPath, 'utf8');
+    await pg.pool.query('GRANT pg_monitor TO device_proof_maintenance_function_owner');
+    try {
+      await expect(pg.pool.query(migration)).rejects.toThrow(/SECURITY_MIGRATION_FAILED/);
+    } finally {
+      await pg.pool.query('REVOKE pg_monitor FROM device_proof_maintenance_function_owner');
+    }
+  });
+
+  it('rejects another role being a member of the nonce function owner', async () => {
+    const migration = fs.readFileSync(migrationPath, 'utf8');
+    await pg.pool.query('GRANT device_proof_maintenance_function_owner TO maintenance_login');
+    try {
+      await expect(pg.pool.query(migration)).rejects.toThrow(/SECURITY_MIGRATION_FAILED/);
+    } finally {
+      await pg.pool.query('REVOKE device_proof_maintenance_function_owner FROM maintenance_login');
+    }
+  });
+});
+
+describe('maintenance_login runtime membership boundary', () => {
+  it('rejects membership in a predefined pg_* role even when the login is not privileged itself', async () => {
+    await pg.pool.query('GRANT pg_read_all_data TO maintenance_login');
+    try {
+      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/membership/i);
+    } finally {
+      await pg.pool.query('REVOKE pg_read_all_data FROM maintenance_login');
+    }
+  });
+
+  it('accepts only the maintenance_purge_executor membership', async () => {
+    await expect(assertNonPrivilegedRole(pg.maintenancePool)).resolves.toBeUndefined();
+    const result = await pg.pool.query(\`
+      SELECT count(*)::integer AS membership_count,
+             bool_and(
+               r.rolname = 'maintenance_purge_executor'
+               AND NOT m.admin_option
+               AND m.inherit_option
+               AND NOT m.set_option
+             ) AS allowed_membership_only
+      FROM pg_catalog.pg_auth_members m
+      JOIN pg_catalog.pg_roles member_role ON member_role.oid = m.member
+      JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
+      WHERE member_role.rolname = 'maintenance_login'
+    \`);
+    expect(result.rows[0]).toEqual({ membership_count: 1, allowed_membership_only: true });
+  });
+});
+
 });
