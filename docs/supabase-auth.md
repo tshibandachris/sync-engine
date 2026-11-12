@@ -81,7 +81,7 @@ Activer ce hook dans **Authentication → Hooks → Custom Access Token**. Les v
 - `JWKS_URL`: URL JWKS ci-dessus.
 - `JWT_ISSUER`: issuer ci-dessus.
 - `JWT_AUDIENCE`: `authenticated`, après confirmation.
-- `JWT_SECRET`: secret local réservé au développement. Le mode partagé est interdit en production ; le mode JWKS ne l'utilise pas.
+- `JWT_SECRET`: ne pas définir cette variable en production. Le démarrage échoue si elle est présente ; le mode JWKS ne l'utilise jamais. Elle reste réservée au développement local.
 
 ## 5. Pause du projet gratuit
 

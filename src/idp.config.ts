@@ -31,5 +31,9 @@ export function readIdpConfig(env: NodeJS.ProcessEnv = process.env): IdpConfig {
     return { mode: 'jwks', jwksUrl, audience, issuer };
   }
 
+  if (env.NODE_ENV === 'production') {
+    throw new Error('Production authentication requires JWKS_URL; dev-secret mode is disabled.');
+  }
+
   return { mode: 'dev-secret', jwtSecret };
 }

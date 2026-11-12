@@ -8,7 +8,7 @@ The application must not be exposed publicly until all of these are resolved:
 
 1. **PostgreSQL migrations:** run `.github/workflows/render-postgres-migrations.yml` manually from GitHub Actions. The workflow is intentionally manual and checks the database name, TLS, and `CREATEROLE` before running `scripts/migrate.sh`.
 2. **Database identities:** the migration creates/updates three separate logins: `sync_app`, `device_enrollment_login`, and `device_admin_login`. The API must use three separate connection URLs. Never put the Render owner/admin connection URL in the Web Service environment.
-3. **Identity provider:** production boot guards require `JWKS_URL` and `JWT_AUDIENCE`, Shared-secret mode is forbidden in production; startup fails if it is enabled. Configure a real OIDC/JWKS issuer before public deployment. Configure a real OIDC/JWKS issuer before public deployment.
+3. **Identity provider:** production boot guards require `JWKS_URL`, `JWT_AUDIENCE`, and `JWT_ISSUER`. `JWT_SECRET` must be absent in production; startup fails if it is defined. Configure a real OIDC/JWKS issuer before public deployment.
 4. **S3-compatible object storage:** the app requires a bucket and S3 credentials. The Compose SeaweedFS container is not part of Render. Configure an external S3-compatible service and ensure `S3_PUBLIC_ENDPOINT` is reachable by mobile clients over HTTPS. Do not use localhost or an internal-only hostname for presigned URLs.
 5. **Maintenance:** `maintenance-runner.js` is a separate batch process, run by `.github/workflows/maintenance-purge.yml` (daily at 03:17 UTC). The workflow uses a dedicated `maintenance_login` role and bucket-scoped R2 credentials. GitHub-hosted runner IPs change, so use Render's external PostgreSQL URL with TLS; do not put this credential in the API service environment. Scheduled workflows run from the default branch, so this workflow is not active until it is merged to the default branch.
 
@@ -50,7 +50,7 @@ Required environment variables:
 | `DATABASE_URL` | Internal PostgreSQL URL using `sync_app` |
 | `DEVICE_ENROLLMENT_DATABASE_URL` | Internal PostgreSQL URL using `device_enrollment_login` |
 | `DEVICE_ADMIN_DATABASE_URL` | Internal PostgreSQL URL using `device_admin_login` |
-| `JWT_SECRET` | Development-only local signing secret; do not configure shared-secret auth in production |
+| `JWT_SECRET` | Must be absent in production; the service refuses to start if it is defined |
 | `JWKS_URL` | HTTPS JWKS endpoint of the selected OIDC provider |
 | `JWT_AUDIENCE` | Audience expected by the API |
 | `JWT_ISSUER` | Set to the issuer expected by the chosen provider/configuration |
