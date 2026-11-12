@@ -43,6 +43,25 @@ Requirements: Docker running for Testcontainers. CI runs the backend, PostgreSQL
 
 `npm run dev` is not defined yet — see Debt / "no dev script". The checked-in `.env.example` is the source of truth for the current separate application, device-admin, device-enrollment, and maintenance credentials, plus the JWKS and S3 settings.
 
+### Manual upload/download E2E test (isolated test stack)
+
+This is an opt-in manual test and is **not part of any GitHub Actions
+workflow**. It uses its own Compose project, database and storage volumes,
+loopback-only ports, and `NODE_ENV=test`; it does not use
+`docker-compose.prod.yml` or `.env.prod`.
+
+    cp .env.test.example .env.test
+    # Replace every REPLACE_WITH_ marker with a disposable test value.
+    docker compose -p sync-engine-e2e-test -f docker-compose.test.yml --env-file .env.test up -d --build
+    npm run test:e2e:upload
+    docker compose -p sync-engine-e2e-test -f docker-compose.test.yml --env-file .env.test down
+
+The API is available only at `http://127.0.0.1:3300`; the test object
+store is published only on loopback port 8334. The script refuses to run
+unless `NODE_ENV=test` and a sufficiently long test JWT secret are set.
+To remove only the isolated test data after review, append `-v` to the
+final `down` command. Never point this stack at production resources.
+
 ## Architecture
 
 ### Sync protocol
@@ -212,18 +231,28 @@ Every query filters `WHERE tenant_id = ?` at the application level.
 
 ### Auth
 
-Bearer token in `Authorization: Bearer <jwt>`. Two strategies, chosen
-at boot by `readIdpConfig`:
+Production uses Supabase Auth with asymmetric JWKS verification only (ES256
+or RS256). The API validates the token signature, issuer (`iss`), audience
+(`aud`), expiry, `sub`, and the UUID business claims `agent_id` and
+`tenantId`. A Supabase Custom Access Token Hook must copy those two claims
+from server-managed `app_metadata`; mutable `user_metadata` is never trusted.
+Production Compose requires `JWKS_URL`, `JWT_ISSUER`, and
+`JWT_AUDIENCE`. No shared JWT secret is permitted in production.
 
-- **JWKS** (`JWKS_URL` set): the token is signed by an external identity
-  provider. The guard fetches their JWKS, validates signature, `aud`,
-  `iss`, and the tenant claim. `sub` maps to the agent id.
-- **dev-secret** (`JWKS_URL` empty, non-production): the token is signed
-  locally with `JWT_SECRET`, minted at `POST /auth/token`. The boot
-  guards refuse to start in production without `JWKS_URL`.
+Local development and automated tests can use HS256 with `JWT_SECRET`
+when `JWKS_URL` is unset. The offline token-minting scripts explicitly
+refuse to run when `NODE_ENV=production`. They are not a production
+administrator-token issuance workflow.
 
-Either way, `request.agentId` and `request.tenantId` are set to
-validated UUIDs. Services never see a request without both.
+**Open debt — POS Electron Supabase session:** this repository does not
+demonstrate the POS Electron client's Supabase login, token refresh, or
+session persistence flow. Those client flows must be designed and tested
+before production use.
+
+**Open debt — production administrator token:** this repository does not
+demonstrate a secure production operator flow for obtaining an
+administrator token and its permissions. Supabase-side authorization and
+issuance must be specified and tested before production use.
 
 ## API contract
 
@@ -397,32 +426,19 @@ Four items from the 2026-10-01 review, all shipped:
   denormalized at push time; the pull filter keeps a site as long as
   a mission OR a check-in links the agent to it. Migration 013.
 
-### v0.6 — Real IdP (done)
+### v0.6 — Real IdP (production configuration required)
 
-External identity provider verified via JWKS (`jose`). Files:
+External identity provider verification via asymmetric JWKS is implemented
+in `src/idp-token.ts` and `src/jwt.guard.ts`. Production boot guards
+require JWKS URL, issuer and audience and reject local shared-secret
+authentication. Supabase is the documented production provider; its
+Custom Access Token Hook must supply UUID claims `agent_id` and
+`tenantId` from server-managed `app_metadata`.
 
-- `src/idp.config.ts` — reads `JWKS_URL`, `JWT_AUDIENCE`, `JWT_ISSUER`,
-  `JWT_TENANT_CLAIM`. Picks the strategy: `jwks` if `JWKS_URL` is set,
-  `dev-secret` otherwise.
-- `src/idp-token.ts` — `verifyToken(token, jwks, options)`. Pure: no I/O,
-  no global state. Throws on any signature, expiry, audience, issuer, or
-  claim failure.
-- `src/jwt.guard.ts` — picks the strategy once at construction. In JWKS
-  mode, uses `createRemoteJWKSet` and validates signature, `aud`, `iss`,
-  and the tenant claim. In dev-secret mode, falls back to the local
-  `JwtService` (used by `/auth/token` and the test suite).
-- `src/boot-guards.ts` — `assertAuthStrategy`: in production, requires
-  `JWKS_URL` and `JWT_AUDIENCE`. Elsewhere, if `JWKS_URL` is absent,
-  requires a strong `JWT_SECRET`.
-- `.env.example` — documents every variable.
-
-Tests: `test/idp-token.spec.ts` (9 tests with a locally signed JWKS:
-expiry, wrong audience, wrong issuer, wrong key, missing/non-UUID claims,
-custom claim name). `test/boot-guards.spec.ts` gains 2 tests for the
-new production requirements.
-
-The provider is not hard-coded. Any OIDC-compliant endpoint works. If the
-provider puts the tenant in a namespaced claim, set `JWT_TENANT_CLAIM`.
+The API-side verification code and unit tests exist. A real Supabase
+project configuration, POS Electron login/refresh/session flow, and
+production administrator-token acquisition are not demonstrated by this
+repository and remain open debts.
 
 ### v0.7 — Observability (done)
 
@@ -511,6 +527,13 @@ single-app deployment.
 
 ## Debt / Known issues
 
+- **Cloudflare R2 production storage is not covered by any test.**
+  The current upload/download E2E exercises an isolated local S3-compatible
+  test store only. Before validating R2, create a dedicated R2 test bucket,
+  issue an API token scoped to that bucket only (minimum required object
+  read/write/list permissions), configure a separate test environment, and
+  run upload, confirm, download and cleanup checks against that bucket.
+  Never use a production bucket or a broadly scoped token for this test.
 - **Tenants registry has no retention.** `tenants` grows by one row
   per new tenant, forever. That is bounded by the number of distinct
   tenants, which is small, so it is acceptable for now. If it ever
@@ -645,27 +668,35 @@ The checked-in Dockerfile already builds TypeScript in a Node 22 builder stage, 
   containers are read.
 ## Environment variables
 
-| Var | Required in prod |
-|---|---|
-| DATABASE_URL | yes — API login |
-| JWKS_URL | yes in production unless shared-secret mode is explicitly enabled |
-| JWT_AUDIENCE | yes with JWKS verification |
-| JWT_ISSUER | no — optional provider check |
-| JWT_TENANT_CLAIM | no — defaults to `tenantId` |
-| JWT_SECRET | development/local; production only with explicit shared-secret opt-in (minimum 32 chars) |
-| AUTH_ALLOW_SHARED_SECRET | no — default false; required to opt into production shared-secret mode |
-| AUTH_ALLOW_DEV_TOKEN | no — must be false in production; boot guard rejects it otherwise |
-| MAINTENANCE_DATABASE_URL | yes for the scheduled maintenance runner; must use `maintenance_login` |
-| MAINTENANCE_PASSWORD | yes for migration-time provisioning of `maintenance_login` |
-| DEVICE_ENROLLMENT_PASSWORD | yes for migration-time provisioning |
-| DEVICE_ADMIN_PASSWORD | yes for migration-time provisioning |
-| S3_BUCKET | yes for attachment storage and maintenance |
-| S3_REGION | yes |
-| S3_ENDPOINT | depends on provider (required for R2/MinIO; optional for AWS S3) |
-| S3_ACCESS_KEY_ID | yes |
-| S3_SECRET_ACCESS_KEY | yes |
-| S3_PUBLIC_ENDPOINT | no — optional public endpoint for presigned URLs |
-| PORT | no (default 3000) |
+| Variable | API production | Migration service | Notes |
+|---|---:|---:|---|
+| `NODE_ENV` | Required | — | Must be `production` |
+| `DATABASE_URL` | Required | — | Built from `SYNC_APP_PASSWORD` |
+| `DEVICE_ENROLLMENT_DATABASE_URL` | Required | — | Built from `DEVICE_ENROLLMENT_PASSWORD` |
+| `DEVICE_ADMIN_DATABASE_URL` | Required | — | Built from `DEVICE_ADMIN_PASSWORD` |
+| `JWKS_URL` | Required | — | Supabase public JWKS endpoint |
+| `JWT_ISSUER` | Required | — | Supabase issuer |
+| `JWT_AUDIENCE` | Required | — | Usually `authenticated`; confirm against the test project |
+| `JWT_SECRET` | Forbidden | — | HS256 is development/test only |
+| `AUTH_ALLOW_SHARED_SECRET` | Forbidden | — | No production shared-secret mode |
+| `METRICS_PORT` | Required | — | Dedicated metrics listener |
+| `OPS_METRICS_TOKEN` | Required | — | Minimum 32 characters |
+| `S3_BUCKET` | Required | — | Production object bucket |
+| `S3_ACCESS_KEY_ID` | Required | — | S3-compatible provider |
+| `S3_SECRET_ACCESS_KEY` | Required | — | S3-compatible provider |
+| `S3_REGION` | Configured | — | Provider-specific region |
+| `S3_ENDPOINT` | Optional | — | Required for R2/MinIO; optional for AWS S3 |
+| `S3_PUBLIC_ENDPOINT` | Optional | — | Public endpoint for presigned URLs |
+| `POSTGRES_PASSWORD` | — | Required as `PGPASSWORD` | PostgreSQL administrator login |
+| `SYNC_APP_PASSWORD` | Used in DB URL | Required | Provisions `sync_app` |
+| `DEVICE_ENROLLMENT_PASSWORD` | Used in DB URL | Required | Provisions enrollment login |
+| `DEVICE_ADMIN_PASSWORD` | Used in DB URL | Required | Provisions device-admin login |
+| `MAINTENANCE_PASSWORD` | — | Required | Provisions maintenance login; never passed to API |
+| `DB_HOST`, `DB_NAME`, `DB_USER`, `MIGRATIONS_DIR` | — | Optional | Have safe script defaults |
+
+The production Compose file supplies all boot-guard requirements for
+`sync-engine`; the actual Supabase project values and provider credentials
+must still be supplied outside Git.
 
 ## Contact
 
