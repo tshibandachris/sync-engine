@@ -138,7 +138,7 @@ describe('maintenance role hardening migration 042', () => {
   const migrationPath = path.resolve('migrations/042_maintenance_function_owner_hardening.sql');
 
   it('keeps the nonce function owner non-login, non-privileged and without role memberships', async () => {
-    const result = await pg.pool.query(\`
+    const result = await pg.pool.query(`
       SELECT
         r.rolcanlogin,
         r.rolsuper,
@@ -152,7 +152,7 @@ describe('maintenance role hardening migration 042', () => {
         ) AS has_role_memberships
       FROM pg_catalog.pg_roles r
       WHERE r.rolname = 'device_proof_maintenance_function_owner'
-    \`);
+    `);
     expect(result.rows[0]).toEqual({
       rolcanlogin: false,
       rolsuper: false,
@@ -207,7 +207,7 @@ describe('maintenance_login runtime membership boundary', () => {
 
   it('accepts only the maintenance_purge_executor membership', async () => {
     await expect(assertNonPrivilegedRole(pg.maintenancePool)).resolves.toBeUndefined();
-    const result = await pg.pool.query(\`
+    const result = await pg.pool.query(`
       SELECT count(*)::integer AS membership_count,
              bool_and(
                r.rolname = 'maintenance_purge_executor'
@@ -219,9 +219,7 @@ describe('maintenance_login runtime membership boundary', () => {
       JOIN pg_catalog.pg_roles member_role ON member_role.oid = m.member
       JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
       WHERE member_role.rolname = 'maintenance_login'
-    \`);
+    `);
     expect(result.rows[0]).toEqual({ membership_count: 1, allowed_membership_only: true });
   });
-});
-
 });

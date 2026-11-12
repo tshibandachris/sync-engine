@@ -22,10 +22,10 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
   }>(
     'SELECT login_role.rolname AS role, ' +
       'login_role.rolsuper, login_role.rolbypassrls, ' +
-      'pg_catalog.pg_has_role(login_role.oid, allowed_role.oid, \\'USAGE\\') AS has_allowed_membership, ' +
+      'pg_catalog.pg_has_role(login_role.oid, allowed_role.oid, \'USAGE\') AS has_allowed_membership, ' +
       'EXISTS (SELECT 1 FROM pg_catalog.pg_roles other_role ' +
       'WHERE other_role.oid <> login_role.oid AND other_role.oid <> allowed_role.oid ' +
-      'AND pg_catalog.pg_has_role(login_role.oid, other_role.oid, \\'MEMBER\\')) AS has_unexpected_membership, ' +
+      'AND pg_catalog.pg_has_role(login_role.oid, other_role.oid, \'MEMBER\')) AS has_unexpected_membership, ' +
       'EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members membership ' +
       'WHERE membership.member = login_role.oid AND membership.roleid = allowed_role.oid ' +
       'AND NOT membership.admin_option AND membership.inherit_option AND NOT membership.set_option) ' +
@@ -33,7 +33,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
       '(SELECT count(*)::integer FROM pg_catalog.pg_auth_members membership ' +
       'WHERE membership.member = login_role.oid) AS direct_membership_count ' +
       'FROM pg_catalog.pg_roles login_role CROSS JOIN pg_catalog.pg_roles allowed_role ' +
-      'WHERE login_role.rolname = current_user AND allowed_role.rolname = \\'maintenance_purge_executor\\'',
+      'WHERE login_role.rolname = current_user AND allowed_role.rolname = \'maintenance_purge_executor\'',
   );
 
   const row = res.rows[0];
