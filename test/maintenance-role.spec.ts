@@ -200,7 +200,7 @@ describe('maintenance_login runtime membership boundary', () => {
   it('rejects membership in a predefined pg_* role even when the login is not privileged itself', async () => {
     await pg.pool.query('GRANT pg_read_all_data TO maintenance_login');
     try {
-      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/membership/i);
+      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/appartenance/i);
     } finally {
       await pg.pool.query('REVOKE pg_read_all_data FROM maintenance_login');
     }
