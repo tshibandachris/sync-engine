@@ -56,12 +56,6 @@ jobs:
           test "$applied" = "$expected"
           echo "Verified $applied of $expected migration files and an idempotent second run."
           sh test/migration-runner-recovery.sh
-      - name: Verify maintenance migration and provisioning with PostgreSQL 16 CREATEROLE (no SUPERUSER)
-        env:
-          DB_HOST: localhost
-          DB_NAME: sync_engine_test
-          PGPASSWORD: postgres
-        run: sh test/maintenance-createrole.sh
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -73,6 +67,12 @@ jobs:
         run: npm run typecheck
       - name: Run integration and regression tests
         run: npm test -- --reporter=verbose
+      - name: Verify maintenance migration and provisioning with PostgreSQL 16 CREATEROLE (no SUPERUSER)
+        env:
+          DB_HOST: localhost
+          DB_NAME: sync_engine_test
+          PGPASSWORD: postgres
+        run: sh test/maintenance-createrole.sh
       - name: Verify POS sync triggers and tenant RLS
         env:
           PGHOST: localhost
