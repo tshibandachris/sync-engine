@@ -50,7 +50,7 @@ VALUES ('${CHECKIN}', '${TENANT}', '${MISSION}', '${AGENT}', '${SITE}',
         ${now}, 0, 0, 'manual', ${now}, ${now});
 `;
 const seedOut = execSync(
-  COMPOSE + ' exec -T db psql -U postgres -d sync_engine -v ON_ERROR_STOP=1',
+  COMPOSE + ' exec -T db psql -U postgres -d sync_engine_test -v ON_ERROR_STOP=1',
   { input: seedSql, encoding: 'utf8' },
 );
 console.log(seedOut.trim() || '(aucune sortie)');
