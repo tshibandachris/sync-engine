@@ -2,11 +2,20 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/maintenance-boundary-migration-resume-v1]
+    branches: [main, deploy/render-clean]
   pull_request:
     branches: [main, validation/full-device-approval-signed-sync-v4]
 
 jobs:
+  secret-scan:
+    name: Scan tracked source with exact path/value allowlist
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify allowlist matching is exact, then scan
+        run: python3 scripts/secret-scan.py --self-test
+
   workflow-validation:
     name: Validate workflows and migration shell
     runs-on: ubuntu-latest

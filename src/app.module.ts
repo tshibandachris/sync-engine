@@ -1,6 +1,7 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
+import { createJwtModuleOptions } from './jwt-module-options.js';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
 import { SyncPullService } from './sync-pull.service.js';
@@ -38,7 +39,7 @@ export interface AppModuleOptions {
   db: NodePgDatabase<typeof schema>;
   enrollmentDb: NodePgDatabase<typeof schema>;
   adminDb: NodePgDatabase<typeof schema>;
-  jwtSecret: string;
+  jwtSecret?: string;
   storage: AttachmentStorage;
   jwtExpiresIn?: number | string;
 }
@@ -50,10 +51,10 @@ export class AppModule {
     return {
       module: AppModule,
       imports: [
-        JwtModule.register({
-          secret: jwtSecret,
-          signOptions: { expiresIn: jwtExpiresIn as any },
-        }),
+        JwtModule.register(createJwtModuleOptions({
+          NODE_ENV: process.env.NODE_ENV,
+          JWT_SECRET: jwtSecret,
+        }, jwtExpiresIn)),
         createDeviceEnrollmentThrottleModule(),
       ],
       controllers: [SyncController, AuthController, AttachmentController, CashSessionController, CourrierController, DeviceEnrollmentController, DeviceStatusController, DeviceAdminController],

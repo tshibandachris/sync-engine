@@ -1,3 +1,4 @@
+// Développement et tests uniquement — jamais en production.
 // Mint a short-lived, tenant-scoped device administrator JWT for shared-secret mode.
 //
 // Usage:
@@ -7,6 +8,12 @@
 // resulting token to a POS terminal. Tokens expire after 15 minutes.
 
 import { SignJWT } from 'jose';
+
+if (process.env.NODE_ENV === 'production') {
+  console.error('Refus : ce script est réservé au développement et aux tests, jamais en production.');
+  process.exit(1);
+}
+console.warn('AVERTISSEMENT : développement et tests uniquement, jamais en production.');
 
 const [, , actorId, tenantId, rawPermissions] = process.argv;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

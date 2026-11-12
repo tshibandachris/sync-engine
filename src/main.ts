@@ -13,7 +13,7 @@ export async function createApp(
   db: NodePgDatabase<typeof schema>,
   enrollmentDb: NodePgDatabase<typeof schema>,
   adminDb: NodePgDatabase<typeof schema>,
-  jwtSecret: string,
+  jwtSecret: string | undefined,
   storage: AttachmentStorage,
 ) {
   const moduleRef = await NestFactory.create(
@@ -56,7 +56,6 @@ async function bootstrap(): Promise<void> {
   if (!databaseUrl) throw new Error('DATABASE_URL requis.');
   if (!enrollmentDatabaseUrl) throw new Error('DEVICE_ENROLLMENT_DATABASE_URL requis : connexion PostgreSQL dédiée à l’enrôlement.');
   if (!adminDatabaseUrl) throw new Error('DEVICE_ADMIN_DATABASE_URL requis : connexion PostgreSQL dédiée à la gestion des terminaux.');
-  if (!jwtSecret) throw new Error('JWT_SECRET requis.');
 
   const { Pool } = await import('pg');
   const { drizzle } = await import('drizzle-orm/node-postgres');

@@ -13,9 +13,11 @@ Toutes les routes sont protégées par un JWT validé par le mode JWKS/IdP confi
 
 Les claims `permissions` ou `scope` sont extraits par `JwtAuthGuard` après validation de la signature du JWT. Le service refuse les appels sans la permission exacte. Les jetons de développement sans permission n'accordent aucun accès administratif.
 
-En mode de production à secret partagé (`AUTH_ALLOW_SHARED_SECRET=true`), les jetons POS émis par `scripts/mint-token.mjs` ne disposent d'aucune permission administrative et ne peuvent pas accéder à ces routes. Un opérateur de confiance peut créer un jeton administratif limité à 15 minutes avec `scripts/mint-device-admin-token.mjs`, en choisissant explicitement une liste de permissions autorisées. Le guard exige aussi le claim `token_use=device_admin` dans ce mode. Ne jamais transmettre `JWT_SECRET` ou ce jeton à un terminal POS.
+En production, l'API vérifie exclusivement les jetons asymétriques via le JWKS public de Supabase Auth (ES256 ou RS256), avec validation obligatoire de `iss`, `aud` et de la signature. Les claims métier requis sont `agent_id` et `tenantId`, tous deux UUID. Ils doivent être ajoutés au jeton par le Custom Access Token Hook depuis `app_metadata` administré côté serveur. `user_metadata` n'est jamais une source de confiance. Aucun secret JWT partagé n'est accepté en production.
 
-En mode JWKS, le fournisseur d'identité peut émettre les permissions dans les claims `permissions` ou `scope`. Dans les deux modes, seule la permission exacte de la route est acceptée.
+Les permissions administratives doivent être émises dans `permissions` (tableau) ou `scope` (chaîne) par le fournisseur d'identité, après validation de l'autorisation de l'acteur. Les scripts de signature HS256 sont réservés au développement et aux tests et refusent de s'exécuter si `NODE_ENV=production`.
+
+**Dette ouverte — obtention du jeton administrateur en production :** aucun parcours opérateur de production n'est démontré dans ce dépôt. Il reste à définir et sécuriser l'émission des claims administratifs et des permissions par Supabase avant toute utilisation réelle.
 
 ## Transitions
 

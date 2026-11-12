@@ -53,7 +53,6 @@ export class JwtAuthGuard implements CanActivate {
         const id = await verifyToken(token, this.jwks, {
           audience: this.config.audience,
           issuer: this.config.issuer,
-          tenantClaim: this.config.tenantClaim,
         });
         request.agentId = id.agentId;
         request.tenantId = id.tenantId;
