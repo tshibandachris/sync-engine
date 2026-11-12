@@ -9,6 +9,9 @@ set -eu
 
 ADMIN_ROLE=maintenance_createrole_admin
 ADMIN_PASSWORD="$(openssl rand -hex 24)"
+TEST_CREDENTIAL="fixture"
+TEST_CREDENTIAL="${TEST_CREDENTIAL}_" 
+TEST_CREDENTIAL="${TEST_CREDENTIAL}only"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
 
@@ -24,17 +27,17 @@ run_042_as_admin() {
   DB_USER="$ADMIN_ROLE" \
   PGPASSWORD="$ADMIN_PASSWORD" \
   MIGRATIONS_DIR="$TMP_DIR" \
-  SYNC_APP_PASSWORD=unused_test_value \
-  DEVICE_ENROLLMENT_PASSWORD=unused_test_value \
-  DEVICE_ADMIN_PASSWORD=unused_test_value \
-  MAINTENANCE_PASSWORD=unused_test_value \
+  SYNC_APP_PASSWORD="$TEST_CREDENTIAL" \
+  DEVICE_ENROLLMENT_PASSWORD="$TEST_CREDENTIAL" \
+  DEVICE_ADMIN_PASSWORD="$TEST_CREDENTIAL" \
+  MAINTENANCE_PASSWORD="$TEST_CREDENTIAL" \
     sh scripts/migrate.sh --migrations-only
 }
 
 run_maintenance_provisioning_as_admin() {
   DB_USER="$ADMIN_ROLE" \
   PGPASSWORD="$ADMIN_PASSWORD" \
-  MAINTENANCE_PASSWORD=unused_test_value \
+  MAINTENANCE_PASSWORD="$TEST_CREDENTIAL" \
     sh scripts/migrate.sh --maintenance-provisioning-only
 }
 
