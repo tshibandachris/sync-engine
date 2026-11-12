@@ -7,18 +7,27 @@
 set -eu
 
 MIGRATIONS_ONLY=0
-if [ "${1:-}" = "--migrations-only" ]; then
-  MIGRATIONS_ONLY=1
-  shift
-fi
+MAINTENANCE_ONLY=0
+case "${1:-}" in
+  --migrations-only)
+    MIGRATIONS_ONLY=1
+    shift
+    ;;
+  --maintenance-provisioning-only)
+    MAINTENANCE_ONLY=1
+    shift
+    ;;
+esac
 if [ "$#" -gt 0 ]; then
   echo "[migrate] ERROR: unexpected argument: $1" >&2
   exit 2
 fi
 
-: "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
-: "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
-: "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
+if [ "$MAINTENANCE_ONLY" != "1" ]; then
+  : "${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}"
+  : "${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}"
+  : "${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}"
+fi
 : "${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}"
 : "${PGPASSWORD:?PGPASSWORD is required}"
 
@@ -31,6 +40,18 @@ psql_base() {
   psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" "$@"
 }
 
+if [ "$MAINTENANCE_ONLY" = "1" ]; then
+  migration_042_applied=$(psql_base -tA -c "
+    SELECT CASE WHEN EXISTS (
+      SELECT 1 FROM public.schema_migrations
+       WHERE filename = '042_maintenance_function_owner_hardening.sql'
+    ) THEN 1 ELSE 0 END
+  ")
+  if [ "$migration_042_applied" != "1" ]; then
+    echo "[migrate] ERROR: maintenance provisioning requires migration 042 to be applied first." >&2
+    exit 1
+  fi
+else
 echo "[migrate] checking schema and migration ledger"
 ledger_before=$(psql_base -tA -c "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NULL THEN 0 ELSE 1 END")
 legacy_schema=$(psql_base -tA -c "SELECT CASE WHEN to_regclass('public.check_ins') IS NULL THEN 0 ELSE 1 END")
@@ -140,7 +161,10 @@ if [ "$MIGRATIONS_ONLY" = "1" ]; then
   echo "[migrate] migrations-only test mode complete; login provisioning skipped"
   exit 0
 fi
+fi
 
+
+if [ "$MAINTENANCE_ONLY" != "1" ]; then
 echo "[migrate] restricting migration ledger and enabling application login"
 psql_base <<'EOSQL'
 REVOKE ALL ON TABLE public.schema_migrations FROM PUBLIC, sync_app;
@@ -193,34 +217,109 @@ GRANT device_admin_executor TO device_admin_login WITH INHERIT TRUE, SET FALSE;
 GRANT CONNECT ON DATABASE :"db_name" TO device_admin_login;
 EOSQL
 
+fi
+
 echo "[migrate] provisioning dedicated maintenance login"
 maintenance_role_exists=$(psql_base -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'maintenance_login') THEN 1 ELSE 0 END")
+maintenance_admin_is_superuser=$(psql_base -tA -c "SELECT rolsuper::int FROM pg_catalog.pg_roles WHERE rolname = current_user")
+
 if [ "$maintenance_role_exists" = "1" ]; then
-  psql_base -v pw="$MAINTENANCE_PASSWORD" -v db_name="$DB_NAME" <<'EOSQL'
+  if [ "$maintenance_admin_is_superuser" = "1" ]; then
+    psql_base -v pw="$MAINTENANCE_PASSWORD" <<'EOSQL'
 ALTER ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
 EOSQL
+  else
+    # PostgreSQL 16 CREATEROLE administrators may alter roles they administer,
+    # but cannot clear SUPERUSER/CREATEDB/REPLICATION/BYPASSRLS unless they hold
+    # the corresponding privilege. Preserve attributes and fail closed below.
+    psql_base -v pw="$MAINTENANCE_PASSWORD" <<'EOSQL'
+ALTER ROLE maintenance_login LOGIN INHERIT PASSWORD :'pw';
+EOSQL
+  fi
 else
   psql_base -v pw="$MAINTENANCE_PASSWORD" <<'EOSQL'
 CREATE ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'pw';
 EOSQL
 fi
 
+# Do not try to revoke arbitrary memberships or object grants here: a
+# CREATEROLE administrator cannot revoke memberships in predefined pg_* roles
+# or ACLs owned by other roles. Verify the exact boundary and fail closed.
 psql_base -v db_name="$DB_NAME" <<'EOSQL'
-REVOKE sync_app FROM maintenance_login;
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM maintenance_login;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM maintenance_login;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM maintenance_login;
-GRANT maintenance_purge_executor TO maintenance_login WITH INHERIT TRUE, SET FALSE;
+GRANT maintenance_purge_executor TO maintenance_login
+  WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 GRANT CONNECT ON DATABASE :"db_name" TO maintenance_login;
 EOSQL
 
 echo "[migrate] verifying maintenance role boundary"
 maintenance_login_ok=$(psql_base -tA -c "
+  WITH login_role AS (
+    SELECT oid, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolreplication
+      FROM pg_catalog.pg_roles
+     WHERE rolname = 'maintenance_login'
+  ),
+  executor_role AS (
+    SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'maintenance_purge_executor'
+  )
   SELECT CASE
-    WHEN pg_catalog.pg_has_role('maintenance_login', 'maintenance_purge_executor', 'USAGE')
-     AND NOT pg_catalog.pg_has_role('maintenance_login', 'sync_app', 'MEMBER')
-     AND NOT (SELECT rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication
-                FROM pg_catalog.pg_roles WHERE rolname = 'maintenance_login')
+    WHEN NOT login_role.rolsuper
+     AND NOT login_role.rolbypassrls
+     AND NOT login_role.rolcreatedb
+     AND NOT login_role.rolcreaterole
+     AND NOT login_role.rolreplication
+     AND pg_catalog.pg_has_role(login_role.oid, executor_role.oid, 'USAGE')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_roles other_role
+        WHERE other_role.oid <> login_role.oid
+          AND other_role.oid <> executor_role.oid
+          AND pg_catalog.pg_has_role(login_role.oid, other_role.oid, 'MEMBER')
+     )
+     AND (
+       SELECT count(*) FROM pg_catalog.pg_auth_members m
+        WHERE m.member = login_role.oid
+     ) = 1
+     AND EXISTS (
+       SELECT 1 FROM pg_catalog.pg_auth_members m
+        WHERE m.member = login_role.oid
+          AND m.roleid = executor_role.oid
+          AND NOT m.admin_option
+          AND m.inherit_option
+          AND NOT m.set_option
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_class c
+         CROSS JOIN LATERAL pg_catalog.aclexplode(
+           COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))
+         ) acl
+        WHERE c.relkind <> 'S'
+          AND acl.grantee = login_role.oid
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_class c
+         CROSS JOIN LATERAL pg_catalog.aclexplode(
+           COALESCE(c.relacl, pg_catalog.acldefault('S', c.relowner))
+         ) acl
+        WHERE c.relkind = 'S'
+          AND acl.grantee = login_role.oid
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_proc p
+         CROSS JOIN LATERAL pg_catalog.aclexplode(
+           COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+         ) acl
+        WHERE acl.grantee = login_role.oid
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_namespace n
+         CROSS JOIN LATERAL pg_catalog.aclexplode(
+           COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))
+         ) acl
+        WHERE acl.grantee = login_role.oid
+     )
      AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.attachments', 'SELECT')
      AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.attachments', 'DELETE')
      AND NOT pg_catalog.has_table_privilege('maintenance_login', 'public.check_ins', 'DELETE')
@@ -235,9 +334,11 @@ maintenance_login_ok=$(psql_base -tA -c "
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_expired_device_proof_nonces(uuid,integer)', 'EXECUTE')
      AND pg_catalog.has_function_privilege('maintenance_login', 'public.purge_sync_tables(integer,integer)', 'EXECUTE')
     THEN 1 ELSE 0 END
+  FROM login_role CROSS JOIN executor_role
 ")
 if [ "$maintenance_login_ok" != "1" ]; then
-  echo "[migrate] ERROR: maintenance_login privilege boundary verification failed."
+  echo "[migrate] ERROR: maintenance_login privilege boundary verification failed." >&2
+  echo "[migrate] Expected only maintenance_purge_executor membership and no direct object grants." >&2
   exit 1
 fi
 
