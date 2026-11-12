@@ -31,7 +31,7 @@ export async function verifyToken(token: string, jwks: JWTVerifyGetKey, options:
   if (typeof tenantId !== 'string' || !UUID_RE.test(tenantId)) throw new IdpVerificationError('Token missing or invalid tenantId claim.');
   const rawPermissions = claims.permissions;
   const rawScope = claims.scope;
-  const permissions = Array.isArray(rawPermissions) ? rawPermissions.filter((v): v is string => typeof v === 'string') : typeof rawScope === 'string' ? rawScope.split(/\\s+/).filter(Boolean) : [];
+  const permissions = Array.isArray(rawPermissions) ? rawPermissions.filter((v): v is string => typeof v === 'string') : typeof rawScope === 'string' ? rawScope.split(/\s+/).filter(Boolean) : [];
   const rawServiceIds = claims.service_ids ?? claims.serviceIds;
   const serviceIds = Array.isArray(rawServiceIds) ? rawServiceIds.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v)) : [];
   return { agentId, tenantId, permissions, serviceIds };

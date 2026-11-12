@@ -68,6 +68,9 @@ export function assertAuthStrategy(env: NodeJS.ProcessEnv): void {
     if (env.AUTH_ALLOW_SHARED_SECRET === 'true') {
       throw new Error('Boot guard: AUTH_ALLOW_SHARED_SECRET=true is forbidden in production. Use asymmetric JWKS authentication.');
     }
+    if (env.JWT_SECRET !== undefined) {
+      throw new Error('Boot guard: JWT_SECRET must not be set in production. Use asymmetric JWKS authentication only.');
+    }
     if (!jwksUrl) {
       throw new Error('Boot guard: JWKS_URL is required in production; shared-secret JWT authentication is disabled.');
     }
