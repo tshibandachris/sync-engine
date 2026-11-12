@@ -133,6 +133,7 @@ describe('maintenance_purge_executor database boundary', () => {
       device_approval: false,
     });
   });
+});
 
 describe('maintenance role hardening migration 042', () => {
   const migrationPath = path.resolve('migrations/042_maintenance_function_owner_hardening.sql');
