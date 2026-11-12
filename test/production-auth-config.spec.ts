@@ -20,7 +20,13 @@ describe('production configuration excludes shared-secret authentication', () =>
 
     expect(targets).toContain('.env.prod.example');
     expect(targets).toContain('docker-compose.prod.yml');
+    expect(targets.every((path) =>
+      EXPLICIT_PRODUCTION_FILES.has(path) || PROD_FILE.test(path),
+    )).toBe(true);
     expect(targets.some((path) => path.endsWith('.test.yml') || path.includes('.test.'))).toBe(false);
+    expect(targets.some((path) => path.startsWith('docs/'))).toBe(false);
+    expect(targets).not.toContain('test/production-auth-config.spec.ts');
+    expect(targets).not.toContain('test/boot-guards.spec.ts');
 
     for (const path of targets) {
       const content = readFileSync(path, 'utf8');
