@@ -9,8 +9,8 @@ The application must not be exposed publicly until all of these are resolved:
 1. **PostgreSQL migrations:** run `.github/workflows/render-postgres-migrations.yml` manually from GitHub Actions. The workflow is intentionally manual and checks the database name, TLS, and `CREATEROLE` before running `scripts/migrate.sh`.
 2. **Database identities:** the migration creates/updates three separate logins: `sync_app`, `device_enrollment_login`, and `device_admin_login`. The API must use three separate connection URLs. Never put the Render owner/admin connection URL in the Web Service environment.
 3. **Identity provider:** production boot guards require `JWKS_URL`, `JWT_AUDIENCE`, and `JWT_ISSUER`. `JWT_SECRET` must be absent in production; startup fails if it is defined. Configure a real OIDC/JWKS issuer before public deployment.
-4. **S3-compatible object storage:** the app requires a bucket and S3 credentials. The Compose SeaweedFS container is not part of Render. Configure an external S3-compatible service and ensure `S3_PUBLIC_ENDPOINT` is reachable by mobile clients over HTTPS. Do not use localhost or an internal-only hostname for presigned URLs.
-5. **Maintenance:** `maintenance-runner.js` is a separate batch process, run by `.github/workflows/maintenance-purge.yml` (daily at 03:17 UTC). The workflow uses a dedicated `maintenance_login` role and bucket-scoped R2 credentials. GitHub-hosted runner IPs change, so use Render's external PostgreSQL URL with TLS; do not put this credential in the API service environment. Scheduled workflows run from the default branch, so this workflow is not active until it is merged to the default branch.
+4. **S3-compatible object storage:** the app requires a bucket and S3 credentials. The Compose stack (`docker-compose.prod.yml`) is not used on Render; Render deploys the Dockerfile directly. The Compose SeaweedFS container is not part of Render. Configure an external S3-compatible service and ensure `S3_PUBLIC_ENDPOINT` is reachable by mobile clients over HTTPS. Do not use localhost or an internal-only hostname for presigned URLs.
+5. **Maintenance:** Render does not use the Compose scheduler. The current API boot configuration also requires `MAINTENANCE_DATABASE_URL`, so for this temporary Render Free test enter the internal Render PostgreSQL connection URL for `maintenance_login` in the Web Service dashboard. Its password must be exactly the same value as the `MAINTENANCE_PASSWORD` GitHub Actions secret used by the migration workflow. This means the API process holds the maintenance-role credential; this is a known security debt. Do not use real data until the runner is separated into its own container or dedicated command/process. The scheduled GitHub maintenance workflow is a separate batch process using the external Render PostgreSQL URL with TLS and bucket-scoped R2 credentials; GitHub-hosted runner IPs change. Scheduled workflows run from the default branch, so this workflow is not active until it is merged to the default branch.
 
 ## GitHub migration workflow
 
@@ -30,7 +30,7 @@ Create these **repository Actions secrets** only after confirming the database I
 
 Use long, unique random values for all four application passwords. Never commit them, paste them into issues/PR comments, or send them in chat. The migration workflow must stop if the Render database user lacks the required role-management capability.
 
-The workflow applies the repository's 41 SQL migration files, provisions `maintenance_login` with membership only in `maintenance_purge_executor`, and verifies the migration ledger. A successful workflow run is required before starting the API. The maintenance login is not an API credential.
+The workflow applies the repository's 41 SQL migration files, provisions `maintenance_login` with membership only in `maintenance_purge_executor`, and verifies the migration ledger. A successful workflow run is required before starting the API. The maintenance login should not normally be an API credential. The temporary Render Free test is an explicit exception because the current API process hosts the maintenance runner; this must be separated before any real-data use.
 
 ## Render Web Service configuration (after the blockers are resolved)
 
@@ -50,6 +50,7 @@ Required environment variables:
 | `DATABASE_URL` | Internal PostgreSQL URL using `sync_app` |
 | `DEVICE_ENROLLMENT_DATABASE_URL` | Internal PostgreSQL URL using `device_enrollment_login` |
 | `DEVICE_ADMIN_DATABASE_URL` | Internal PostgreSQL URL using `device_admin_login` |
+| `MAINTENANCE_DATABASE_URL` | Internal Render PostgreSQL URL using `maintenance_login`; use the same password as the `MAINTENANCE_PASSWORD` GitHub Actions secret for the migration workflow |
 | `JWT_SECRET` | Must be absent in production; the service refuses to start if it is defined |
 | `JWKS_URL` | HTTPS JWKS endpoint of the selected OIDC provider |
 | `JWT_AUDIENCE` | Audience expected by the API |
