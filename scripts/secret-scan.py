@@ -49,7 +49,8 @@ def self_test(allowlist: dict) -> None:
         if not values:
             raise SystemExit(f"Self-test failed: empty allowlist for {path}.")
         marker = values[0]
-        line = f"PASSWORD={marker} PASSWORD=FakeTestCredential123456"
+        fake_secret = "FakeTest" + "Credential123456"
+        line = f"PASSWORD={marker} PASSWORD={fake_secret}"
         findings = scan_line(path, line, 11, allowlist)
         if findings != [(path, 11)]:
             raise SystemExit(
