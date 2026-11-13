@@ -329,7 +329,7 @@ key.
 
 ## Project layout
 
-    migrations/          SQL migrations 001 to 041
+    migrations/          SQL migrations 001 to 042
     src/
       schema.ts
       sync-pull.service.ts
