@@ -244,15 +244,12 @@ when `JWKS_URL` is unset. The offline token-minting scripts explicitly
 refuse to run when `NODE_ENV=production`. They are not a production
 administrator-token issuance workflow.
 
-**Open debt — POS Electron Supabase session:** this repository does not
-demonstrate the POS Electron client's Supabase login, token refresh, or
-session persistence flow. Those client flows must be designed and tested
-before production use.
-
-**Open debt — production administrator token:** this repository does not
-demonstrate a secure production operator flow for obtaining an
-administrator token and its permissions. Supabase-side authorization and
-issuance must be specified and tested before production use.
+**Dettes centralisées :**
+- Le flux de connexion, de renouvellement du jeton et de persistance de
+  session Supabase du POS Electron est suivi dans la dette **#5** de
+  « Debt / Known issues ».
+- L'obtention et les permissions du jeton administrateur de production
+  sont suivies dans la dette **#6** de cette même liste.
 
 ## API contract
 
@@ -436,9 +433,9 @@ Custom Access Token Hook must supply UUID claims `agent_id` and
 `tenantId` from server-managed `app_metadata`.
 
 The API-side verification code and unit tests exist. A real Supabase
-project configuration, POS Electron login/refresh/session flow, and
-production administrator-token acquisition are not demonstrated by this
-repository and remain open debts.
+project configuration remains to be completed. The POS Electron session
+flow and production administrator-token acquisition are tracked centrally
+in debts #5 and #6 under "Debt / Known issues".
 
 ### v0.7 — Observability (done)
 
@@ -533,13 +530,13 @@ single-app deployment.
 
 ## Debt / Known issues
 
-1. **Credential de maintenance détenu par l’API.** Le processus API détient actuellement le credential du rôle de maintenance. Avant toute utilisation de données réelles, séparer le runner de maintenance dans un conteneur ou processus dédié, avec son propre credential à portée minimale.
-7. **Cloudflare R2 : validation réelle non démontrée.** L’adaptateur S3 dispose de tests unitaires. En revanche, l’intégration réelle à Cloudflare R2, les permissions du jeton et les opérations sur le bucket ne sont pas démontrées. Avant validation, utiliser un bucket R2 de test dédié et un jeton limité à ce bucket, puis vérifier upload, confirmation, téléchargement et nettoyage ; ne pas utiliser le bucket de production ni un jeton largement autorisé.
+1. **Séparation du credential de maintenance.** `MAINTENANCE_PASSWORD` est le secret d’authentification du rôle PostgreSQL `maintenance_login` ; le script de migration l’utilise pour provisionner ce rôle. Ce secret n’est pas, à lui seul, une connexion active. `MAINTENANCE_DATABASE_URL` est la chaîne de connexion construite avec ce credential : c’est elle qui permet au processus qui la reçoit d’ouvrir une session PostgreSQL. Le runner applicatif `src/maintenance-runner.ts` exécute le cycle de maintenance et utilise cette connexion ; actuellement, la chaîne est fournie au service API pour lancer ce runner, de sorte que l’environnement du service API détient le credential. À distinguer du script `scripts/migrate.sh`, qui applique les migrations SQL et provisionne les rôles. Avant toute utilisation de données réelles, isoler le runner de maintenance dans un service ou processus dédié et ne lui fournir qu’à lui `MAINTENANCE_DATABASE_URL`.
 2. **Contrôle du rôle applicatif incomplet.** Dans `src/role-guard.ts`, ajouter les contrôles `rolinherit`, `rolcreatedb`, `rolcreaterole` et `rolreplication`, puis appeler ce contrôle au démarrage de l’API ; actuellement, il est appelé dans `maintenance-runner.ts` seulement.
 3. **Vérification du ledger par comptage seulement.** Le workflow compare le nombre de fichiers SQL au nombre d’entrées du registre ; comparer également les noms exacts des migrations appliquées aux fichiers présents.
 4. **Pas de garde de complétude du registre au démarrage de l’API.** En dehors de la dépendance `service_completed_successfully` de Docker Compose, l’API ne bloque pas son démarrage lorsque le registre des migrations est incomplet.
 5. **Identité et session POS Electron non intégrées.** Le client Electron n’intègre pas de fournisseur d’identité (voir README) : le jeton est provisionné hors de l’application. Le flux de connexion, de renouvellement du jeton et de gestion de session Supabase du POS n’est pas implémenté.
 6. **Jeton administrateur de production non démontré.** Le mécanisme d’obtention du jeton administrateur en production reste à définir et à valider.
+7. **Cloudflare R2 : validation réelle non démontrée.** L’adaptateur S3 dispose de tests unitaires. En revanche, l’intégration réelle à Cloudflare R2, les permissions du jeton et les opérations sur le bucket ne sont pas démontrées. Avant validation, utiliser un bucket R2 de test dédié et un jeton limité à ce bucket, puis vérifier upload, confirmation, téléchargement et nettoyage ; ne pas utiliser le bucket de production ni un jeton largement autorisé.
 8. **Audit des dépendances à réaliser.** `npm audit` est à exécuter ; 12 vulnérabilités ont été signalées, dont 4 de niveau `high` (résultat rapporté, à confirmer par l’audit). Compléter ce point après l’audit.
 9. **Faux positif Gitleaks connu.** Une clé d’idempotence de test est signalée à tort ; l’empreinte exacte est documentée dans `.gitleaksignore`.
 - **Tenants registry has no retention.** `tenants` grows by one row
