@@ -4,6 +4,8 @@ import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
+import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
+import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 import { DeviceEnrollmentController } from '../src/device-enrollment.controller.js';
 import { DeviceEnrollmentService } from '../src/device-enrollment.service.js';
 import { createDeviceEnrollmentThrottleModule } from '../src/device-enrollment.throttle.js';
@@ -47,6 +49,10 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
           throw new UnauthorizedException('Authorization required for POS sync.');
         },
       })
+      .overrideGuard(DeviceApprovalGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(DeviceProofGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -60,6 +66,8 @@ describe('Device enrollment rate limit (HTTP integration)', () => {
   const payload = {
     activationCode: 'ABCD-1234',
     deviceName: 'Caisse test',
+    publicKeyPem: '-----BEGIN PUBLIC KEY-----\\nTEST\\n-----END PUBLIC KEY-----',
+    initialProof: 'header.payload.signature',
     hardwareInfo: {
       hostname: 'pos-test',
       platform: 'win32',

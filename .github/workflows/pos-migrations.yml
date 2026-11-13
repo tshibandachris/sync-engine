@@ -2,14 +2,14 @@ name: POS migration smoke test
 
 on:
   push:
-    branches: [feature/pos-domain-schema]
+    branches: [feature/pos-domain-schema, fix/maintenance-boundary-migration-resume-v1]
   pull_request:
-    branches: [main]
+    branches: [main, validation/full-device-approval-signed-sync-v4]
   workflow_dispatch:
 
 jobs:
   pos-migrations:
-    name: Apply migrations 001-024 and run POS integration checks on fresh PostgreSQL
+    name: Apply all migrations through the production runner and verify replay safety
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -32,19 +32,30 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes postgresql-client
-      - name: Apply every migration to the empty database
+      - name: Run production migration runner twice against an empty database
         env:
+          DB_HOST: localhost
+          DB_NAME: sync_engine_test
+          DB_USER: postgres
+          MIGRATIONS_DIR: migrations
+          PGPASSWORD: postgres
+          SYNC_APP_PASSWORD: sync_app_test_password
+          DEVICE_ENROLLMENT_PASSWORD: enrollment_test_password
+          DEVICE_ADMIN_PASSWORD: admin_test_password
+          MAINTENANCE_PASSWORD: maintenance_test_password
           PGHOST: localhost
           PGPORT: 5432
           PGUSER: postgres
-          PGPASSWORD: postgres
           PGDATABASE: sync_engine_test
         run: |
           set -euo pipefail
-          for file in migrations/*.sql; do
-            echo "Applying $file"
-            psql -v ON_ERROR_STOP=1 -f "$file"
-          done
+          sh scripts/migrate.sh
+          sh scripts/migrate.sh
+          applied="$(psql -v ON_ERROR_STOP=1 -tA -c 'SELECT count(*) FROM public.schema_migrations')"
+          expected="$(find migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d '[:space:]')"
+          test "$applied" = "$expected"
+          echo "Verified $applied of $expected migration files and an idempotent second run."
+          sh test/migration-runner-recovery.sh
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -56,6 +67,12 @@ jobs:
         run: npm run typecheck
       - name: Run integration and regression tests
         run: npm test -- --reporter=verbose
+      - name: Verify maintenance migration and provisioning with PostgreSQL 16 CREATEROLE (no SUPERUSER)
+        env:
+          DB_HOST: localhost
+          DB_NAME: sync_engine_test
+          PGPASSWORD: postgres
+        run: sh test/maintenance-createrole.sh
       - name: Verify POS sync triggers and tenant RLS
         env:
           PGHOST: localhost

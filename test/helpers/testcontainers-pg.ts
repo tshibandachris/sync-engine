@@ -18,6 +18,20 @@ export class TestPostgres {
 
   readonly appDb: ReturnType<typeof drizzle<typeof schema>>;
 
+  readonly enrollmentPool: Pool;
+
+  readonly enrollmentDb: ReturnType<typeof drizzle<typeof schema>>;
+
+  readonly adminPool: Pool;
+
+  readonly adminDb: ReturnType<typeof drizzle<typeof schema>>;
+
+  readonly maintenancePool: Pool;
+
+  readonly maintenanceDb: ReturnType<typeof drizzle<typeof schema>>;
+
+  readonly connectionOptions: { host: string; port: number; database: string };
+
   private constructor(
     container: Awaited<
       ReturnType<PostgreSqlContainer['start']>
@@ -26,12 +40,26 @@ export class TestPostgres {
     db: ReturnType<typeof drizzle<typeof schema>>,
     appPool: Pool,
     appDb: ReturnType<typeof drizzle<typeof schema>>,
+    enrollmentPool: Pool,
+    enrollmentDb: ReturnType<typeof drizzle<typeof schema>>,
+    adminPool: Pool,
+    adminDb: ReturnType<typeof drizzle<typeof schema>>,
+    maintenancePool: Pool,
+    maintenanceDb: ReturnType<typeof drizzle<typeof schema>>,
+    connectionOptions: { host: string; port: number; database: string },
   ) {
     this.container = container;
     this.pool = pool;
     this.db = db;
     this.appPool = appPool;
     this.appDb = appDb;
+    this.enrollmentPool = enrollmentPool;
+    this.enrollmentDb = enrollmentDb;
+    this.adminPool = adminPool;
+    this.adminDb = adminDb;
+    this.maintenancePool = maintenancePool;
+    this.maintenanceDb = maintenanceDb;
+    this.connectionOptions = connectionOptions;
   }
 
   static async start(): Promise<TestPostgres> {
@@ -237,6 +265,18 @@ export class TestPostgres {
     '028_courrier_workflow_and_audit.sql',
     '029_create_device_pairing_codes.sql',
     '030_create_enrolled_devices.sql',
+    '031_device_approval_and_credentials.sql',
+    '032_device_security_hardening.sql',
+    '033_atomic_device_enrollment.sql',
+    '034_device_proof_replay_protection.sql',
+    '035_device_enrollment_with_credential.sql',
+    '036_device_enrollment_executor_role.sql',
+    '037_device_admin_approval_capability.sql',
+    '038_device_enrollment_owner_schema_hardening.sql',
+    '039_purge_expired_device_proof_nonces.sql',
+    '040_maintenance_purge_executor.sql',
+    '041_maintenance_purge_batch_limits.sql',
+    '042_maintenance_function_owner_hardening.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
@@ -303,16 +343,62 @@ export class TestPostgres {
       schema,
     });
 
+    // Dedicated LOGIN used only by the enrollment capability pool.
+    await pool.query("CREATE ROLE device_enrollment_test LOGIN INHERIT PASSWORD 'device_enrollment_test_pw'");
+    await pool.query('GRANT device_enrollment_executor TO device_enrollment_test WITH INHERIT TRUE, SET FALSE');
+    const enrollmentPool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: 'device_enrollment_test',
+      password: 'device_enrollment_test_pw',
+    });
+    const enrollmentDb = drizzle(enrollmentPool, { schema });
+
+    // Dedicated LOGIN used only by the isolated device administration capability.
+    await pool.query("CREATE ROLE device_admin_test LOGIN INHERIT PASSWORD 'device_admin_test_pw'");
+    await pool.query('GRANT device_admin_executor TO device_admin_test WITH INHERIT TRUE, SET FALSE');
+    const adminPool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: 'device_admin_test',
+      password: 'device_admin_test_pw',
+    });
+    const adminDb = drizzle(adminPool, { schema });
+
+    // Dedicated LOGIN with only the maintenance purge capability.
+    await pool.query("CREATE ROLE maintenance_login LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'maintenance_login_pw'");
+    await pool.query('GRANT maintenance_purge_executor TO maintenance_login WITH INHERIT TRUE, SET FALSE');
+    const maintenancePool = new Pool({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      user: 'maintenance_login',
+      password: 'maintenance_login_pw',
+    });
+    const maintenanceDb = drizzle(maintenancePool, { schema });
+
     return new TestPostgres(
       container,
       pool,
       db,
       appPool,
       appDb,
+      enrollmentPool,
+      enrollmentDb,
+      adminPool,
+      adminDb,
+      maintenancePool,
+      maintenanceDb,
+      { host: container.getHost(), port: container.getPort(), database: container.getDatabase() },
     );
   }
 
   async stop(): Promise<void> {
+    await this.maintenancePool.end();
+    await this.adminPool.end();
+    await this.enrollmentPool.end();
     await this.appPool.end();
     await this.pool.end();
     await this.container.stop();

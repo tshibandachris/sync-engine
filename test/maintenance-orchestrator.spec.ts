@@ -51,6 +51,7 @@ class MemStorage implements AttachmentStorage {
 function makeService(db: any, failTenantId?: string): MaintenanceServiceLike {
   const real = new SyncMaintenanceService(db);
   return {
+    purgeExpiredDeviceProofNonces: (t, n) => real.purgeExpiredDeviceProofNonces(t, n),
     purgeSyncLogs(tenantId, ttlDays) {
       if (tenantId === failTenantId) throw new Error('simulated failure');
       return real.purgeSyncLogs(tenantId, ttlDays);
@@ -84,7 +85,7 @@ describe('runMaintenanceCycle', () => {
     await clearTenants();
     const report = await runMaintenanceCycle({
       pool: pg.pool as Pool,
-      db: pg.appDb,
+      db: pg.maintenanceDb,
       storage,
     });
     expect(report.skipped).toBe(false);
@@ -110,7 +111,7 @@ describe('runMaintenanceCycle', () => {
 
     const report = await runMaintenanceCycle({
       pool: pg.pool as Pool,
-      db: pg.appDb,
+      db: pg.maintenanceDb,
       storage,
     });
     expect(report.skipped).toBe(false);
@@ -132,10 +133,10 @@ describe('runMaintenanceCycle', () => {
 
     // L'ordre de SELECT id FROM tenants ORDER BY id n'est pas garanti,
     // on teste juste que les deux sont traites.
-    const svc = makeService(pg.appDb, badTenant);
+    const svc = makeService(pg.maintenanceDb, badTenant);
 
     const report = await runMaintenanceCycle(
-      { pool: pg.pool as Pool, db: pg.appDb, storage, service: svc },
+      { pool: pg.pool as Pool, db: pg.maintenanceDb, storage, service: svc },
     );
     expect(report.tenantsProcessed).toBe(2);
     expect(report.tenantsSucceeded).toBe(1);
@@ -157,7 +158,7 @@ describe('runMaintenanceCycle', () => {
 
       const report = await runMaintenanceCycle({
         pool: pg.pool as Pool,
-        db: pg.appDb,
+        db: pg.maintenanceDb,
         storage,
       });
       expect(report.skipped).toBe(true);
@@ -177,7 +178,7 @@ describe('runMaintenanceCycle', () => {
     await registerTenant(t2);
 
     const report = await runMaintenanceCycle(
-      { pool: pg.pool as Pool, db: pg.appDb, storage },
+      { pool: pg.pool as Pool, db: pg.maintenanceDb, storage },
       { tenantFilter: [t1] },
     );
     expect(report.tenantsProcessed).toBe(1);
@@ -195,7 +196,7 @@ describe('runMaintenanceCycle', () => {
 
     const report = await runMaintenanceCycle({
       pool: pg.pool as Pool,
-      db: pg.appDb,
+      db: pg.maintenanceDb,
       storage,
     });
     expect(report.perTenant[0].orphansFound).toBe(1);

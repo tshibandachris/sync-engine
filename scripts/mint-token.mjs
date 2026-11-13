@@ -1,3 +1,4 @@
+// Développement et tests uniquement — jamais en production.
 // Mint a JWT for shared-secret mode, offline.
 //
 // Usage:
@@ -8,6 +9,12 @@
 // AUTH_ALLOW_SHARED_SECRET=true: /auth/token stays closed in production.
 
 import { SignJWT } from 'jose';
+
+if (process.env.NODE_ENV === 'production') {
+  console.error('Refus : ce script est réservé au développement et aux tests, jamais en production.');
+  process.exit(1);
+}
+console.warn('AVERTISSEMENT : développement et tests uniquement, jamais en production.');
 
 const [, , agentId, tenantId] = process.argv;
 

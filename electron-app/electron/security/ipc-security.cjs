@@ -47,6 +47,25 @@ function validateEnrollmentCredentials(value) {
   return { token: value.token };
 }
 
+
+function validateDeviceEnrollmentInput(value) {
+  if (!isPlainRecord(value) ||
+      Object.keys(value).some((key) => !['activationCode', 'deviceName'].includes(key))) {
+    throw new Error('Invalid device enrollment input.');
+  }
+  const activationCode = typeof value.activationCode === 'string'
+    ? value.activationCode.trim().toUpperCase()
+    : '';
+  const deviceName = typeof value.deviceName === 'string' ? value.deviceName.trim() : '';
+  if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(activationCode)) {
+    throw new Error("Le code d'activation doit respecter le format XXXX-XXXX.");
+  }
+  if (!deviceName || deviceName.length > 120) {
+    throw new Error('Le nom du terminal doit contenir entre 1 et 120 caractères.');
+  }
+  return { activationCode, deviceName };
+}
+
 function validateProductInput(value) {
   if (!isPlainRecord(value) || Object.keys(value).some((key) => !PRODUCT_FIELDS.has(key))) {
     throw new Error('Invalid product input.');
@@ -93,5 +112,6 @@ module.exports = {
   assertTrustedIpcSender,
   validateSearchQuery,
   validateEnrollmentCredentials,
+  validateDeviceEnrollmentInput,
   validateProductInput,
 };

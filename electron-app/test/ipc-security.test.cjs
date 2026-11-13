@@ -4,6 +4,7 @@ const {
   assertTrustedIpcSender,
   validateSearchQuery,
   validateEnrollmentCredentials,
+  validateDeviceEnrollmentInput,
   validateProductInput,
 } = require('../electron/security/ipc-security.cjs');
 
@@ -43,6 +44,24 @@ test('enrollment credentials accept only a bounded token field', () => {
   assert.throws(() => validateEnrollmentCredentials({ token: 'a.b.c', extra: true }), /Invalid enrollment/);
   assert.throws(() => validateEnrollmentCredentials({ token: '' }), /Invalid enrollment/);
   assert.throws(() => validateEnrollmentCredentials({ token: 'x'.repeat(16385) }), /Invalid enrollment/);
+});
+
+
+test('device enrollment IPC accepts only activation code and bounded device name', () => {
+  assert.deepEqual(validateDeviceEnrollmentInput({
+    activationCode: 'abcd-1234',
+    deviceName: 'Caisse principale',
+  }), {
+    activationCode: 'ABCD-1234',
+    deviceName: 'Caisse principale',
+  });
+  assert.throws(() => validateDeviceEnrollmentInput({ activationCode: 'bad', deviceName: 'Caisse' }), /code d'activation/i);
+  assert.throws(() => validateDeviceEnrollmentInput({
+    activationCode: 'ABCD-1234', deviceName: 'x'.repeat(121),
+  }), /nom du terminal/);
+  assert.throws(() => validateDeviceEnrollmentInput({
+    activationCode: 'ABCD-1234', deviceName: 'Caisse', privateKeyPem: 'secret',
+  }), /Invalid device enrollment input/);
 });
 
 test('product IPC accepts the supported DTO and rejects unknown or oversized fields', () => {

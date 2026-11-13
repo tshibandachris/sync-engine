@@ -6,14 +6,18 @@ import { runBootGuards, assertMetricsConfig } from './boot-guards.js';
 import { startMetricsServer, stopMetricsServer } from './observability/metrics-server.js';
 import type { AttachmentStorage } from './attachment-storage.js';
 import { S3AttachmentStorage } from './s3-attachment-storage.js';
+import { assertEnrollmentDatabaseIdentity } from './device-enrollment-db-guard.js';
+import { assertDeviceAdminDatabaseIdentity } from './device-admin-db-guard.js';
 
 export async function createApp(
   db: NodePgDatabase<typeof schema>,
-  jwtSecret: string,
+  enrollmentDb: NodePgDatabase<typeof schema>,
+  adminDb: NodePgDatabase<typeof schema>,
+  jwtSecret: string | undefined,
   storage: AttachmentStorage,
 ) {
   const moduleRef = await NestFactory.create(
-    AppModule.register({ db, jwtSecret, storage }),
+    AppModule.register({ db, enrollmentDb, adminDb, jwtSecret, storage }),
     { logger: false },
   );
 
@@ -44,17 +48,32 @@ async function bootstrap(): Promise<void> {
   runBootGuards();
 
   const databaseUrl = process.env.DATABASE_URL;
+  const enrollmentDatabaseUrl = process.env.DEVICE_ENROLLMENT_DATABASE_URL;
+  const adminDatabaseUrl = process.env.DEVICE_ADMIN_DATABASE_URL;
   const jwtSecret = process.env.JWT_SECRET;
   const port = Number(process.env.PORT ?? 3000);
 
   if (!databaseUrl) throw new Error('DATABASE_URL requis.');
-  if (!jwtSecret) throw new Error('JWT_SECRET requis.');
+  if (!enrollmentDatabaseUrl) throw new Error('DEVICE_ENROLLMENT_DATABASE_URL requis : connexion PostgreSQL dédiée à l’enrôlement.');
+  if (!adminDatabaseUrl) throw new Error('DEVICE_ADMIN_DATABASE_URL requis : connexion PostgreSQL dédiée à la gestion des terminaux.');
 
   const { Pool } = await import('pg');
   const { drizzle } = await import('drizzle-orm/node-postgres');
 
   const pool = new Pool({ connectionString: databaseUrl });
+  const enrollmentPool = new Pool({ connectionString: enrollmentDatabaseUrl, max: 3 });
+  const adminPool = new Pool({ connectionString: adminDatabaseUrl, max: 3 });
   const db = drizzle(pool, { schema });
+  const enrollmentDb = drizzle(enrollmentPool, { schema });
+  const adminDb = drizzle(adminPool, { schema });
+
+  try {
+    await assertEnrollmentDatabaseIdentity(enrollmentPool);
+    await assertDeviceAdminDatabaseIdentity(adminPool);
+  } catch (error) {
+    await Promise.all([pool.end(), enrollmentPool.end(), adminPool.end()]);
+    throw error;
+  }
 
   const bucket = process.env.S3_BUCKET;
   if (!bucket) throw new Error('S3_BUCKET requis.');
@@ -71,7 +90,7 @@ async function bootstrap(): Promise<void> {
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
   });
 
-  const app = await createApp(db, jwtSecret, storage);
+  const app = await createApp(db, enrollmentDb, adminDb, jwtSecret, storage);
   await app.listen(port);
 
   console.log('Sync engine listening on port ' + port);
@@ -91,6 +110,7 @@ async function bootstrap(): Promise<void> {
     try {
       await stopMetricsServer(metricsServer);
       await app.close();
+      await Promise.all([pool.end(), enrollmentPool.end(), adminPool.end()]);
     } finally {
       process.exit(0);
     }

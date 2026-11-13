@@ -179,7 +179,14 @@ export class SyncPushService {
         const existing = await tx.execute(
           sql`SELECT 1 FROM sync_idempotency_keys WHERE agent_id = ${agentId}::uuid AND idempotency_key = ${idempotencyKey}`,
         );
-        if (existing.rows.length > 0) return { ...EMPTY_RESPONSE, [IDEMPOTENCY_REPLAY]: true };
+        if (existing.rows.length > 0) {
+          const replay: PushResponse = { ...EMPTY_RESPONSE };
+          if (dto.changes.sales !== undefined) {
+            replay.results = await new PosSalesPushService(this.db)
+              .pushInTransaction(tx, tenantId, dto.changes.sales, true);
+          }
+          return { ...replay, [IDEMPOTENCY_REPLAY]: true };
+        }
       }
 
       const response: PushResponse = { applied: { created: 0, updated: 0, deleted: 0 }, conflicts: [] };
@@ -722,11 +729,26 @@ export class SyncPushService {
         `);
       }
 
+      if (dto.changes.sales !== undefined) {
+        response.results = await new PosSalesPushService(this.db)
+          .pushInTransaction(tx, tenantId, dto.changes.sales);
+        if (idempotencyKey) {
+          const failedSale = response.results.find(result =>
+            result.status === 'invalid' || result.status === 'conflict');
+          if (failedSale?.status === 'conflict') {
+            // Throw inside the outer withTenant transaction: this rolls back
+            // the idempotency key, every sale savepoint that succeeded, and
+            // all non-POS operations in the same push.
+            throw new ConflictException('Push atomique annulé : une vente est en conflit.');
+          }
+          if (failedSale?.status === 'invalid') {
+            throw new BadRequestException('Push atomique annulé : une vente est invalide.');
+          }
+        }
+      }
+
       return response;
     }, { write: true });
-      if (dto.changes.sales !== undefined) {
-        response.results = await new PosSalesPushService(this.db).push(tenantId, dto.changes.sales);
-      }
       return response;
     } catch (err) {
       const pgError = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };

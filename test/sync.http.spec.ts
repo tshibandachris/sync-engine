@@ -11,6 +11,8 @@ import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
 import { SyncController } from '../src/sync.controller.js';
 import { JwtAuthGuard } from '../src/jwt.guard.js';
+import { DeviceApprovalGuard } from '../src/device-approval.guard.js';
+import { DeviceProofGuard } from '../src/auth/device-proof.guard.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import {
   TEST_JWT_SECRET,
@@ -26,6 +28,8 @@ describe('Sync Engine / HTTP', () => {
   let app: INestApplication;
   let jwt: JwtService;
   let tokenA: string;
+  const deviceA = randomUUID();
+  const deviceB = randomUUID();
 
   const agentA = randomUUID();
   const tenantA = randomUUID();
@@ -53,8 +57,9 @@ describe('Sync Engine / HTTP', () => {
         { provide: SyncPushService, useFactory: (d: any) => new SyncPushService(d), inject: ['DRIZZLE_DB'] },
         { provide: SyncConflictService, useFactory: (d: any) => new SyncConflictService(d), inject: ['DRIZZLE_DB'] },
         JwtAuthGuard,
+        DeviceApprovalGuard,
       ],
-    }).compile();
+    }).overrideGuard(DeviceProofGuard).useValue({ canActivate: () => true }).compile();
 
     app = moduleRef.createNestApplication();
     await assertRunsAsAppRole(moduleRef.get('DRIZZLE_DB'));
@@ -68,6 +73,14 @@ describe('Sync Engine / HTTP', () => {
 
   beforeEach(async () => {
     await pg.pool.query('TRUNCATE check_ins, missions, sites, sync_idempotency_keys, sync_conflicts RESTART IDENTITY CASCADE');
+    await pg.pool.query('DELETE FROM devices WHERE tenant_id = ANY($1::uuid[])', [[tenantA, tenantB]]);
+    await pg.pool.query('INSERT INTO tenants (id, first_seen_at) VALUES ($1, $3), ($2, $3) ON CONFLICT (id) DO NOTHING', [tenantA, tenantB, Date.now()]);
+    await pg.pool.query(
+      `INSERT INTO devices (id, tenant_id, store_id, name, fingerprint, hardware_info, is_active, approval_status, approved_at, approved_by)
+       VALUES ($1, $2, $3, 'Approved test terminal A', $4, '{}', true, 'approved', now(), $5),
+              ($6, $7, $3, 'Approved test terminal B', $8, '{}', true, 'approved', now(), $5)`,
+      [deviceA, tenantA, randomUUID(), 'sync-test-a-' + deviceA, agentA, deviceB, tenantB, 'sync-test-b-' + deviceB],
+    );
     await pg.pool.query('ALTER SEQUENCE global_sync_seq RESTART WITH 1');
 
     await pg.pool.query(
@@ -101,10 +114,62 @@ describe('Sync Engine / HTTP', () => {
     expect(res.status).toBe(401);
   });
 
+  it('rejects a valid agent JWT when X-Device-Id is missing', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/sync/pull')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .send({});
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('DEVICE_IDENTITY_MISSING');
+  });
+
+  it('rejects a terminal awaiting approval', async () => {
+    const pendingId = randomUUID();
+    await pg.pool.query(
+      `INSERT INTO devices (id, tenant_id, store_id, name, fingerprint, hardware_info, is_active, approval_status)
+       VALUES ($1, $2, $3, 'Pending terminal', $4, '{}', true, 'pending_approval')`,
+      [pendingId, tenantA, randomUUID(), 'pending-' + pendingId],
+    );
+    const res = await request(app.getHttpServer())
+      .post('/sync/pull')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', pendingId)
+      .send({});
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('DEVICE_PENDING_APPROVAL');
+  });
+
+  it('rejects a revoked terminal', async () => {
+    const revokedId = randomUUID();
+    await pg.pool.query(
+      `INSERT INTO devices (id, tenant_id, store_id, name, fingerprint, hardware_info, is_active, approval_status, approved_at, approved_by)
+       VALUES ($1, $2, $3, 'Revoked terminal', $4, '{}', true, 'revoked', now(), $5)`,
+      [revokedId, tenantA, randomUUID(), 'revoked-' + revokedId, agentA],
+    );
+    const res = await request(app.getHttpServer())
+      .post('/sync/pull')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', revokedId)
+      .send({});
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('DEVICE_REVOKED');
+  });
+
+  it('allows synchronization from an active approved terminal', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/sync/pull')
+      .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
+      .send({ last_pulled_at: null, limit: 500 });
+    expect(res.status).toBe(201);
+    expect(res.body.changes).toBeDefined();
+  });
+
   it('POST /sync/pull returns the mission and site for the agent', async () => {
     const res = await request(app.getHttpServer())
       .post('/sync/pull')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ last_pulled_at: null, limit: 500 });
 
     expect(res.status).toBe(201);
@@ -118,6 +183,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({
         changes: {
           check_ins: {
@@ -138,6 +204,7 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
@@ -145,6 +212,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     expect(res.status).toBe(201);
@@ -157,17 +225,20 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const res = await request(app.getHttpServer())
       .get('/sync/conflicts?status=pending')
-      .set('Authorization', 'Bearer ' + tokenA);
+      .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA);
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
@@ -179,12 +250,14 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     const pushed = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const conflictId = pushed.body.conflicts[0].conflict_id;
@@ -192,6 +265,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/conflicts/' + conflictId + '/resolve')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ resolution: 'server', resolved_by: agentA });
 
     expect(res.status).toBe(201);
@@ -204,6 +278,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/pull')
       .set('Authorization', 'Bearer ' + tokenB)
+      .set('X-Device-Id', deviceB)
       .send({ last_pulled_at: null, limit: 500 });
 
     expect(res.status).toBe(201);
@@ -218,6 +293,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenB)
+      .set('X-Device-Id', deviceB)
       .send({
         changes: {
           check_ins: {
@@ -234,12 +310,14 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     const pushed = await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const conflictId = pushed.body.conflicts[0].conflict_id;
@@ -248,6 +326,7 @@ describe('Sync Engine / HTTP', () => {
     const res = await request(app.getHttpServer())
       .post('/sync/conflicts/' + conflictId + '/resolve')
       .set('Authorization', 'Bearer ' + tokenB)
+      .set('X-Device-Id', deviceB)
       .send({ resolution: 'server', resolved_by: agentA });
 
     // Under RLS, another tenant's conflict is invisible to the query, so the
@@ -261,18 +340,21 @@ describe('Sync Engine / HTTP', () => {
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { created: [{ id, mission_id: missionA, check_in_time: Date.now(), check_in_lat: 1, check_in_lng: 2, check_in_method: 'GPS' }] } } });
 
     await pg.pool.query("UPDATE check_ins SET sync_seq = nextval('global_sync_seq') WHERE id = $1", [id]);
     await request(app.getHttpServer())
       .post('/sync/push')
       .set('Authorization', 'Bearer ' + tokenA)
+      .set('X-Device-Id', deviceA)
       .send({ changes: { check_ins: { updated: [{ id, version: 1, check_out_time: Date.now() }] } } });
 
     const tokenB = signAgentToken(agentA, jwt, tenantB);
     const res = await request(app.getHttpServer())
       .get('/sync/conflicts?status=pending')
-      .set('Authorization', 'Bearer ' + tokenB);
+      .set('Authorization', 'Bearer ' + tokenB)
+      .set('X-Device-Id', deviceB);
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(0);

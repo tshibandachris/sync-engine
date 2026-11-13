@@ -2,11 +2,36 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, deploy/render-clean]
   pull_request:
-    branches: [main]
+    branches: [main, validation/full-device-approval-signed-sync-v4]
 
 jobs:
+  secret-scan:
+    name: Scan tracked source with exact path/value allowlist
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify allowlist matching is exact, then scan
+        run: python3 scripts/secret-scan.py --self-test
+
+  workflow-validation:
+    name: Validate workflows and migration shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Lint GitHub Actions workflows
+        run: |
+          "$(go env GOPATH)/bin/actionlint" -color
+      - name: Check migration shell syntax
+        run: sh -n scripts/migrate.sh
+
   test:
     name: Typecheck + integration tests
     runs-on: ubuntu-latest
@@ -19,6 +44,11 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+
+      - name: Install PostgreSQL client for migration-runner tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
 
       - name: Install dependencies
         run: npm ci

@@ -18,4 +18,5 @@ backup/
 fix-*.cjs
 patch-*.cjs
 .env.prod
+.env.test
 seaweedfs/s3.json

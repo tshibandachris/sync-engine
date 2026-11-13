@@ -1,18 +1,17 @@
-﻿// test-upload.mjs — flow upload/download contre la stack Docker.
+// test-upload.mjs — flow upload/download contre la stack Docker.
 
-import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { SignJWT } from 'jose';
 
-const API = 'http://localhost:3000';
+const API = 'http://127.0.0.1:3300';
 const TENANT  = '11111111-1111-1111-1111-111111111111';
 const AGENT   = '22222222-2222-2222-2222-222222222222';
 const SITE    = '33333333-3333-3333-3333-333333333333';
 const MISSION = '44444444-4444-4444-4444-444444444444';
 const CHECKIN = '55555555-5555-5555-5555-555555555555';
 
-const COMPOSE = 'docker compose -f docker-compose.prod.yml --env-file .env.prod';
+const COMPOSE = 'docker compose -p sync-engine-e2e-test -f docker-compose.test.yml --env-file .env.test';
 
 const step = (m) => console.log('\n--- ' + m + ' ---');
 const ok   = (m) => console.log('OK   : ' + m);
@@ -20,11 +19,9 @@ const fail = (m) => { console.error('FAIL : ' + m); process.exit(1); };
 
 // ----- 0. JWT -----
 step('0. Mint JWT');
-const env = fs.readFileSync('.env.prod', 'utf8');
-const secretMatch = env.match(/^JWT_SECRET=(.*)$/m);
-if (!secretMatch) fail('JWT_SECRET introuvable dans .env.prod');
-const secret = secretMatch[1].trim();
-if (secret.length < 32) fail('JWT_SECRET trop court');
+if (process.env.NODE_ENV !== 'test') fail('NODE_ENV doit être exactement test. Ce script ne fonctionne jamais en production.');
+const secret = process.env.JWT_SECRET ?? '';
+if (secret.length < 32) fail('JWT_SECRET de test absent ou trop court dans .env.test');
 const token = await new SignJWT({ sub: AGENT, tenantId: TENANT })
   .setProtectedHeader({ alg: 'HS256' })
   .setIssuedAt()
@@ -53,7 +50,7 @@ VALUES ('${CHECKIN}', '${TENANT}', '${MISSION}', '${AGENT}', '${SITE}',
         ${now}, 0, 0, 'manual', ${now}, ${now});
 `;
 const seedOut = execSync(
-  COMPOSE + ' exec -T db psql -U postgres -d sync_engine -v ON_ERROR_STOP=1',
+  COMPOSE + ' exec -T db psql -U postgres -d sync_engine_test -v ON_ERROR_STOP=1',
   { input: seedSql, encoding: 'utf8' },
 );
 console.log(seedOut.trim() || '(aucune sortie)');
@@ -94,7 +91,7 @@ ok('upload_url + attachment_id extraits');
 console.log('     upload_url = ' + uploadUrl.slice(0, 90) + '...');
 
 // ----- 4. PUT -----
-step('4. PUT vers SeaweedFS (via URL presignee)');
+step('4. PUT vers le stockage S3 de test (via URL presignee)');
 const put = await fetch(uploadUrl, {
   method: 'PUT',
   headers: { 'Content-Type': contentType },

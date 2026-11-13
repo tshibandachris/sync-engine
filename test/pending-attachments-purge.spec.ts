@@ -25,7 +25,7 @@ describe('purgeTenantPendingAttachments', () => {
   let svc: SyncMaintenanceService;
 
   beforeAll(() => {
-    svc = new SyncMaintenanceService(pg.appDb);
+    svc = new SyncMaintenanceService(pg.maintenanceDb);
   });
 
   beforeEach(async () => {
