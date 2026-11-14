@@ -114,7 +114,8 @@ function renderProducts(products) {
 async function loadProducts() {
   try {
     state.products = await window.eden.listProducts(state.query);
-    renderProducts(state.products);\n    if ($('pos-products')) renderPosProducts();
+    renderProducts(state.products);
+    if ($('pos-products')) renderPosProducts();
   } catch (error) {
     setFeedback(error.message || 'Impossible de charger le catalogue.', 'error');
   }
@@ -241,7 +242,10 @@ function initializeDashboard() {
   if (dashboardInitialized) return;
   dashboardInitialized = true;
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => switchPage(button.dataset.page)));
-  $('new-product').addEventListener('click', () => openProductDialog());\n  $('pos-search').addEventListener('input', (event) => { state.posQuery=event.target.value; renderPosProducts(); });\n  $('cart-clear').addEventListener('click', () => { state.cart.clear(); renderCart(); });\n  $('payment-method').addEventListener('change', renderCart);
+  $('new-product').addEventListener('click', () => openProductDialog());
+  $('pos-search').addEventListener('input', (event) => { state.posQuery=event.target.value; renderPosProducts(); });
+  $('cart-clear').addEventListener('click', () => { state.cart.clear(); renderCart(); });
+  $('payment-method').addEventListener('change', renderCart);
   $('close-dialog').addEventListener('click', closeProductDialog);
   $('cancel-product').addEventListener('click', closeProductDialog);
   $('product-form').addEventListener('submit', saveProduct);
