@@ -81,9 +81,9 @@ describe('purgeTenantPendingAttachments', () => {
     return new Set(r.rows.map((row: { id: string }) => String(row.id)));
   }
 
-  it('supprime les pending de plus de 7 jours', async () => {
+  it('supprime les pending de plus de 1 jour', async () => {
     const old = await seed({ status: 'pending', ageDays: 10 });
-    const recent = await seed({ status: 'pending', ageDays: 2 });
+    const recent = await seed({ status: 'pending', ageDays: 0.5 });
 
     const r = await svc.purgeTenantPendingAttachments(tenantId);
     expect(r.deleted).toBe(1);
@@ -93,7 +93,7 @@ describe('purgeTenantPendingAttachments', () => {
     expect(remaining.has(recent)).toBe(true);
   });
 
-  it('respecte la limite : 6 jours restent, 8 jours partent', async () => {
+  it('respecte un TTL explicite supérieur au plancher : 6 jours restent, 8 jours partent', async () => {
     const d6 = await seed({ status: 'pending', ageDays: 6 });
     const d8 = await seed({ status: 'pending', ageDays: 8 });
 
@@ -177,7 +177,7 @@ describe('purgeTenantPendingAttachments', () => {
     expect(r.deleted).toBe(0);
   });
 
-  it('rejette un ttl negatif', async () => {
-    await expect(svc.purgeTenantPendingAttachments(tenantId, -1)).rejects.toThrow(/ttlDays/);
+  it('refuse un TTL inférieur au plancher de 1 jour', async () => {
+    await expect(svc.purgeTenantPendingAttachments(tenantId, 0)).rejects.toThrow(/1 jour/);
   });
 });
