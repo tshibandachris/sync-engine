@@ -55,6 +55,53 @@ describe('bounded tenant maintenance purges', () => {
     expect(b?.rows).toBe(1);
   });
 
+  it('purges at most one batch of expired idempotency keys for the requested tenant', async () => {
+    const tenantId = randomUUID();
+    const agentId = randomUUID();
+    await pg.pool.query(
+      `INSERT INTO sync_idempotency_keys (tenant_id, agent_id, idempotency_key, created_at)
+       SELECT $1, $2, 'batch-' || g::text, clock_timestamp() - interval '8 days'
+         FROM generate_series(1, 5001) AS g`,
+      [tenantId, agentId],
+    );
+    const service = new SyncMaintenanceService(pg.maintenanceDb);
+    const first = await service.purge(tenantId, { ttlIdempotencyDays: 7, ttlConflictsDays: 7 });
+    expect(first.idempotencyDeleted).toBe(BATCH_SIZE);
+    const remaining = await pg.pool.query(
+      'SELECT count(*)::int AS n FROM sync_idempotency_keys WHERE tenant_id = $1',
+      [tenantId],
+    );
+    expect(remaining.rows[0].n).toBe(1);
+    const second = await service.purge(tenantId, { ttlIdempotencyDays: 7, ttlConflictsDays: 7 });
+    expect(second.idempotencyDeleted).toBe(1);
+  });
+
+  it('purges at most one batch of resolved conflicts for the requested tenant', async () => {
+    const tenantId = randomUUID();
+    const agentId = randomUUID();
+    await pg.pool.query(
+      `INSERT INTO sync_conflicts
+         (id, tenant_id, agent_id, entity_type, entity_id, client_version, server_version,
+          client_payload, server_payload, status, resolution, resolved_at, created_at)
+       SELECT gen_random_uuid(), $1, $2, 'check_in', gen_random_uuid(), 1, 2,
+              '{}'::jsonb, '{}'::jsonb, 'resolved', 'server',
+              (extract(epoch FROM (clock_timestamp() - interval '8 days')) * 1000)::bigint,
+              (extract(epoch FROM (clock_timestamp() - interval '8 days')) * 1000)::bigint
+         FROM generate_series(1, 5001) AS g`,
+      [tenantId, agentId],
+    );
+    const service = new SyncMaintenanceService(pg.maintenanceDb);
+    const first = await service.purge(tenantId, { ttlIdempotencyDays: 7, ttlConflictsDays: 7 });
+    expect(first.conflictsDeleted).toBe(BATCH_SIZE);
+    const remaining = await pg.pool.query(
+      'SELECT count(*)::int AS n FROM sync_conflicts WHERE tenant_id = $1',
+      [tenantId],
+    );
+    expect(remaining.rows[0].n).toBe(1);
+    const second = await service.purge(tenantId, { ttlIdempotencyDays: 7, ttlConflictsDays: 7 });
+    expect(second.conflictsDeleted).toBe(1);
+  });
+
   it('purges at most one batch of expired sync logs for the requested tenant', async () => {
     const tenantA = randomUUID();
     const tenantB = randomUUID();
