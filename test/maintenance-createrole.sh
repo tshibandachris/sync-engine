@@ -91,9 +91,15 @@ psql_as_bootstrap -c "REVOKE pg_monitor FROM device_proof_maintenance_function_o
 echo "[maintenance-createrole] migration 042 succeeds under CREATEROLE without SUPERUSER"
 run_042_as_admin >/dev/null
 
-echo "[maintenance-createrole] applying migration 043 as a CREATEROLE role with explicit function-owner membership"
-psql_as_bootstrap -c "GRANT maintenance_function_owner TO $ADMIN_ROLE WITH ADMIN OPTION" >/dev/null
+echo "[maintenance-createrole] migration 043 refuses a CREATEROLE role without function-owner membership"
 cp migrations/043_retention_floors_and_pending_batch.sql "$TMP_DIR/043_retention_floors_and_pending_batch.sql"
+if run_043_as_admin >/dev/null 2>&1; then
+  echo "[maintenance-createrole] ERROR: migration 043 accepted a role without function-owner membership" >&2
+  exit 1
+fi
+
+echo "[maintenance-createrole] applying migration 043 with explicit function-owner membership"
+psql_as_bootstrap -c "GRANT maintenance_function_owner TO $ADMIN_ROLE WITH ADMIN OPTION" >/dev/null
 run_043_as_admin >/dev/null
 psql_as_bootstrap -c "REVOKE maintenance_function_owner FROM $ADMIN_ROLE" >/dev/null
 
