@@ -13,6 +13,8 @@ import type { Pool } from 'pg';
 export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<void> {
   const res = await db.query<{
     role: string;
+    rolcanlogin: boolean;
+    rolinherit: boolean;
     rolsuper: boolean;
     rolbypassrls: boolean;
     rolcreatedb: boolean;
@@ -24,6 +26,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
     direct_membership_count: number;
   }>(
     'SELECT login_role.rolname AS role, ' +
+      'login_role.rolcanlogin, login_role.rolinherit, ' +
       'login_role.rolsuper, login_role.rolbypassrls, ' +
       'login_role.rolcreatedb, login_role.rolcreaterole, login_role.rolreplication, ' +
       'pg_catalog.pg_has_role(login_role.oid, allowed_role.oid, \'USAGE\') AS has_allowed_membership, ' +
@@ -45,7 +48,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
     throw new Error('Impossible de lire le role courant ou le role de maintenance dans pg_roles : refus de continuer.');
   }
 
-  if (row.rolsuper || row.rolbypassrls || row.rolcreatedb || row.rolcreaterole || row.rolreplication) {
+  if (!row.rolcanlogin || !row.rolinherit || row.rolsuper || row.rolbypassrls || row.rolcreatedb || row.rolcreaterole || row.rolreplication) {
     throw new Error(
       'Refus de demarrer : le role "' +
         row.role +
