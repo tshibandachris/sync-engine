@@ -219,7 +219,7 @@ describe('maintenance_login runtime membership boundary', () => {
     for (const [enabled, disabled] of [['CREATEROLE', 'NOCREATEROLE'], ['REPLICATION', 'NOREPLICATION']] as const) {
       await pg.pool.query(`ALTER ROLE maintenance_login ${enabled}`);
       try {
-        await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attributs incompatibles/i);
+        await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attribut privilégié/i);
       } finally {
         await pg.pool.query(`ALTER ROLE maintenance_login ${disabled}`);
       }
