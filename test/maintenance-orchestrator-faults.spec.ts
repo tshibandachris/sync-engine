@@ -27,6 +27,7 @@ const storage = {} as AttachmentStorage;
 function fakeService(calls: string[], over: Partial<MaintenanceServiceLike> = {}): MaintenanceServiceLike {
   return {
     purgeExpiredDeviceProofNonces: async () => { calls.push('nonces'); return { deleted: 1 }; },
+    purge: async () => { calls.push('syncRetention'); return { idempotencyDeleted: 8, conflictsDeleted: 9 }; },
     purgeSyncLogs: async () => {
       calls.push('syncLogs');
       return { logsDeleted: 2 };
@@ -79,12 +80,14 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
       }),
     );
 
-    expect(calls).toEqual(['nonces', 'pending', 'tombstones', 'storage', 'scan']);
+    expect(calls).toEqual(['nonces', 'syncRetention', 'pending', 'tombstones', 'storage', 'scan']);
     expect(report.tenantsFailed).toBe(1);
     expect(report.tenantsSucceeded).toBe(0);
     const row = report.perTenant[0];
     expect(row.error).toBe('syncLogs: db down');
     expect(row.syncLogsDeleted).toBe(0);
+    expect(row.idempotencyDeleted).toBe(8);
+    expect(row.conflictsDeleted).toBe(9);
     expect(row.pendingAttachmentsDeleted).toBe(3);
     expect(row.checkInsDeleted).toBe(4);
     expect(row.missionsDeleted).toBe(5);
@@ -103,10 +106,12 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
       }),
     );
 
-    expect(calls).toEqual(['syncLogs', 'pending', 'tombstones', 'storage', 'scan']);
+    expect(calls).toEqual(['syncRetention', 'syncLogs', 'pending', 'tombstones', 'storage', 'scan']);
     expect(report.tenantsFailed).toBe(1);
     expect(report.perTenant[0].deviceProofNoncesDeleted).toBe(0);
     expect(report.perTenant[0].error).toContain('deviceProofNonces: nonce purge down');
+    expect(report.perTenant[0].idempotencyDeleted).toBe(8);
+    expect(report.perTenant[0].conflictsDeleted).toBe(9);
     expect(report.perTenant[0].syncLogsDeleted).toBe(2);
     expect(report.perTenant[0].orphansFound).toBe(1);
   });
@@ -121,7 +126,7 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
       }),
     );
 
-    expect(calls).toEqual(['nonces', 'syncLogs', 'pending', 'scan']);
+    expect(calls).toEqual(['nonces', 'syncRetention', 'syncLogs', 'pending', 'scan']);
     const row = report.perTenant[0];
     expect(row.error).toBe('tombstones: tombstones down');
     expect(row.syncLogsDeleted).toBe(2);
