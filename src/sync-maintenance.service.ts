@@ -77,7 +77,7 @@ export class SyncMaintenanceService {
   async purge(tenantId: string, options: PurgeOptions = {}): Promise<PurgeResult> {
     if (!tenantId) throw new Error('tenantId requis.');
     const ttlIdempotencyDays = options.ttlIdempotencyDays ?? 7;
-    const ttlConflictsDays = options.ttlConflictsDays ?? 30;
+    const ttlConflictsDays = options.ttlConflictsDays ?? 7;
     if (ttlIdempotencyDays < 7 || ttlConflictsDays < 7) {
       throw new Error('Les rétentions minimales sont de 7 jours pour les clés d’idempotence et les conflits résolus.');
     }
@@ -303,7 +303,7 @@ export class SyncMaintenanceService {
    */
   async purgeTenantPendingAttachments(
     tenantId: string,
-    ttlDays: number = 7,
+    ttlDays: number = 1,
   ): Promise<PurgePendingAttachmentsResult> {
     if (!tenantId) throw new Error('tenantId requis.');
     if (ttlDays < 1) throw new Error('La rétention minimale des pièces jointes en attente est de 1 jour.');
