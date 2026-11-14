@@ -47,7 +47,7 @@ if [ "$MAINTENANCE_ONLY" = "1" ]; then
        WHERE filename = '043_retention_floors_and_pending_batch.sql'
     ) THEN 1 ELSE 0 END
   ")
-  if [ "$migration_042_applied" != "1" ]; then
+  if [ "$migration_043_applied" != "1" ]; then
     echo "[migrate] ERROR: maintenance provisioning requires migration 043 to be applied first." >&2
     exit 1
   fi
