@@ -81,9 +81,9 @@ describe('purgeTenantPendingAttachments', () => {
     return new Set(r.rows.map((row: { id: string }) => String(row.id)));
   }
 
-  it('supprime les pending de plus de 7 jours', async () => {
+  it('supprime les pending de plus de 1 jour', async () => {
     const old = await seed({ status: 'pending', ageDays: 10 });
-    const recent = await seed({ status: 'pending', ageDays: 2 });
+    const recent = await seed({ status: 'pending', ageDays: 0.5 });
 
     const r = await svc.purgeTenantPendingAttachments(tenantId);
     expect(r.deleted).toBe(1);
@@ -93,7 +93,7 @@ describe('purgeTenantPendingAttachments', () => {
     expect(remaining.has(recent)).toBe(true);
   });
 
-  it('respecte la limite : 6 jours restent, 8 jours partent', async () => {
+  it('respecte un TTL explicite supérieur au plancher : 6 jours restent, 8 jours partent', async () => {
     const d6 = await seed({ status: 'pending', ageDays: 6 });
     const d8 = await seed({ status: 'pending', ageDays: 8 });
 
@@ -103,6 +103,29 @@ describe('purgeTenantPendingAttachments', () => {
     const remaining = await listIds();
     expect(remaining.has(d6)).toBe(true);
     expect(remaining.has(d8)).toBe(false);
+  });
+
+  it('purge au maximum 5 000 pièces jointes pending par appel', async () => {
+    await pg.pool.query(
+      `INSERT INTO attachments
+         (id, tenant_id, check_in_id, agent_id, object_key, content_type,
+          size_bytes, checksum_sha256, status, created_at, uploaded_at)
+       SELECT (md5(g::text || clock_timestamp()::text))::uuid,
+              $1::uuid, $2::uuid, $3::uuid,
+              'tenants/' || $1::text || '/batch/' || g::text,
+              'image/jpeg', 1024, repeat('a', 64), 'pending',
+              (extract(epoch FROM (clock_timestamp() - interval '2 days')) * 1000)::bigint,
+              NULL
+         FROM generate_series(1, 5001) AS g`,
+      [tenantId, checkInId, agentId],
+    );
+    const first = await svc.purgeTenantPendingAttachments(tenantId);
+    expect(first.deleted).toBe(5000);
+    const remaining = await listIds();
+    expect(remaining.size).toBe(1);
+    const second = await svc.purgeTenantPendingAttachments(tenantId);
+    expect(second.deleted).toBe(1);
+    expect((await listIds()).size).toBe(0);
   });
 
   it('ne touche pas aux uploaded, meme anciens', async () => {
@@ -177,7 +200,7 @@ describe('purgeTenantPendingAttachments', () => {
     expect(r.deleted).toBe(0);
   });
 
-  it('rejette un ttl negatif', async () => {
-    await expect(svc.purgeTenantPendingAttachments(tenantId, -1)).rejects.toThrow(/ttlDays/);
+  it('refuse un TTL inférieur au plancher de 1 jour', async () => {
+    await expect(svc.purgeTenantPendingAttachments(tenantId, 0)).rejects.toThrow(/1 jour/);
   });
 });

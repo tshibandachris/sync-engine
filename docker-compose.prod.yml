@@ -65,8 +65,6 @@ services:
       DATABASE_URL: postgres://sync_app:${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}@db:5432/sync_engine
       DEVICE_ENROLLMENT_DATABASE_URL: postgres://device_enrollment_login:${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}@db:5432/sync_engine
       DEVICE_ADMIN_DATABASE_URL: postgres://device_admin_login:${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}@db:5432/sync_engine
-      # Compose interpolates this value; MAINTENANCE_PASSWORD is not passed to the API container.
-      MAINTENANCE_DATABASE_URL: postgres://maintenance_login:${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}@db:5432/sync_engine
       JWKS_URL: ${JWKS_URL:?JWKS_URL is required}
       JWT_ISSUER: ${JWT_ISSUER:?JWT_ISSUER is required}
       JWT_AUDIENCE: ${JWT_AUDIENCE:?JWT_AUDIENCE is required}
@@ -83,9 +81,32 @@ services:
     ports:
       - "3000:3000"
       - "9464:9464"
+
+  # Isolated batch container: only this process receives the maintenance credential.
+  # It stays idle; Ofelia executes the one-shot runner inside it on schedule.
+  maintenance-runner:
+    image: ${SYNC_ENGINE_IMAGE:-sync-engine:prod}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      seaweedfs-init:
+        condition: service_completed_successfully
+    entrypoint: ["sh", "-c", "while :; do sleep 3600; done"]
+    environment:
+      NODE_ENV: production
+      MAINTENANCE_DATABASE_URL: postgres://maintenance_login:${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}@db:5432/sync_engine
+      MAINTENANCE_DEADLINE_MS: "3300000"
+      S3_BUCKET: ${S3_BUCKET:?}
+      S3_REGION: ${S3_REGION:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?}
     labels:
       ofelia.enabled: "true"
-      # Six fields: ofelia's cron starts with seconds.
       ofelia.job-exec.maintenance.schedule: "0 0 3 * * *"
       ofelia.job-exec.maintenance.command: "node dist/maintenance-runner.js"
 
@@ -139,7 +160,7 @@ services:
     image: ghcr.io/netresearch/ofelia:1.0.1
     restart: unless-stopped
     depends_on:
-      - sync-engine
+      - maintenance-runner
     # ofelia v1.0.x: docker is the default provider, the --docker
     # flag was removed. 'daemon' alone reads job labels from the
     # containers on this host.

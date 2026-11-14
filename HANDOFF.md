@@ -329,7 +329,7 @@ key.
 
 ## Project layout
 
-    migrations/          SQL migrations 001 to 042
+    migrations/          SQL migrations 001 to 043
     src/
       schema.ts
       sync-pull.service.ts
@@ -467,7 +467,7 @@ request_id, operation, status, timing, record counts, conflicts,
 idempotency, error code. Metrics cover requests, duration, records,
 conflicts, idempotency, stale cursors, payload size.
 
-The scheduled maintenance path is implemented by `src/maintenance-orchestrator.ts` and `src/maintenance-runner.ts`. It connects through `MAINTENANCE_DATABASE_URL` as `maintenance_login`, not through the API login.
+The scheduled maintenance path is implemented by `src/maintenance-orchestrator.ts` and `src/maintenance-runner.ts`. It connects through `MAINTENANCE_DATABASE_URL` as `maintenance_login`; Compose runs it in the isolated `maintenance-runner` container and the API container never receives this credential.
 
 ### v0.8 — S3 purge and orphans (done)
 
@@ -524,14 +524,14 @@ single-app deployment.
 
 ## État du déploiement d’essai
 
-- **Contrôles faits (résultats rapportés) :** Gitleaks sur l’historique complet avec un faux positif ; preuve rouge de la migration 042 ; test de reprise des migrations.
+- **Contrôles faits (résultats rapportés) :** Gitleaks sur l’historique complet avec un faux positif ; preuve rouge de la migration 043 ; test de reprise des migrations.
 - **Non configuré :** secrets GitHub, projet Supabase, bucket et jeton R2, service Render.
-  - Parmi les secrets GitHub à créer : `RENDER_MAINTENANCE_DATABASE_URL`, avec l’URL externe de la base et `sslmode=require` pour le workflow de purge ; le service Web utilisera l’URL interne. Les deux URLs doivent utiliser le même mot de passe, généré en hexadécimal. Aucune valeur de secret ne doit être stockée dans le dépôt.
+  - Parmi les secrets GitHub à créer : `RENDER_MAINTENANCE_DATABASE_URL`, avec l’URL externe de la base et `sslmode=require` pour le workflow de purge ; seul le runner de maintenance utilisera l’URL de connexion dédiée. Les deux URLs doivent utiliser le même mot de passe, généré en hexadécimal. Aucune valeur de secret ne doit être stockée dans le dépôt.
 
 ## Debt / Known issues
 
-1. **Séparation du credential de maintenance.** `MAINTENANCE_PASSWORD` est le secret d’authentification du rôle PostgreSQL `maintenance_login` ; le script de migration l’utilise pour provisionner ce rôle. Ce secret n’est pas, à lui seul, une connexion active. `MAINTENANCE_DATABASE_URL` est la chaîne de connexion construite avec ce credential : c’est elle qui permet au processus qui la reçoit d’ouvrir une session PostgreSQL. Le runner applicatif `src/maintenance-runner.ts` exécute le cycle de maintenance et utilise cette connexion ; actuellement, la chaîne est fournie au service API pour lancer ce runner, de sorte que l’environnement du service API détient le credential. À distinguer du script `scripts/migrate.sh`, qui applique les migrations SQL et provisionne les rôles. Avant toute utilisation de données réelles, isoler le runner de maintenance dans un service ou processus dédié et ne lui fournir qu’à lui `MAINTENANCE_DATABASE_URL`.
-2. **Contrôle du rôle applicatif incomplet.** Dans `src/role-guard.ts`, ajouter les contrôles `rolinherit`, `rolcreatedb`, `rolcreaterole` et `rolreplication`, puis appeler ce contrôle au démarrage de l’API ; actuellement, il est appelé dans `maintenance-runner.ts` seulement.
+1. **Séparation du credential de maintenance — corrigée dans cette branche.** `MAINTENANCE_PASSWORD` sert au provisionnement de `maintenance_login` et à la construction de `MAINTENANCE_DATABASE_URL`. En Compose, seul le service `maintenance-runner` reçoit cette URL ; le conteneur API ne la reçoit pas. Sur Render, le workflow GitHub Actions de maintenance est un processus batch séparé qui utilise son secret `RENDER_MAINTENANCE_DATABASE_URL`. Aucun déploiement Render n'a été effectué.
+2. **Contrôle runtime du rôle de maintenance — renforcé dans cette branche.** `src/role-guard.ts` refuse SUPERUSER, BYPASSRLS, CREATEDB, CREATEROLE et REPLICATION, en plus des appartenances inattendues. Le runner vérifie également l'identité exacte `maintenance_login`.
 3. **Vérification du ledger par comptage seulement.** Le workflow compare le nombre de fichiers SQL au nombre d’entrées du registre ; comparer également les noms exacts des migrations appliquées aux fichiers présents.
 4. **Pas de garde de complétude du registre au démarrage de l’API.** En dehors de la dépendance `service_completed_successfully` de Docker Compose, l’API ne bloque pas son démarrage lorsque le registre des migrations est incomplet.
 5. **Identité et session POS Electron non intégrées.** Le client Electron n’intègre pas de fournisseur d’identité (voir README) : le jeton est provisionné hors de l’application. Le flux de connexion, de renouvellement du jeton et de gestion de session Supabase du POS n’est pas implémenté.
@@ -539,11 +539,7 @@ single-app deployment.
 7. **Cloudflare R2 : validation réelle non démontrée.** L’adaptateur S3 dispose de tests unitaires. En revanche, l’intégration réelle à Cloudflare R2, les permissions du jeton et les opérations sur le bucket ne sont pas démontrées. Avant validation, utiliser un bucket R2 de test dédié et un jeton limité à ce bucket, puis vérifier upload, confirmation, téléchargement et nettoyage ; ne pas utiliser le bucket de production ni un jeton largement autorisé.
 8. **Audit des dépendances à réaliser.** `npm audit` est à exécuter ; 12 vulnérabilités ont été signalées, dont 4 de niveau `high` (résultat rapporté, à confirmer par l’audit). Compléter ce point après l’audit.
 9. **Faux positif Gitleaks connu.** Une clé d’idempotence de test est signalée à tort ; l’empreinte exacte est documentée dans `.gitleaksignore`.
-- **Tenants registry has no retention.** `tenants` grows by one row
-  per new tenant, forever. That is bounded by the number of distinct
-  tenants, which is small, so it is acceptable for now. If it ever
-  needs pruning, add a `last_seen_at` column updated on every request
-  and purge inactive tenants older than N months.
+- **Tenants registry has no retention.** `tenants` grows by one row per new tenant, forever. That is bounded by the number of distinct tenants, which is small, so it is acceptable for now. If it ever needs pruning, add a `last_seen_at` column updated on every request and purge inactive tenants older than N months.
 
 
 - **Migration 013 backfill is approximate.** `UPDATE check_ins
@@ -569,9 +565,9 @@ single-app deployment.
 
 ## Maintenance security and migration execution
 
-- Migrations 039–041 leave migration 039 unchanged, revoke the API/public purge grants in later migrations, and assign the idempotency/conflict, nonce, tombstone, and sync-log purge entry points to the maintenance capability.
+- Migrations 039–043 leave migration 039 unchanged, revoke the API/public purge grants in later migrations, and assign the idempotency/conflict, nonce, tombstone, and sync-log purge entry points to the maintenance capability.
 - `maintenance_login` inherits only `maintenance_purge_executor`; the function owner is a separate `NOLOGIN` role. The login has no direct business-table `INSERT`, `UPDATE`, or `DELETE` privileges.
-- Nonce cleanup is tenant-scoped, accepts a caller-supplied batch size, and rejects values above 10,000; tests cover a one-row batch and rejection above the limit. Tombstone and sync-log cleanup are tenant-scoped and capped at 5,000 rows per invocation; tests verify that the next expired row remains for a later cycle.
+- Nonce cleanup is tenant-scoped, accepts a caller-supplied batch size, and rejects values above 10,000; tests cover a one-row batch and rejection above the limit. Tombstone, sync-log, idempotency/conflict, and pending-attachment cleanup are tenant-scoped and capped at 5,000 rows per invocation; tests verify that the next expired row remains for a later cycle. Migration 043 enforces the minimum retention windows: idempotency keys 7 days, resolved conflicts 7 days, tombstones 30 days, and pending attachments 1 day.
 - `scripts/migrate.sh` applies each migration and its ledger row in one transaction protected by a PostgreSQL advisory transaction lock. The `--migrations-only` switch is a test seam; normal deployment execution still provisions the isolated logins.
 - `test/migrate-resume.spec.ts` exercises failure rollback, corrected retry, replay, concurrent runners, and the failure of `CREATE INDEX CONCURRENTLY` inside the transactional runner. CI status is the source of truth for whether these tests have passed.
 

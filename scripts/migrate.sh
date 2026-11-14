@@ -41,14 +41,14 @@ psql_base() {
 }
 
 if [ "$MAINTENANCE_ONLY" = "1" ]; then
-  migration_042_applied=$(psql_base -tA -c "
+  migration_043_applied=$(psql_base -tA -c "
     SELECT CASE WHEN EXISTS (
       SELECT 1 FROM public.schema_migrations
-       WHERE filename = '042_maintenance_function_owner_hardening.sql'
+       WHERE filename = '043_retention_floors_and_pending_batch.sql'
     ) THEN 1 ELSE 0 END
   ")
-  if [ "$migration_042_applied" != "1" ]; then
-    echo "[migrate] ERROR: maintenance provisioning requires migration 042 to be applied first." >&2
+  if [ "$migration_043_applied" != "1" ]; then
+    echo "[migrate] ERROR: maintenance provisioning requires migration 043 to be applied first." >&2
     exit 1
   fi
 else

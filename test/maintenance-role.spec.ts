@@ -206,6 +206,41 @@ describe('maintenance_login runtime membership boundary', () => {
     }
   });
 
+  it('rejects maintenance_login when any privileged role attribute is enabled', async () => {
+    await pg.pool.query('ALTER ROLE maintenance_login CREATEDB');
+    try {
+      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attribut privilégié/i);
+    } finally {
+      await pg.pool.query('ALTER ROLE maintenance_login NOCREATEDB');
+    }
+  });
+
+  it('rejects CREATEROLE and REPLICATION at runtime', async () => {
+    for (const [enabled, disabled] of [['CREATEROLE', 'NOCREATEROLE'], ['REPLICATION', 'NOREPLICATION']] as const) {
+      await pg.pool.query(`ALTER ROLE maintenance_login ${enabled}`);
+      try {
+        await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attribut privilégié/i);
+      } finally {
+        await pg.pool.query(`ALTER ROLE maintenance_login ${disabled}`);
+      }
+    }
+  });
+
+  it('rejects a maintenance login that loses INHERIT or LOGIN', async () => {
+    await pg.pool.query('ALTER ROLE maintenance_login NOINHERIT');
+    try {
+      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attribut privilégié/i);
+    } finally {
+      await pg.pool.query('ALTER ROLE maintenance_login INHERIT');
+    }
+    await pg.pool.query('ALTER ROLE maintenance_login NOLOGIN');
+    try {
+      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attribut privilégié/i);
+    } finally {
+      await pg.pool.query('ALTER ROLE maintenance_login LOGIN');
+    }
+  });
+
   it('accepts only the maintenance_purge_executor membership', async () => {
     await expect(assertNonPrivilegedRole(pg.maintenancePool)).resolves.toBeUndefined();
     const result = await pg.pool.query(`

@@ -21,6 +21,7 @@ const MAINTENANCE_LOCK_KEY = 7302;
  */
 export interface MaintenanceServiceLike {
   purgeExpiredDeviceProofNonces(tenantId: string, batchSize?: number): Promise<{ deleted: number }>;
+  purge(tenantId: string, options?: { ttlIdempotencyDays?: number; ttlConflictsDays?: number }): Promise<{ idempotencyDeleted: number; conflictsDeleted: number }>;
   purgeSyncLogs(tenantId: string, ttlDays: number): Promise<{ logsDeleted: number }>;
   purgeTenantPendingAttachments(tenantId: string, ttlDays: number): Promise<{ deleted: number }>;
   purgeTenantTombstones(tenantId: string, ttlDays: number): Promise<{
@@ -48,6 +49,8 @@ export interface MaintenanceServiceLike {
 }
 
 export interface MaintenanceOptions {
+  idempotencyTtlDays?: number;
+  conflictsTtlDays?: number;
   syncLogsTtlDays?: number;
   pendingAttachmentsTtlDays?: number;
   tombstonesTtlDays?: number;
@@ -58,6 +61,8 @@ export interface MaintenanceOptions {
 export interface MaintenanceTenantReport {
   tenantId: string;
   deviceProofNoncesDeleted: number;
+  idempotencyDeleted: number;
+  conflictsDeleted: number;
   syncLogsDeleted: number;
   pendingAttachmentsDeleted: number;
   checkInsDeleted: number;
@@ -92,6 +97,8 @@ export interface MaintenanceDeps {
 }
 
 interface Ttls {
+  idempotencyTtlDays: number;
+  conflictsTtlDays: number;
   syncLogsTtlDays: number;
   pendingAttachmentsTtlDays: number;
   tombstonesTtlDays: number;
@@ -100,7 +107,7 @@ interface Ttls {
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /**
- * Runs the five purge steps of one tenant. Each step is isolated: a failure is
+ * Runs all tenant maintenance steps. Each step is isolated: a failure is
  * recorded as "step: message" and the next steps still run, so one broken step
  * neither erases the counters already collected nor starves the later steps.
  * The storage purge depends on the keys returned by the tombstone purge, so it
@@ -115,6 +122,8 @@ async function processTenant(
   const row: MaintenanceTenantReport = {
     tenantId,
     deviceProofNoncesDeleted: 0,
+    idempotencyDeleted: 0,
+    conflictsDeleted: 0,
     syncLogsDeleted: 0,
     pendingAttachmentsDeleted: 0,
     checkInsDeleted: 0,
@@ -138,6 +147,15 @@ async function processTenant(
   const nonces = await step('deviceProofNonces', () => svc.purgeExpiredDeviceProofNonces(tenantId));
   if (nonces) row.deviceProofNoncesDeleted = nonces.deleted;
 
+  const syncRetention = await step('syncRetention', () => svc.purge(tenantId, {
+    ttlIdempotencyDays: ttls.idempotencyTtlDays,
+    ttlConflictsDays: ttls.conflictsTtlDays,
+  }));
+  if (syncRetention) {
+    row.idempotencyDeleted = syncRetention.idempotencyDeleted;
+    row.conflictsDeleted = syncRetention.conflictsDeleted;
+  }
+
   const syncLogs = await step('syncLogs', () => svc.purgeSyncLogs(tenantId, ttls.syncLogsTtlDays));
   if (syncLogs) row.syncLogsDeleted = syncLogs.logsDeleted;
 
@@ -147,7 +165,7 @@ async function processTenant(
   if (pending) row.pendingAttachmentsDeleted = pending.deleted;
 
   const tombstones = await step('tombstones', () => svc.purgeTenantTombstones(tenantId, ttls.tombstonesTtlDays));
-   if (tombstones) {
+  if (tombstones) {
     row.checkInsDeleted = tombstones.checkInsDeleted;
     row.missionsDeleted = tombstones.missionsDeleted;
     row.sitesDeleted = tombstones.sitesDeleted;
@@ -163,7 +181,7 @@ async function processTenant(
 
   // Always dry-run from the cron: real orphan deletion is an
   // operator decision, reviewed against the dry-run report.
-   const scan = await step('orphanScan', () => svc.scanTenantOrphans(storage, tenantId, { dryRun: true }));
+  const scan = await step('orphanScan', () => svc.scanTenantOrphans(storage, tenantId, { dryRun: true }));
   if (scan) {
     row.orphansFound = scan.orphans.length;
     if (scan.aborted) {
@@ -197,8 +215,10 @@ export async function runMaintenanceCycle(
   options: MaintenanceOptions = {},
 ): Promise<MaintenanceReport> {
   const ttls: Ttls = {
+    idempotencyTtlDays: options.idempotencyTtlDays ?? 7,
+    conflictsTtlDays: options.conflictsTtlDays ?? 7,
     syncLogsTtlDays: options.syncLogsTtlDays ?? 30,
-    pendingAttachmentsTtlDays: options.pendingAttachmentsTtlDays ?? 7,
+    pendingAttachmentsTtlDays: options.pendingAttachmentsTtlDays ?? 1,
     tombstonesTtlDays: options.tombstonesTtlDays ?? 30,
   };
 

@@ -19,18 +19,20 @@ const fakePool = (rows: Array<Record<string, unknown>>): Pool =>
 
 describe('assertNonPrivilegedRole', () => {
   it('refuse un superuser, en nommant le role', async () => {
-    const pool = fakePool([{ role: 'postgres', rolsuper: true, rolbypassrls: false }]);
+    const pool = fakePool([{ role: 'postgres', rolcanlogin: true, rolinherit: true, rolsuper: true, rolbypassrls: false }]);
     await expect(assertNonPrivilegedRole(pool)).rejects.toThrow(/postgres/);
   });
 
   it('refuse un role BYPASSRLS qui nest pas superuser', async () => {
-    const pool = fakePool([{ role: 'ops', rolsuper: false, rolbypassrls: true }]);
+    const pool = fakePool([{ role: 'ops', rolcanlogin: true, rolinherit: true, rolsuper: false, rolbypassrls: true }]);
     await expect(assertNonPrivilegedRole(pool)).rejects.toThrow(/ops/);
   });
 
   it('accepte maintenance_login avec sa seule appartenance autorisee', async () => {
     const pool = fakePool([{
       role: 'maintenance_login',
+      rolcanlogin: true,
+      rolinherit: true,
       rolsuper: false,
       rolbypassrls: false,
       has_allowed_membership: true,

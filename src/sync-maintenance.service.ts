@@ -77,9 +77,9 @@ export class SyncMaintenanceService {
   async purge(tenantId: string, options: PurgeOptions = {}): Promise<PurgeResult> {
     if (!tenantId) throw new Error('tenantId requis.');
     const ttlIdempotencyDays = options.ttlIdempotencyDays ?? 7;
-    const ttlConflictsDays = options.ttlConflictsDays ?? 30;
-    if (ttlIdempotencyDays < 0 || ttlConflictsDays < 0) {
-      throw new Error('TTL ne peut pas etre negatif.');
+    const ttlConflictsDays = options.ttlConflictsDays ?? 7;
+    if (ttlIdempotencyDays < 7 || ttlConflictsDays < 7) {
+      throw new Error('Les rétentions minimales sont de 7 jours pour les clés d’idempotence et les conflits résolus.');
     }
 
     return withTenant(this.db, tenantId, async (tx) => {
@@ -104,7 +104,7 @@ export class SyncMaintenanceService {
     ttlDays: number = 30,
   ): Promise<PurgeTombstonesResult> {
     if (!tenantId) throw new Error('tenantId requis.');
-    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+    if (ttlDays < 30) throw new Error('La rétention minimale des tombstones est de 30 jours.');
 
     return withTenant(this.db, tenantId, async (tx) => {
     const result = await tx.execute(sql`
@@ -293,7 +293,7 @@ export class SyncMaintenanceService {
 
   /**
    * Deletes the attachments rows stuck in 'pending' longer than ttlDays
-   * (default 7). A pending row means a client asked for a presigned PUT
+   * (default 1 day). A pending row means a client asked for a presigned PUT
    * URL and never confirmed the upload. There is no S3 object to clean:
    * either the client never PUT anything, or the object was written but
    * never confirmed, in which case scanTenantOrphans will find it later.
@@ -303,10 +303,10 @@ export class SyncMaintenanceService {
    */
   async purgeTenantPendingAttachments(
     tenantId: string,
-    ttlDays: number = 7,
+    ttlDays: number = 1,
   ): Promise<PurgePendingAttachmentsResult> {
     if (!tenantId) throw new Error('tenantId requis.');
-    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+    if (ttlDays < 1) throw new Error('La rétention minimale des pièces jointes en attente est de 1 jour.');
 
     return withTenant(this.db, tenantId, async (tx) => {
       const result = await tx.execute(sql`

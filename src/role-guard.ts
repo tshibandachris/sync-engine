@@ -13,15 +13,22 @@ import type { Pool } from 'pg';
 export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<void> {
   const res = await db.query<{
     role: string;
+    rolcanlogin: boolean;
+    rolinherit: boolean;
     rolsuper: boolean;
     rolbypassrls: boolean;
+    rolcreatedb: boolean;
+    rolcreaterole: boolean;
+    rolreplication: boolean;
     has_allowed_membership: boolean;
     has_unexpected_membership: boolean;
     allowed_membership_options_ok: boolean;
     direct_membership_count: number;
   }>(
     'SELECT login_role.rolname AS role, ' +
+      'login_role.rolcanlogin, login_role.rolinherit, ' +
       'login_role.rolsuper, login_role.rolbypassrls, ' +
+      'login_role.rolcreatedb, login_role.rolcreaterole, login_role.rolreplication, ' +
       'pg_catalog.pg_has_role(login_role.oid, allowed_role.oid, \'USAGE\') AS has_allowed_membership, ' +
       'EXISTS (SELECT 1 FROM pg_catalog.pg_roles other_role ' +
       'WHERE other_role.oid <> login_role.oid AND other_role.oid <> allowed_role.oid ' +
@@ -41,12 +48,11 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
     throw new Error('Impossible de lire le role courant ou le role de maintenance dans pg_roles : refus de continuer.');
   }
 
-  if (row.rolsuper || row.rolbypassrls) {
+  if (!row.rolcanlogin || !row.rolinherit || row.rolsuper || row.rolbypassrls || row.rolcreatedb || row.rolcreaterole || row.rolreplication) {
     throw new Error(
       'Refus de demarrer : le role "' +
         row.role +
-        '" est superuser ou BYPASSRLS, la RLS ne s\'appliquerait pas a la maintenance. ' +
-        'Utilise le role maintenance_login dans MAINTENANCE_DATABASE_URL.',
+        '" est superuser ou BYPASSRLS, ou possède un attribut privilégié incompatible avec la maintenance (LOGIN/INHERIT, CREATEDB, CREATEROLE ou REPLICATION).',
     );
   }
 
