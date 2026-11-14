@@ -168,8 +168,8 @@ function switchPage(page) {
     button.setAttribute('aria-current', active ? 'page' : 'false');
   });
   document.querySelectorAll('.page').forEach((section) => section.classList.toggle('active', section.id === `page-${page}`));
-  $('page-title').textContent = page === 'products' ? 'Produits & stock' : 'Vue d’ensemble';
-  if (page === 'products') loadProducts();
+  $('page-title').textContent = page === 'products' ? 'Produits & stock' : page === 'sales' ? 'Caisse' : 'Vue d’ensemble';
+  if (page === 'products' || page === 'sales') loadProducts();
 }
 
 function openProductDialog(product = null) {
