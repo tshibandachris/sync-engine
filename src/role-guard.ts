@@ -15,6 +15,9 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
     role: string;
     rolsuper: boolean;
     rolbypassrls: boolean;
+    rolcreatedb: boolean;
+    rolcreaterole: boolean;
+    rolreplication: boolean;
     has_allowed_membership: boolean;
     has_unexpected_membership: boolean;
     allowed_membership_options_ok: boolean;
@@ -22,6 +25,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
   }>(
     'SELECT login_role.rolname AS role, ' +
       'login_role.rolsuper, login_role.rolbypassrls, ' +
+      'login_role.rolcreatedb, login_role.rolcreaterole, login_role.rolreplication, ' +
       'pg_catalog.pg_has_role(login_role.oid, allowed_role.oid, \'USAGE\') AS has_allowed_membership, ' +
       'EXISTS (SELECT 1 FROM pg_catalog.pg_roles other_role ' +
       'WHERE other_role.oid <> login_role.oid AND other_role.oid <> allowed_role.oid ' +
@@ -41,7 +45,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
     throw new Error('Impossible de lire le role courant ou le role de maintenance dans pg_roles : refus de continuer.');
   }
 
-  if (row.rolsuper || row.rolbypassrls) {
+  if (row.rolsuper || row.rolbypassrls || row.rolcreatedb || row.rolcreaterole || row.rolreplication) {
     throw new Error(
       'Refus de demarrer : le role "' +
         row.role +
