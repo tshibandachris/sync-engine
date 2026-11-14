@@ -58,6 +58,7 @@ describe('bounded tenant maintenance purges', () => {
   it('purges at most one batch of expired idempotency keys for the requested tenant', async () => {
     const tenantId = randomUUID();
     const agentId = randomUUID();
+    await pg.pool.query('INSERT INTO tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING', [tenantId, Date.now()]);
     await pg.pool.query(
       `INSERT INTO sync_idempotency_keys (tenant_id, agent_id, idempotency_key, created_at)
        SELECT $1, $2, 'batch-' || g::text, clock_timestamp() - interval '8 days'
@@ -79,6 +80,7 @@ describe('bounded tenant maintenance purges', () => {
   it('purges at most one batch of resolved conflicts for the requested tenant', async () => {
     const tenantId = randomUUID();
     const agentId = randomUUID();
+    await pg.pool.query('INSERT INTO tenants (id, first_seen_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING', [tenantId, Date.now()]);
     await pg.pool.query(
       `INSERT INTO sync_conflicts
          (id, tenant_id, agent_id, entity_type, entity_id, client_version, server_version,
