@@ -277,6 +277,7 @@ export class TestPostgres {
     '040_maintenance_purge_executor.sql',
     '041_maintenance_purge_batch_limits.sql',
     '042_maintenance_function_owner_hardening.sql',
+    '043_purge_retention_floors.sql',
   ].map((file) => fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
 
     console.log(
