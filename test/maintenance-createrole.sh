@@ -1,5 +1,5 @@
 #!/bin/sh
-# PostgreSQL 16 regression: migration 042 and maintenance provisioning must
+# PostgreSQL 16 regression: migrations 042/043 and maintenance provisioning must
 # work with CREATEROLE but without SUPERUSER, and fail closed on role traps.
 set -eu
 
@@ -72,7 +72,7 @@ admin_flags="$(psql_as_admin -tA -c "SELECT CASE WHEN rolcreaterole AND NOT rols
 test "$admin_flags" = "ok"
 
 echo "[maintenance-createrole] migration 042 rejects unsafe pre-existing owner attributes"
-psql_as_bootstrap -c "DELETE FROM public.schema_migrations WHERE filename = '043_retention_floors_and_pending_batch.sql'" >/dev/null
+psql_as_bootstrap -c "DELETE FROM public.schema_migrations WHERE filename = '042_maintenance_function_owner_hardening.sql'" >/dev/null
 psql_as_bootstrap -c "ALTER ROLE device_proof_maintenance_function_owner LOGIN" >/dev/null
 if run_042_as_admin >/dev/null 2>&1; then
   echo "[maintenance-createrole] ERROR: migration 042 accepted a LOGIN function owner" >&2
