@@ -34,6 +34,17 @@ run_042_as_admin() {
     sh scripts/migrate.sh --migrations-only
 }
 
+run_043_as_admin() {
+  DB_USER="$ADMIN_ROLE" \
+  PGPASSWORD="$ADMIN_PASSWORD" \
+  MIGRATIONS_DIR="$TMP_DIR" \
+  SYNC_APP_PASSWORD="$TEST_CREDENTIAL" \
+  DEVICE_ENROLLMENT_PASSWORD="$TEST_CREDENTIAL" \
+  DEVICE_ADMIN_PASSWORD="$TEST_CREDENTIAL" \
+  MAINTENANCE_PASSWORD="$TEST_CREDENTIAL" \
+    sh scripts/migrate.sh --migrations-only
+}
+
 run_maintenance_provisioning_as_admin() {
   DB_USER="$ADMIN_ROLE" \
   PGPASSWORD="$ADMIN_PASSWORD" \
@@ -42,6 +53,7 @@ run_maintenance_provisioning_as_admin() {
 }
 
 test -f migrations/042_maintenance_function_owner_hardening.sql
+test -f migrations/043_retention_floors_and_pending_batch.sql
 cp migrations/042_maintenance_function_owner_hardening.sql "$TMP_DIR/042_maintenance_function_owner_hardening.sql"
 
 echo "[maintenance-createrole] creating a PostgreSQL 16 CREATEROLE-only administrator"
@@ -60,7 +72,7 @@ admin_flags="$(psql_as_admin -tA -c "SELECT CASE WHEN rolcreaterole AND NOT rols
 test "$admin_flags" = "ok"
 
 echo "[maintenance-createrole] migration 042 rejects unsafe pre-existing owner attributes"
-psql_as_bootstrap -c "DELETE FROM public.schema_migrations WHERE filename = '042_maintenance_function_owner_hardening.sql'" >/dev/null
+psql_as_bootstrap -c "DELETE FROM public.schema_migrations WHERE filename = '043_retention_floors_and_pending_batch.sql'" >/dev/null
 psql_as_bootstrap -c "ALTER ROLE device_proof_maintenance_function_owner LOGIN" >/dev/null
 if run_042_as_admin >/dev/null 2>&1; then
   echo "[maintenance-createrole] ERROR: migration 042 accepted a LOGIN function owner" >&2
@@ -78,6 +90,12 @@ psql_as_bootstrap -c "REVOKE pg_monitor FROM device_proof_maintenance_function_o
 
 echo "[maintenance-createrole] migration 042 succeeds under CREATEROLE without SUPERUSER"
 run_042_as_admin >/dev/null
+
+echo "[maintenance-createrole] applying migration 043 as a CREATEROLE role with explicit function-owner membership"
+psql_as_bootstrap -c "GRANT maintenance_function_owner TO $ADMIN_ROLE WITH ADMIN OPTION" >/dev/null
+cp migrations/043_retention_floors_and_pending_batch.sql "$TMP_DIR/043_retention_floors_and_pending_batch.sql"
+run_043_as_admin >/dev/null
+psql_as_bootstrap -c "REVOKE maintenance_function_owner FROM $ADMIN_ROLE" >/dev/null
 
 echo "[maintenance-createrole] provisioning a fresh maintenance login under CREATEROLE"
 psql_as_bootstrap -c "DROP OWNED BY maintenance_login; DROP ROLE maintenance_login" >/dev/null
