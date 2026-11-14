@@ -92,6 +92,7 @@ echo "[maintenance-createrole] migration 042 succeeds under CREATEROLE without S
 run_042_as_admin >/dev/null
 
 echo "[maintenance-createrole] migration 043 refuses a CREATEROLE role without function-owner membership"
+psql_as_bootstrap -c "DELETE FROM public.schema_migrations WHERE filename = '043_retention_floors_and_pending_batch.sql'" >/dev/null
 cp migrations/043_retention_floors_and_pending_batch.sql "$TMP_DIR/043_retention_floors_and_pending_batch.sql"
 if run_043_as_admin >/dev/null 2>&1; then
   echo "[maintenance-createrole] ERROR: migration 043 accepted a role without function-owner membership" >&2
