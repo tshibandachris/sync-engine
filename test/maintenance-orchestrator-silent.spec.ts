@@ -30,6 +30,7 @@ function service(
 ): MaintenanceServiceLike {
   return {
     purgeExpiredDeviceProofNonces: async () => ({ deleted: 0 }),
+    purge: async () => ({ idempotencyDeleted: 0, conflictsDeleted: 0 }),
     purgeSyncLogs: async () => ({ logsDeleted: 0 }),
     purgeTenantPendingAttachments: async () => ({ deleted: 0 }),
     purgeTenantTombstones: async () => ({
