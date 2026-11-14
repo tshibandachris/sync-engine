@@ -565,9 +565,9 @@ single-app deployment.
 
 ## Maintenance security and migration execution
 
-- Migrations 039–041 leave migration 039 unchanged, revoke the API/public purge grants in later migrations, and assign the idempotency/conflict, nonce, tombstone, and sync-log purge entry points to the maintenance capability.
+- Migrations 039–043 leave migration 039 unchanged, revoke the API/public purge grants in later migrations, and assign the idempotency/conflict, nonce, tombstone, and sync-log purge entry points to the maintenance capability.
 - `maintenance_login` inherits only `maintenance_purge_executor`; the function owner is a separate `NOLOGIN` role. The login has no direct business-table `INSERT`, `UPDATE`, or `DELETE` privileges.
-- Nonce cleanup is tenant-scoped, accepts a caller-supplied batch size, and rejects values above 10,000; tests cover a one-row batch and rejection above the limit. Tombstone and sync-log cleanup are tenant-scoped and capped at 5,000 rows per invocation; tests verify that the next expired row remains for a later cycle.
+- Nonce cleanup is tenant-scoped, accepts a caller-supplied batch size, and rejects values above 10,000; tests cover a one-row batch and rejection above the limit. Tombstone, sync-log, idempotency/conflict, and pending-attachment cleanup are tenant-scoped and capped at 5,000 rows per invocation; tests verify that the next expired row remains for a later cycle. Migration 043 enforces the minimum retention windows: idempotency keys 7 days, resolved conflicts 7 days, tombstones 30 days, and pending attachments 1 day.
 - `scripts/migrate.sh` applies each migration and its ledger row in one transaction protected by a PostgreSQL advisory transaction lock. The `--migrations-only` switch is a test seam; normal deployment execution still provisions the isolated logins.
 - `test/migrate-resume.spec.ts` exercises failure rollback, corrected retry, replay, concurrent runners, and the failure of `CREATE INDEX CONCURRENTLY` inside the transactional runner. CI status is the source of truth for whether these tests have passed.
 
