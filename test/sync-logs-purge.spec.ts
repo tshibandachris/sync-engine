@@ -156,7 +156,7 @@ describe('purge_tenant_sync_logs', () => {
   it('refuse une rétention sous 30 jours et ne supprime rien', async () => {
     const recent = await seedLog(tenantA, Date.now() - 5 * DAY_MS);
     for (const ttl of [-1, 0, 29]) {
-      await expect(purge(tenantA, ttl)).rejects.toThrow(/30 jours/);
+      await expect(purge(tenantA, ttl)).rejects.toThrow(/ttl_days/);
     }
     expect((await listLogIds(tenantA)).has(recent)).toBe(true);
   });
