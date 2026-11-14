@@ -105,6 +105,29 @@ describe('purgeTenantPendingAttachments', () => {
     expect(remaining.has(d8)).toBe(false);
   });
 
+  it('purge au maximum 5 000 pièces jointes pending par appel', async () => {
+    await pg.pool.query(
+      `INSERT INTO attachments
+         (id, tenant_id, check_in_id, agent_id, object_key, content_type,
+          size_bytes, checksum_sha256, status, created_at, uploaded_at)
+       SELECT (md5(g::text || clock_timestamp()::text))::uuid,
+              $1, $2, $3,
+              'tenants/' || $1::text || '/batch/' || g::text,
+              'image/jpeg', 1024, repeat('a', 64), 'pending',
+              (extract(epoch FROM (clock_timestamp() - interval '2 days')) * 1000)::bigint,
+              NULL
+         FROM generate_series(1, 5001) AS g`,
+      [tenantId, checkInId, agentId],
+    );
+    const first = await svc.purgeTenantPendingAttachments(tenantId);
+    expect(first.deleted).toBe(5000);
+    const remaining = await listIds();
+    expect(remaining.size).toBe(1);
+    const second = await svc.purgeTenantPendingAttachments(tenantId);
+    expect(second.deleted).toBe(1);
+    expect((await listIds()).size).toBe(0);
+  });
+
   it('ne touche pas aux uploaded, meme anciens', async () => {
     const up = await seed({ status: 'uploaded', ageDays: 30 });
     const pending = await seed({ status: 'pending', ageDays: 30 });
