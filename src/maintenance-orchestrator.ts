@@ -107,7 +107,7 @@ interface Ttls {
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /**
- * Runs the five purge steps of one tenant. Each step is isolated: a failure is
+ * Runs all tenant maintenance steps. Each step is isolated: a failure is
  * recorded as "step: message" and the next steps still run, so one broken step
  * neither erases the counters already collected nor starves the later steps.
  * The storage purge depends on the keys returned by the tombstone purge, so it
@@ -165,7 +165,7 @@ async function processTenant(
   if (pending) row.pendingAttachmentsDeleted = pending.deleted;
 
   const tombstones = await step('tombstones', () => svc.purgeTenantTombstones(tenantId, ttls.tombstonesTtlDays));
-   if (tombstones) {
+  if (tombstones) {
     row.checkInsDeleted = tombstones.checkInsDeleted;
     row.missionsDeleted = tombstones.missionsDeleted;
     row.sitesDeleted = tombstones.sitesDeleted;
@@ -181,7 +181,7 @@ async function processTenant(
 
   // Always dry-run from the cron: real orphan deletion is an
   // operator decision, reviewed against the dry-run report.
-   const scan = await step('orphanScan', () => svc.scanTenantOrphans(storage, tenantId, { dryRun: true }));
+  const scan = await step('orphanScan', () => svc.scanTenantOrphans(storage, tenantId, { dryRun: true }));
   if (scan) {
     row.orphansFound = scan.orphans.length;
     if (scan.aborted) {
