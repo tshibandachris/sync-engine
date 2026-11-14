@@ -329,7 +329,7 @@ key.
 
 ## Project layout
 
-    migrations/          SQL migrations 001 to 042
+    migrations/          SQL migrations 001 to 043
     src/
       schema.ts
       sync-pull.service.ts
@@ -467,7 +467,7 @@ request_id, operation, status, timing, record counts, conflicts,
 idempotency, error code. Metrics cover requests, duration, records,
 conflicts, idempotency, stale cursors, payload size.
 
-The scheduled maintenance path is implemented by `src/maintenance-orchestrator.ts` and `src/maintenance-runner.ts`. It connects through `MAINTENANCE_DATABASE_URL` as `maintenance_login`, not through the API login.
+The scheduled maintenance path is implemented by `src/maintenance-orchestrator.ts` and `src/maintenance-runner.ts`. It connects through `MAINTENANCE_DATABASE_URL` as `maintenance_login`; Compose runs it in the isolated `maintenance-runner` container and the API container never receives this credential.
 
 ### v0.8 — S3 purge and orphans (done)
 
@@ -530,16 +530,16 @@ single-app deployment.
 
 ## Debt / Known issues
 
-1. **Séparation du credential de maintenance.** `MAINTENANCE_PASSWORD` est le secret d’authentification du rôle PostgreSQL `maintenance_login` ; le script de migration l’utilise pour provisionner ce rôle. Ce secret n’est pas, à lui seul, une connexion active. `MAINTENANCE_DATABASE_URL` est la chaîne de connexion construite avec ce credential : c’est elle qui permet au processus qui la reçoit d’ouvrir une session PostgreSQL. Le runner applicatif `src/maintenance-runner.ts` exécute le cycle de maintenance et utilise cette connexion ; actuellement, la chaîne est fournie au service API pour lancer ce runner, de sorte que l’environnement du service API détient le credential. À distinguer du script `scripts/migrate.sh`, qui applique les migrations SQL et provisionne les rôles. Avant toute utilisation de données réelles, isoler le runner de maintenance dans un service ou processus dédié et ne lui fournir qu’à lui `MAINTENANCE_DATABASE_URL`.
-2. **Contrôle du rôle applicatif incomplet.** Dans `src/role-guard.ts`, ajouter les contrôles `rolinherit`, `rolcreatedb`, `rolcreaterole` et `rolreplication`, puis appeler ce contrôle au démarrage de l’API ; actuellement, il est appelé dans `maintenance-runner.ts` seulement.
-3. **Vérification du ledger par comptage seulement.** Le workflow compare le nombre de fichiers SQL au nombre d’entrées du registre ; comparer également les noms exacts des migrations appliquées aux fichiers présents.
-4. **Pas de garde de complétude du registre au démarrage de l’API.** En dehors de la dépendance `service_completed_successfully` de Docker Compose, l’API ne bloque pas son démarrage lorsque le registre des migrations est incomplet.
-5. **Identité et session POS Electron non intégrées.** Le client Electron n’intègre pas de fournisseur d’identité (voir README) : le jeton est provisionné hors de l’application. Le flux de connexion, de renouvellement du jeton et de gestion de session Supabase du POS n’est pas implémenté.
-6. **Jeton administrateur de production non démontré.** Le mécanisme d’obtention du jeton administrateur en production reste à définir et à valider.
-7. **Cloudflare R2 : validation réelle non démontrée.** L’adaptateur S3 dispose de tests unitaires. En revanche, l’intégration réelle à Cloudflare R2, les permissions du jeton et les opérations sur le bucket ne sont pas démontrées. Avant validation, utiliser un bucket R2 de test dédié et un jeton limité à ce bucket, puis vérifier upload, confirmation, téléchargement et nettoyage ; ne pas utiliser le bucket de production ni un jeton largement autorisé.
-8. **Audit des dépendances à réaliser.** `npm audit` est à exécuter ; 12 vulnérabilités ont été signalées, dont 4 de niveau `high` (résultat rapporté, à confirmer par l’audit). Compléter ce point après l’audit.
-9. **Faux positif Gitleaks connu.** Une clé d’idempotence de test est signalée à tort ; l’empreinte exacte est documentée dans `.gitleaksignore`.
-- **Tenants registry has no retention.** `tenants` grows by one row
+1. **Séparation du credential de maintenance — corrigée dans cette branche.** `MAINTENANCE_PASSWORD` sert uniquement au provisionnement du rôle PostgreSQL `maintenance_login` et à la construction de `MAINTENANCE_DATABASE_URL`. En Compose, seul le service `maintenance-runner` reçoit cette URL ; le conteneur API ne la reçoit pas. Sur Render, le workflow GitHub Actions de maintenance est le processus batch séparé et utilise son propre secret `RENDER_MAINTENANCE_DATABASE_URL`. Aucun déploiement Render n'a été effectué.
+2. **Contrôle runtime du rôle de maintenance — renforcé dans cette branche.** `src/role-guard.ts` refuse désormais SUPERUSER, BYPASSRLS, CREATEDB, CREATEROLE et REPLICATION, en plus des appartenances inattendues. Le runner vérifie également l'identité exacte `maintenance_login`.
+4. **Vérification du ledger par comptage seulement.** Le workflow compare le nombre de fichiers SQL au nombre d’entrées du registre ; comparer également les noms exacts des migrations appliquées aux fichiers présents.
+5. **Pas de garde de complétude du registre au démarrage de l’API.** En dehors de la dépendance `service_completed_successfully` de Docker Compose, l’API ne bloque pas son démarrage lorsque le registre des migrations est incomplet.
+6. **Identité et session POS Electron non intégrées.** Le client Electron n’intègre pas de fournisseur d’identité (voir README) : le jeton est provisionné hors de l’application. Le flux de connexion, de renouvellement du jeton et de gestion de session Supabase du POS n’est pas implémenté.
+7. **Jeton administrateur de production non démontré.** Le mécanisme d’obtention du jeton administrateur en production reste à définir et à valider.
+8. **Cloudflare R2 : validation réelle non démontrée.** L’adaptateur S3 dispose de tests unitaires. En revanche, l’intégration réelle à Cloudflare R2, les permissions du jeton et les opérations sur le bucket ne sont pas démontrées. Avant validation, utiliser un bucket R2 de test dédié et un jeton limité à ce bucket, puis vérifier upload, confirmation, téléchargement et nettoyage ; ne pas utiliser le bucket de production ni un jeton largement autorisé.
+9. **Audit des dépendances à réaliser.** `npm audit` est à exécuter ; 12 vulnérabilités ont été signalées, dont 4 de niveau `high` (résultat rapporté, à confirmer par l’audit). Compléter ce point après l’audit.
+10. **Faux positif Gitleaks connu.** Une clé d’idempotence de test est signalée à tort ; l’empreinte exacte est documentée dans `.gitleaksignore`.
+- 10. **Tenants registry has no retention.** `tenants` grows by one row
   per new tenant, forever. That is bounded by the number of distinct
   tenants, which is small, so it is acceptable for now. If it ever
   needs pruning, add a `last_seen_at` column updated on every request
