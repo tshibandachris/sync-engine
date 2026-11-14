@@ -52,7 +52,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
     throw new Error(
       'Refus de demarrer : le role "' +
         row.role +
-        '" a des attributs incompatibles avec la maintenance (LOGIN/INHERIT, SUPERUSER, BYPASSRLS, CREATEDB, CREATEROLE ou REPLICATION).',
+        '" est superuser ou BYPASSRLS, ou possède un attribut privilégié incompatible avec la maintenance (LOGIN/INHERIT, CREATEDB, CREATEROLE ou REPLICATION).',
     );
   }
 
