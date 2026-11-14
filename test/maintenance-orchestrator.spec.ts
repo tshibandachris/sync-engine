@@ -52,6 +52,7 @@ function makeService(db: any, failTenantId?: string): MaintenanceServiceLike {
   const real = new SyncMaintenanceService(db);
   return {
     purgeExpiredDeviceProofNonces: (t, n) => real.purgeExpiredDeviceProofNonces(t, n),
+    purge: (t, options) => real.purge(t, options),
     purgeSyncLogs(tenantId, ttlDays) {
       if (tenantId === failTenantId) throw new Error('simulated failure');
       return real.purgeSyncLogs(tenantId, ttlDays);
