@@ -70,6 +70,21 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
   const run = (service: MaintenanceServiceLike) =>
     runMaintenanceCycle({ pool: pg.pool as Pool, db: pg.maintenanceDb, storage, service });
 
+  it('applique les quatre durées minimales approuvées par défaut', async () => {
+    let syncTtls: { ttlIdempotencyDays?: number; ttlConflictsDays?: number } | undefined;
+    let pendingTtl = 0;
+    let tombstoneTtl = 0;
+    const report = await run(fakeService([], {
+      purge: async (_tenantId, options) => { syncTtls = options; return { idempotencyDeleted: 0, conflictsDeleted: 0 }; },
+      purgeTenantPendingAttachments: async (_tenantId, ttl) => { pendingTtl = ttl; return { deleted: 0 }; },
+      purgeTenantTombstones: async (_tenantId, ttl) => { tombstoneTtl = ttl; return { checkInsDeleted: 0, missionsDeleted: 0, sitesDeleted: 0, purgedUpToSeq: 0, orphanedObjectKeys: [] }; },
+    }));
+    expect(syncTtls).toEqual({ ttlIdempotencyDays: 7, ttlConflictsDays: 7 });
+    expect(pendingTtl).toBe(1);
+    expect(tombstoneTtl).toBe(30);
+    expect(report.tenantsFailed).toBe(0);
+  });
+
   it('une étape en échec ne bloque pas les suivantes et ne perd pas les compteurs acquis', async () => {
     const calls: string[] = [];
     const report = await run(
