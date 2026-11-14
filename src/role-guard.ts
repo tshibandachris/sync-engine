@@ -52,8 +52,7 @@ export async function assertNonPrivilegedRole(db: Pick<Pool, 'query'>): Promise<
     throw new Error(
       'Refus de demarrer : le role "' +
         row.role +
-        '" est superuser ou BYPASSRLS, la RLS ne s\'appliquerait pas a la maintenance. ' +
-        'Utilise le role maintenance_login dans MAINTENANCE_DATABASE_URL.',
+        '" a des attributs incompatibles avec la maintenance (LOGIN/INHERIT, SUPERUSER, BYPASSRLS, CREATEDB, CREATEROLE ou REPLICATION).',
     );
   }
 
