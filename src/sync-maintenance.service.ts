@@ -293,7 +293,7 @@ export class SyncMaintenanceService {
 
   /**
    * Deletes the attachments rows stuck in 'pending' longer than ttlDays
-   * (default 7). A pending row means a client asked for a presigned PUT
+   * (default 1 day). A pending row means a client asked for a presigned PUT
    * URL and never confirmed the upload. There is no S3 object to clean:
    * either the client never PUT anything, or the object was written but
    * never confirmed, in which case scanTenantOrphans will find it later.
