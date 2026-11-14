@@ -83,6 +83,11 @@ describe('purge_tenant_tombstones: orphaned object keys', () => {
     };
   }
 
+  it('refuse une rétention tombstone inférieure à 30 jours', async () => {
+    await expect(new SyncMaintenanceService(pg.maintenanceDb).purgeTenantTombstones(tenantId, 29))
+      .rejects.toThrow(/30 jours/);
+  });
+
   it('retourne un tableau vide quand rien ne cascade', async () => {
     const r = await purge(30);
     expect(r.check_ins_deleted).toBe(0);
