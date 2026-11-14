@@ -16,12 +16,13 @@ async function expectMaintenanceFunctionToReject(
   tenantId: string,
   statement: string,
   pattern: RegExp,
+  values: unknown[] = [tenantId],
 ): Promise<void> {
   const client = await pg.maintenancePool.connect();
   try {
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
-    await expect(client.query(statement, [tenantId])).rejects.toThrow(pattern);
+    await expect(client.query(statement, values)).rejects.toThrow(pattern);
   } finally {
     await client.query('ROLLBACK').catch(() => undefined);
     client.release();
@@ -39,6 +40,7 @@ describe('database-enforced retention floors (migration 043)', () => {
       tenantId,
       'SELECT public.purge_sync_tables(0, 0)',
       /7 days/,
+      [],
     );
   });
 
