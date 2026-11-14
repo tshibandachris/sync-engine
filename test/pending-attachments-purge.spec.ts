@@ -111,7 +111,7 @@ describe('purgeTenantPendingAttachments', () => {
          (id, tenant_id, check_in_id, agent_id, object_key, content_type,
           size_bytes, checksum_sha256, status, created_at, uploaded_at)
        SELECT (md5(g::text || clock_timestamp()::text))::uuid,
-              $1, $2, $3,
+              $1::uuid, $2::uuid, $3::uuid,
               'tenants/' || $1::text || '/batch/' || g::text,
               'image/jpeg', 1024, repeat('a', 64), 'pending',
               (extract(epoch FROM (clock_timestamp() - interval '2 days')) * 1000)::bigint,
