@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { products: [], query: '', status: null };
+const state = { products: [], query: '', status: null, cart: new Map(), posQuery: '' };
 let dashboardInitialized = false;
 
 const money = (amount) => new Intl.NumberFormat('fr-CD', {
@@ -114,7 +114,7 @@ function renderProducts(products) {
 async function loadProducts() {
   try {
     state.products = await window.eden.listProducts(state.query);
-    renderProducts(state.products);
+    renderProducts(state.products);\n    if ($('pos-products')) renderPosProducts();
   } catch (error) {
     setFeedback(error.message || 'Impossible de charger le catalogue.', 'error');
   }
@@ -127,6 +127,38 @@ async function refreshDashboard() {
     $('last-refresh').textContent = 'Résumé indisponible';
     console.error('Dashboard read failed:', error);
   }
+}
+
+function renderPosProducts() {
+  const list = $('pos-products');
+  const term = state.posQuery.trim().toLocaleLowerCase('fr');
+  const products = state.products.filter((p) => !term || [p.name, p.sku, p.barcode].some((v) => String(v || '').toLocaleLowerCase('fr').includes(term)));
+  $('pos-product-count').textContent = `${products.length} article(s)`;
+  list.replaceChildren();
+  if (!products.length) { const empty=document.createElement('div'); empty.className='empty'; empty.textContent='Aucun produit correspondant.'; list.append(empty); return; }
+  for (const product of products) {
+    const button=document.createElement('button'); button.type='button'; button.className='pos-product';
+    const name=document.createElement('strong'); name.textContent=product.name;
+    const detail=document.createElement('span'); detail.textContent=product.sku || product.category || 'Article';
+    const price=document.createElement('b'); price.textContent=money(product.price);
+    button.append(name,detail,price);
+    button.addEventListener('click',()=>{const item=state.cart.get(product.id)||{product,quantity:0};item.quantity+=1;state.cart.set(product.id,item);renderCart();});
+    list.append(button);
+  }
+}
+function renderCart() {
+  const lines=$('cart-lines'); lines.replaceChildren(); let total=0,count=0;
+  if (!state.cart.size) { const empty=document.createElement('div');empty.className='empty';const strong=document.createElement('strong');strong.textContent='Votre panier est vide';const hint=document.createElement('span');hint.textContent='Sélectionnez un produit pour commencer.';empty.append(strong,hint);lines.append(empty); }
+  for (const [id,item] of state.cart) {
+    const subtotal=item.product.price*item.quantity;total+=subtotal;count+=item.quantity;
+    const row=document.createElement('div');row.className='cart-line';const detail=document.createElement('div');
+    const name=document.createElement('strong');name.textContent=item.product.name;const price=document.createElement('small');price.textContent=`${item.quantity} × ${money(item.product.price)} · ${money(subtotal)}`;detail.append(name,price);
+    const actions=document.createElement('div');actions.className='cart-line-actions';
+    for(const [label,delta] of [['−',-1],['+',1]]){const btn=document.createElement('button');btn.type='button';btn.textContent=label;btn.setAttribute('aria-label',`${delta>0?'Ajouter':'Retirer'} une unité de ${item.product.name}`);btn.addEventListener('click',()=>{item.quantity+=delta;if(item.quantity<=0)state.cart.delete(id);renderCart();});actions.append(btn);}
+    row.append(detail,actions);lines.append(row);
+  }
+  $('cart-count').textContent=`${count} article(s)`;$('cart-subtotal').textContent=money(total);$('cart-total').textContent=money(total);
+  $('payment-split').hidden=$('payment-method').value!=='mixed';
 }
 
 function switchPage(page) {
@@ -209,7 +241,7 @@ function initializeDashboard() {
   if (dashboardInitialized) return;
   dashboardInitialized = true;
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => switchPage(button.dataset.page)));
-  $('new-product').addEventListener('click', () => openProductDialog());
+  $('new-product').addEventListener('click', () => openProductDialog());\n  $('pos-search').addEventListener('input', (event) => { state.posQuery=event.target.value; renderPosProducts(); });\n  $('cart-clear').addEventListener('click', () => { state.cart.clear(); renderCart(); });\n  $('payment-method').addEventListener('change', renderCart);
   $('close-dialog').addEventListener('click', closeProductDialog);
   $('cancel-product').addEventListener('click', closeProductDialog);
   $('product-form').addEventListener('submit', saveProduct);
