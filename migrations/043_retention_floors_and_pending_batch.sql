@@ -2,6 +2,18 @@
 -- Existing migrations remain immutable; this migration replaces only function bodies.
 BEGIN;
 
+DO $preflight$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+     WHERE rolname = current_user AND rolsuper
+  ) AND NOT pg_catalog.pg_has_role(current_user, 'maintenance_function_owner', 'MEMBER') THEN
+    RAISE EXCEPTION
+      'MIGRATION_FAILED: migration role must be a member of maintenance_function_owner to replace its SECURITY DEFINER functions';
+  END IF;
+END
+$preflight$;
+
 CREATE OR REPLACE FUNCTION public.purge_sync_tables(
   ttl_idempotency_days integer,
   ttl_conflicts_days integer
