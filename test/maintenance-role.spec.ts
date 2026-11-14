@@ -229,13 +229,13 @@ describe('maintenance_login runtime membership boundary', () => {
   it('rejects a maintenance login that loses INHERIT or LOGIN', async () => {
     await pg.pool.query('ALTER ROLE maintenance_login NOINHERIT');
     try {
-      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attributs incompatibles/i);
+      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attribut privilégié/i);
     } finally {
       await pg.pool.query('ALTER ROLE maintenance_login INHERIT');
     }
     await pg.pool.query('ALTER ROLE maintenance_login NOLOGIN');
     try {
-      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attributs incompatibles/i);
+      await expect(assertNonPrivilegedRole(pg.maintenancePool)).rejects.toThrow(/attribut privilégié/i);
     } finally {
       await pg.pool.query('ALTER ROLE maintenance_login LOGIN');
     }
