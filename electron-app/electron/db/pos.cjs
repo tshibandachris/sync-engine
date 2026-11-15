@@ -142,6 +142,10 @@ function createLocalSale(db, input, now = Date.now()) {
     if (!Number.isSafeInteger(unitPrice) || unitPrice < 0) {
       throw new Error('Le prix local du produit est invalide.');
     }
+    const unitCost = product.cost == null ? null : Number(product.cost);
+    if (unitCost !== null && (!Number.isSafeInteger(unitCost) || unitCost < 0)) {
+      throw new Error('Le coût local du produit est invalide.');
+    }
     const previous = products.get(product.id);
     const quantity = (previous?.quantity || 0) + line.quantity;
     if (!Number.isSafeInteger(quantity)) throw new Error('Quantité totale invalide.');
@@ -182,7 +186,7 @@ function createLocalSale(db, input, now = Date.now()) {
       quantity_delta: -quantity,
       reference_id: saleId,
       reference_type: 'sale',
-      unit_cost: product.cost == null ? null : Number(product.cost),
+      unit_cost: unitCost,
       notes: null,
       created_at: now,
       updated_at: now,
