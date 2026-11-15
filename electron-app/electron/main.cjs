@@ -222,7 +222,7 @@ async function doSync() {
     syncState = 'idle';
     status = {
       ...status,
-      state: outbox.pending > 0 ? 'pending' : 'synced',
+      state: outbox.pending > 0 || closure.retained > 0 ? 'pending' : 'synced',
       message: `Sync terminée : pull ${finalPull.productsProcessed} produit(s), curseur ${finalPull.cursor}; outbox ${outbox.pending} en attente (${outbox.failed} avec erreur); clôtures confirmées ${closure.closed}, en attente ${closure.retained}.`,
       lastCursor: finalPull.cursor,
       outboxPending: outbox.pending,
@@ -540,20 +540,23 @@ app.whenReady().then(async () => {
   registerTrustedHandler('eden:pos:get-state', () => ({ staff: listLocalStaff(db), cashSessions: listOpenCashSessions(db), recentClosedSession: listRecentClosedCashSession(db) }));
   registerTrustedHandler('eden:pos:open-session', (input) => {
     const session = openCashSession(db, validateOpenCashSessionInput(input));
-    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    status = { ...status, state: 'pending', message: 'Session de caisse locale en attente de synchronisation.', outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
+    if (canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) void doSync();
     return session;
   });
   registerTrustedHandler('eden:pos:create-sale', (input) => {
     const sale = createLocalSale(db, validateCreateSaleInput(input));
-    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    status = { ...status, state: 'pending', message: 'Vente locale enregistrée ; synchronisation en attente.', outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
+    if (canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) void doSync();
     return sale;
   });
   registerTrustedHandler('eden:pos:close-session', (input) => {
     const request = requestCashSessionClose(db, validateCloseCashSessionInput(input));
-    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    status = { ...status, state: 'pending', message: 'Clôture locale demandée ; confirmation serveur en attente.', outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
+    if (canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) void doSync();
     return request;
   });
   createWindow();
