@@ -162,7 +162,8 @@ function renderCart() {
   const method = $('payment-method').value; $('payment-split').hidden = method !== 'mixed';
   if (method === 'cash') { $('cash-amount').value = String(total); $('mobile-amount').value = '0'; }
   if (method === 'mobile_money') { $('cash-amount').value = '0'; $('mobile-amount').value = String(total); }
-  const checkout = $('checkout-button'); checkout.disabled = !state.activeCashSessionId || state.cart.size === 0;
+  const activeSession = state.cashSessions.find((session) => session.id === state.activeCashSessionId);
+  const checkout = $('checkout-button'); checkout.disabled = !activeSession || activeSession.closeRequested || state.cart.size === 0;
   checkout.textContent = checkout.disabled ? 'Ouvrir une session pour encaisser' : 'Encaisser la vente';
 }
 
@@ -178,7 +179,12 @@ async function loadPosState() {
     for (const session of state.cashSessions) { const option = document.createElement('option'); option.value = session.id; option.textContent = session.staffName + ' · fond ' + money(session.openingAmount); sessionSelect.append(option); }
     sessionSelect.value = state.activeCashSessionId;
     const selected = state.cashSessions.find((session) => session.id === state.activeCashSessionId);
-    $('pos-session-summary').textContent = selected ? 'Session de ' + selected.staffName + ' · espèces attendues : ' + money(selected.expectedCash) : 'Aucune session ouverte sur ce terminal.';
+    const recent = snapshot.recentClosedSession;
+    $('pos-session-summary').textContent = selected
+      ? (selected.closeRequested ? 'Clôture demandée · aucune nouvelle vente · espèces déclarées : ' + money(selected.closeClosingAmount ?? selected.expectedCash) + (selected.closeSyncError ? ' · erreur de synchronisation : ' + selected.closeSyncError : '') : 'Session de ' + selected.staffName + ' · espèces attendues : ' + money(selected.expectedCash))
+      : recent ? 'Dernière session clôturée · ' + recent.staffName + ' · attendu ' + money(recent.expectedAmount) + ' · compté ' + money(recent.closingAmount) + ' · écart ' + money(recent.difference) : 'Aucune session ouverte sur ce terminal.';
+    $('close-session-button').disabled = !selected || selected.closeRequested;
+    if (selected && document.activeElement !== $('closing-amount')) $('closing-amount').value = String(selected.expectedCash);
     const selectedStaff = state.posStaff.find((staff) => staff.id === staffSelect.value);
     $('open-session-button').disabled = !selectedStaff || state.cashSessions.some((session) => session.staffId === selectedStaff.id);
     $('open-session-help').textContent = state.posStaff.length ? 'Choisissez un caissier sans session ouverte et indiquez le fond de caisse.' : 'Aucun membre du personnel actif n’est disponible. Synchronisez les données ou vérifiez le personnel.';
@@ -193,6 +199,18 @@ async function openPosCashSession() {
     state.activeCashSessionId = session.id; $('pos-feedback').textContent = 'Session ouverte localement. Elle sera synchronisée dès que le terminal sera approuvé et connecté.'; $('pos-feedback').className = 'feedback success';
     await loadPosState();
   } catch (error) { $('pos-feedback').textContent = error.message || 'Ouverture de session impossible.'; $('pos-feedback').className = 'feedback error'; }
+  finally { button.disabled = false; void loadPosState(); }
+}
+
+async function closePosCashSession() {
+  const selected = state.cashSessions.find((session) => session.id === state.activeCashSessionId);
+  if (!selected || selected.closeRequested) return;
+  const button = $('close-session-button'); button.disabled = true;
+  try {
+    await window.eden.requestCashSessionClose({ cashSessionId: selected.id, closingAmount: Number($('closing-amount').value), notes: '' });
+    $('pos-feedback').textContent = 'Demande de clôture enregistrée localement. La session reste bloquée jusqu’à la confirmation du serveur après synchronisation des ventes.';
+    $('pos-feedback').className = 'feedback success'; await loadPosState();
+  } catch (error) { $('pos-feedback').textContent = error.message || 'Demande de clôture impossible.'; $('pos-feedback').className = 'feedback error'; }
   finally { button.disabled = false; void loadPosState(); }
 }
 
@@ -286,6 +304,7 @@ function renderAuthState(status) {
 function handleStatus(status) {
   renderAuthState(status);
   if (status?.authState === 'ready' || status?.canOperateLocally === true) renderStatus(status);
+  if (dashboardInitialized) void loadPosState();
 }
 
 function initializeDashboard() {
@@ -295,6 +314,7 @@ function initializeDashboard() {
   $('new-product').addEventListener('click', () => openProductDialog());
   $('pos-search').addEventListener('input', (event) => { state.posQuery=event.target.value; renderPosProducts(); });
   $('open-session-button').addEventListener('click', openPosCashSession);
+  $('close-session-button').addEventListener('click', closePosCashSession);
   $('pos-staff-select').addEventListener('change', () => { void loadPosState(); });
   $('pos-session-select').addEventListener('change', (event) => { state.activeCashSessionId = event.target.value; void loadPosState(); });
   $('checkout-button').addEventListener('click', checkoutPosSale);

@@ -4,8 +4,9 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
 const { pullChanges } = require('./sync/api-client.cjs');
-const { pushPendingBatch } = require('./sync/sync-coordinator.cjs');
+const { pushPendingBatch, closePendingCashSessions } = require('./sync/sync-coordinator.cjs');
 const { getOutboxStatus } = require('./sync/outbox.cjs');
+const { listLocalStaff, listOpenCashSessions, listRecentClosedCashSession, openCashSession, requestCashSessionClose, createLocalSale } = require('./db/pos.cjs');
 const { listLocalStaff, listOpenCashSessions, openCashSession, createLocalSale } = require('./db/pos.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
@@ -215,14 +216,15 @@ async function doSync() {
     // Pull reference data first (products, staff, sessions) before pushing queued sales.
     const initialPull = await pullAll();
     const push = await pushPending();
+    const closure = await closePendingCashSessions({ db, baseUrl: process.env.EDEN_SYNC_URL, token: requireDeviceToken(), deviceId: deviceCredential?.deviceId, privateKeyPem: deviceCredential?.privateKeyPem });
     // Pull once more to receive authoritative versions and server-assigned sync sequences.
-    const finalPull = push.sent ? await pullAll() : initialPull;
+    const finalPull = (push.sent || closure.closed > 0) ? await pullAll() : initialPull;
     const outbox = getOutboxStatus(db);
     syncState = 'idle';
     status = {
       ...status,
       state: outbox.pending > 0 ? 'pending' : 'synced',
-      message: `Sync terminée : pull ${finalPull.productsProcessed} produit(s), curseur ${finalPull.cursor}; outbox ${outbox.pending} en attente (${outbox.failed} avec erreur).`,
+      message: `Sync terminée : pull ${finalPull.productsProcessed} produit(s), curseur ${finalPull.cursor}; outbox ${outbox.pending} en attente (${outbox.failed} avec erreur); clôtures confirmées ${closure.closed}, en attente ${closure.retained}.`,
       lastCursor: finalPull.cursor,
       outboxPending: outbox.pending,
       outboxFailed: outbox.failed,
@@ -536,7 +538,7 @@ app.whenReady().then(async () => {
     windowRef?.webContents.send('eden:status', readStatus());
     return product;
   });
-  registerTrustedHandler('eden:pos:get-state', () => ({ staff: listLocalStaff(db), cashSessions: listOpenCashSessions(db) }));
+  registerTrustedHandler('eden:pos:get-state', () => ({ staff: listLocalStaff(db), cashSessions: listOpenCashSessions(db), recentClosedSession: listRecentClosedCashSession(db) }));
   registerTrustedHandler('eden:pos:open-session', (input) => {
     const session = openCashSession(db, validateOpenCashSessionInput(input));
     status = { ...status, outboxPending: getOutboxStatus(db).pending };
@@ -548,6 +550,12 @@ app.whenReady().then(async () => {
     status = { ...status, outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
     return sale;
+  });
+  registerTrustedHandler('eden:pos:close-session', (input) => {
+    const request = requestCashSessionClose(db, validateCloseCashSessionInput(input));
+    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    return request;
   });
   createWindow();
   startDeviceStatusPolling();

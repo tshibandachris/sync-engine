@@ -54,6 +54,11 @@ function validateOpenCashSessionInput(value) {
   return { staffId: value.staffId, openingAmount: value.openingAmount, terminalLabel: value.terminalLabel ?? null };
 }
 
+function validateCloseCashSessionInput(value) {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['cashSessionId', 'closingAmount', 'notes'].includes(key)) || typeof value.cashSessionId !== 'string' || !UUID_RE.test(value.cashSessionId) || !Number.isSafeInteger(value.closingAmount) || value.closingAmount < 0 || (value.notes !== undefined && value.notes !== null && (typeof value.notes !== 'string' || value.notes.length > 500))) throw new Error('Invalid cash-session close input.');
+  return { cashSessionId: value.cashSessionId, closingAmount: value.closingAmount, notes: value.notes ?? null };
+}
+
 function validateCreateSaleInput(value) {
   const allowed = new Set(['cashSessionId', 'lines', 'paymentMethod', 'cashAmount', 'mobileAmount', 'mobileMsisdn', 'mobileReference', 'customerNote']);
   if (!isPlainRecord(value) || Object.keys(value).some((key) => !allowed.has(key)) || typeof value.cashSessionId !== 'string' || !UUID_RE.test(value.cashSessionId) || !Array.isArray(value.lines) || value.lines.length < 1 || value.lines.length > 100) throw new Error('Invalid sale input.');
@@ -122,6 +127,7 @@ const api = Object.freeze({
   getPosState: () => ipcRenderer.invoke('eden:pos:get-state'),
   openCashSession: (input) => ipcRenderer.invoke('eden:pos:open-session', validateOpenCashSessionInput(input)),
   createSale: (input) => ipcRenderer.invoke('eden:pos:create-sale', validateCreateSaleInput(input)),
+  requestCashSessionClose: (input) => ipcRenderer.invoke('eden:pos:close-session', validateCloseCashSessionInput(input)),
   onStatus: (callback) => {
     if (typeof callback !== 'function') throw new TypeError('onStatus expects a function.');
     const listener = (_event, value) => callback(value);
