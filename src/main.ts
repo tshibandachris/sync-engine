@@ -8,6 +8,7 @@ import type { AttachmentStorage } from './attachment-storage.js';
 import { S3AttachmentStorage } from './s3-attachment-storage.js';
 import { assertEnrollmentDatabaseIdentity } from './device-enrollment-db-guard.js';
 import { assertDeviceAdminDatabaseIdentity } from './device-admin-db-guard.js';
+import { assertAppDatabaseIdentity } from './app-db-guard.js';
 
 export async function createApp(
   db: NodePgDatabase<typeof schema>,
@@ -68,6 +69,7 @@ async function bootstrap(): Promise<void> {
   const adminDb = drizzle(adminPool, { schema });
 
   try {
+    await assertAppDatabaseIdentity(pool);
     await assertEnrollmentDatabaseIdentity(enrollmentPool);
     await assertDeviceAdminDatabaseIdentity(adminPool);
   } catch (error) {
