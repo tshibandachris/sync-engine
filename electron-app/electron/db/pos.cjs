@@ -179,7 +179,7 @@ function createLocalSale(db, input, now = Date.now()) {
     const previous = products.get(product.id);
     const quantity = (previous?.quantity || 0) + line.quantity;
     if (!Number.isSafeInteger(quantity)) throw new Error('Quantité totale invalide.');
-    products.set(product.id, { product, quantity, unitPrice });
+    products.set(product.id, { product, quantity, unitPrice, unitCost });
   }
 
   let total = 0;
