@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   assertTrustedIpcSender,
   validateSearchQuery,
@@ -8,6 +10,7 @@ const {
   validateProductInput,
   validateOpenCashSessionInput,
   validateCreateSaleInput,
+  validateCloseCashSessionInput,
 } = require('../electron/security/ipc-security.cjs');
 
 function trustedEvent() {
@@ -94,4 +97,26 @@ test('sale IPC accepts bounded UUID product lines and integer payment fields', (
   assert.throws(() => validateCreateSaleInput({ ...input, lines: [{ productId: 'bad', quantity: 1 }] }), /ligne/);
   assert.throws(() => validateCreateSaleInput({ ...input, extra: true }), /Invalid sale input/);
   assert.throws(() => validateCreateSaleInput({ ...input, cashAmount: 1.5 }), /répartition/);
+});
+
+test('cash-session close IPC validates the DTO and main process imports its validator', () => {
+  const cashSessionId = '00000000-0000-4000-8000-000000000104';
+  assert.deepEqual(validateCloseCashSessionInput({
+    cashSessionId, closingAmount: 12500, notes: 'Fin de journée',
+  }), { cashSessionId, closingAmount: 12500, notes: 'Fin de journée' });
+  assert.throws(() => validateCloseCashSessionInput({
+    cashSessionId, closingAmount: -1,
+  }), /Invalid cash-session close input/);
+  assert.throws(() => validateCloseCashSessionInput({
+    cashSessionId, closingAmount: 12500, unexpected: true,
+  }), /Invalid cash-session close input/);
+
+  const mainSource = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8');
+  const validatorOffset = mainSource.indexOf('assertTrustedIpcSender');
+  const importStart = mainSource.lastIndexOf('const {', validatorOffset);
+  const importEnd = mainSource.indexOf("} = require('./security/ipc-security.cjs');", importStart);
+  assert.notEqual(importStart, -1, 'main process must declare its IPC validator imports');
+  assert.notEqual(importEnd, -1, 'main process must import from ipc-security.cjs');
+  assert.ok(mainSource.slice(importStart, importEnd).includes('validateCloseCashSessionInput'));
+  assert.ok(mainSource.includes('requestCashSessionClose(db, validateCloseCashSessionInput(input))'));
 });

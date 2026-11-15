@@ -23,6 +23,7 @@ const {
   validateProductInput,
   validateOpenCashSessionInput,
   validateCreateSaleInput,
+  validateCloseCashSessionInput,
 } = require('./security/ipc-security.cjs');
 
 let db;
