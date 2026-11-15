@@ -1089,22 +1089,29 @@ afterAll(async () => {
     expect(ids).not.toContain(id1);
   });
 
-  it('purges everything resolved with zero TTL', async () => {
+  it('purges every resolved conflict older than the minimum TTL', async () => {
     const now = Date.now();
     const entityId = randomUUID();
+    const eightDaysMs = 8 * 24 * 60 * 60 * 1000;
 
     for (let i = 0; i < 3; i++) {
       await pool.query(
         `INSERT INTO sync_conflicts (id, tenant_id, agent_id, entity_type, entity_id, client_version, server_version, client_payload, server_payload, status, resolution, resolved_at, created_at)
          VALUES ($1, $2, $3, 'check_in', $4, 1, 2, '{}', '{}', 'resolved', 'dismiss', $5, $6)`,
-        [randomUUID(), TEST_TENANT_ID, agentA, entityId, now - i * 1000, now - i * 1000],
+        [randomUUID(), TEST_TENANT_ID, agentA, entityId, now - eightDaysMs - i * 1000, now - eightDaysMs - i * 1000],
       );
     }
 
-    const result = await maintenance.purge(TEST_TENANT_ID, { ttlIdempotencyDays: 0, ttlConflictsDays: 0 });
+    const result = await maintenance.purge(TEST_TENANT_ID, { ttlIdempotencyDays: 7, ttlConflictsDays: 7 });
     expect(result.conflictsDeleted).toBe(3);
   });
 
+  it('rejects retention below the database-enforced minimum floors', async () => {
+    await expect(maintenance.purge(TEST_TENANT_ID, { ttlIdempotencyDays: 6, ttlConflictsDays: 7 })).rejects.toThrow();
+    await expect(maintenance.purge(TEST_TENANT_ID, { ttlIdempotencyDays: 7, ttlConflictsDays: 6 })).rejects.toThrow();
+    await expect(maintenance.purgeTenantTombstones(TEST_TENANT_ID, 29)).rejects.toThrow();
+    await expect(maintenance.purgeTenantPendingAttachments(TEST_TENANT_ID, 0)).rejects.toThrow();
+  });
 
   it('uses an exclusive sync_seq cursor for check-ins, missions, and sites', async () => {
     const checkInId = randomUUID();
