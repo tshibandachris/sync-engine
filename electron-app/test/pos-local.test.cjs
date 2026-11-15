@@ -9,6 +9,7 @@ const {
   listLocalStaff,
   listOpenCashSessions,
   openCashSession,
+  requestCashSessionClose,
   createLocalSale,
 } = require('../electron/db/pos.cjs');
 const { getOutboxStatus, preparePushBatch } = require('../electron/sync/outbox.cjs');
@@ -132,6 +133,32 @@ test('rejects overselling tracked stock without writing partial ledger records',
     assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 0);
     assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 0);
     assert.equal(getOutboxStatus(f.db).pending, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a local close request blocks further sales until server confirmation', () => {
+  const f = fixture();
+  try {
+    const session = openCashSession(f.db, { staffId: f.staffId, openingAmount: 1000 }, 1000);
+    const request = requestCashSessionClose(f.db, {
+      cashSessionId: session.id, closingAmount: 1000, notes: 'Fin de journée',
+    }, 2000);
+    assert.equal(request.syncState, 'pending');
+    const local = f.db.prepare(
+      'SELECT status, closed_at, close_sync_state FROM cash_sessions WHERE id = ?',
+    ).get(session.id);
+    assert.equal(local.status, 'open');
+    assert.equal(local.closed_at, null);
+    assert.equal(local.close_sync_state, 'pending');
+    assert.equal(listOpenCashSessions(f.db)[0].closeRequested, true);
+    assert.throws(() => createLocalSale(f.db, {
+      cashSessionId: session.id,
+      lines: [{ productId: f.productId, quantity: 1 }],
+      paymentMethod: 'cash', cashAmount: 500, mobileAmount: 0,
+    }, 3000), /Aucune session/);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 0);
   } finally {
     f.cleanup();
   }
