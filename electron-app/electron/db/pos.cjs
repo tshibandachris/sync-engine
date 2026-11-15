@@ -186,7 +186,7 @@ function createLocalSale(db, input, now = Date.now()) {
   const saleLines = [];
   const movements = [];
   const saleId = randomUUID();
-  for (const { product, quantity, unitPrice } of products.values()) {
+  for (const { product, quantity, unitPrice, unitCost } of products.values()) {
     const subtotal = quantity * unitPrice;
     if (!Number.isSafeInteger(subtotal)) throw new Error('Sous-total hors limite.');
     total += subtotal;
