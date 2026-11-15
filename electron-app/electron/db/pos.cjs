@@ -31,7 +31,9 @@ function listOpenCashSessions(db) {
   return db.prepare(`
     SELECT cs.id, cs.staff_id AS staffId, s.display_name AS staffName,
            cs.opened_at AS openedAt, cs.opening_amount AS openingAmount,
-           cs.notes,
+           cs.notes, cs.close_requested_at AS closeRequestedAt,
+           cs.close_closing_amount AS closeClosingAmount,
+           cs.close_sync_state AS closeSyncState, cs.close_sync_error AS closeSyncError,
            cs.opening_amount + COALESCE((
              SELECT SUM(sale.cash_amount) FROM sales sale
              WHERE sale.cash_session_id = cs.id
@@ -46,6 +48,10 @@ function listOpenCashSessions(db) {
     openedAt: Number(row.openedAt),
     openingAmount: Number(row.openingAmount),
     expectedCash: Number(row.expectedCash),
+    closeRequested: row.closeRequestedAt != null,
+    closeClosingAmount: row.closeClosingAmount == null ? null : Number(row.closeClosingAmount),
+    closeSyncState: row.closeSyncState ?? null,
+    closeSyncError: row.closeSyncError ?? null,
   }));
 }
 
@@ -107,6 +113,30 @@ function openCashSession(db, input, now = Date.now()) {
   return listOpenCashSessions(db).find((session) => session.id === id);
 }
 
+function requestCashSessionClose(db, input, now = Date.now()) {
+  requireUuid(input?.cashSessionId, 'cashSessionId');
+  requireAmount(input?.closingAmount, 'closingAmount');
+  const notes = input.notes == null ? null : String(input.notes).trim() || null;
+  if (notes && notes.length > 500) throw new Error('La note de clôture ne peut pas dépasser 500 caractères.');
+  const result = db.prepare(`
+    UPDATE cash_sessions SET close_requested_at = ?, close_closing_amount = ?,
+      close_notes = ?, close_sync_state = 'pending', close_sync_error = NULL
+    WHERE id = ? AND status = 'open' AND closed_at IS NULL AND close_requested_at IS NULL
+  `).run(now, input.closingAmount, notes, input.cashSessionId);
+  if (result.changes !== 1) throw new Error('Session introuvable, déjà clôturée ou clôture déjà demandée.');
+  return { cashSessionId: input.cashSessionId, closingAmount: input.closingAmount, requestedAt: now, syncState: 'pending' };
+}
+
+function listRecentClosedCashSession(db) {
+  return db.prepare(`
+    SELECT cs.id, s.display_name AS staffName, cs.closed_at AS closedAt,
+      cs.closing_amount AS closingAmount, cs.expected_amount AS expectedAmount, cs.difference
+    FROM cash_sessions cs JOIN staff s ON s.id = cs.staff_id
+    WHERE cs.status = 'closed' AND cs.closed_at IS NOT NULL
+    ORDER BY cs.closed_at DESC LIMIT 1
+  `).get() || null;
+}
+
 function createLocalSale(db, input, now = Date.now()) {
   requireUuid(input?.cashSessionId, 'cashSessionId');
   if (!Array.isArray(input?.lines) || input.lines.length < 1 || input.lines.length > 100) {
@@ -116,7 +146,7 @@ function createLocalSale(db, input, now = Date.now()) {
   const session = db.prepare(`
     SELECT id, staff_id AS staffId
     FROM cash_sessions
-    WHERE id = ? AND status = 'open' AND closed_at IS NULL
+    WHERE id = ? AND status = 'open' AND closed_at IS NULL AND close_requested_at IS NULL
   `).get(input.cashSessionId);
   if (!session) throw new Error('Aucune session de caisse ouverte ne permet cet encaissement.');
 
@@ -296,6 +326,8 @@ function createLocalSale(db, input, now = Date.now()) {
 module.exports = {
   listLocalStaff,
   listOpenCashSessions,
+  listRecentClosedCashSession,
   openCashSession,
+  requestCashSessionClose,
   createLocalSale,
 };

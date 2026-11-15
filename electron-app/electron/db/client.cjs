@@ -164,6 +164,17 @@ function openDatabase(app) {
     migrate();
   }
 
+  if (currentVersion < 3) {
+    const migrate = db.transaction(() => {
+      const columns = db.pragma('table_info(cash_sessions)');
+      const additions = [['close_requested_at', 'INTEGER'], ['close_closing_amount', 'INTEGER'], ['close_notes', 'TEXT'], ['close_sync_state', 'TEXT'], ['close_sync_error', 'TEXT']];
+      for (const [name, type] of additions) if (!columns.some((column) => column.name === name)) db.exec('ALTER TABLE cash_sessions ADD COLUMN ' + name + ' ' + type);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_cash_sessions_close_pending ON cash_sessions(status, close_sync_state, close_requested_at)');
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(3, Date.now());
+    });
+    migrate();
+  }
+
   return db;
 }
 

@@ -74,4 +74,14 @@ async function pushChanges({ baseUrl, token, deviceId, privateKeyPem, idempotenc
   return body;
 }
 
-module.exports = { pullChanges, pushChanges, normalizeBaseUrl };
+async function closeCashSession({ baseUrl, token, deviceId, privateKeyPem, cashSessionId, closingAmount, notes, fetchImpl = fetch }) {
+  if (typeof cashSessionId !== 'string' || !cashSessionId.trim() || !Number.isSafeInteger(closingAmount) || closingAmount < 0) throw new Error('Cash-session close request is invalid.');
+  const base = normalizeBaseUrl(baseUrl);
+  return requestJson({
+    url: base + '/cash-sessions/' + encodeURIComponent(cashSessionId) + '/close',
+    token, deviceId, privateKeyPem, fetchImpl, label: 'Cash-session close',
+    body: { closingAmount, ...(notes == null ? {} : { notes }) },
+  });
+}
+
+module.exports = { pullChanges, pushChanges, closeCashSession, normalizeBaseUrl };
