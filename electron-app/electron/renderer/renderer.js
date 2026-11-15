@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { products: [], query: '', status: null, cart: new Map(), posQuery: '' };
+const state = { products: [], query: '', status: null, cart: new Map(), posQuery: '', posStaff: [], cashSessions: [], activeCashSessionId: '' };
 let dashboardInitialized = false;
 
 const money = (amount) => new Intl.NumberFormat('fr-CD', {
@@ -148,20 +148,69 @@ function renderPosProducts() {
   }
 }
 function renderCart() {
-  const lines=$('cart-lines'); lines.replaceChildren(); let total=0,count=0;
-  if (!state.cart.size) { const empty=document.createElement('div');empty.className='empty';const strong=document.createElement('strong');strong.textContent='Votre panier est vide';const hint=document.createElement('span');hint.textContent='Sélectionnez un produit pour commencer.';empty.append(strong,hint);lines.append(empty); }
-  for (const [id,item] of state.cart) {
-    const subtotal=item.product.price*item.quantity;total+=subtotal;count+=item.quantity;
-    const row=document.createElement('div');row.className='cart-line';const detail=document.createElement('div');
-    const name=document.createElement('strong');name.textContent=item.product.name;const price=document.createElement('small');price.textContent=`${item.quantity} × ${money(item.product.price)} · ${money(subtotal)}`;detail.append(name,price);
-    const actions=document.createElement('div');actions.className='cart-line-actions';
-    for(const [label,delta] of [['−',-1],['+',1]]){const btn=document.createElement('button');btn.type='button';btn.textContent=label;btn.setAttribute('aria-label',`${delta>0?'Ajouter':'Retirer'} une unité de ${item.product.name}`);btn.addEventListener('click',()=>{item.quantity+=delta;if(item.quantity<=0)state.cart.delete(id);renderCart();});actions.append(btn);}
-    row.append(detail,actions);lines.append(row);
+  const lines = $('cart-lines'); lines.replaceChildren(); let total = 0; let count = 0;
+  if (!state.cart.size) { const empty = document.createElement('div'); empty.className = 'empty'; const strong = document.createElement('strong'); strong.textContent = 'Votre panier est vide'; const hint = document.createElement('span'); hint.textContent = 'Sélectionnez un produit pour commencer.'; empty.append(strong, hint); lines.append(empty); }
+  for (const [id, item] of state.cart) {
+    const subtotal = item.product.price * item.quantity; total += subtotal; count += item.quantity;
+    const row = document.createElement('div'); row.className = 'cart-line'; const detail = document.createElement('div');
+    const name = document.createElement('strong'); name.textContent = item.product.name; const price = document.createElement('small'); price.textContent = item.quantity + ' × ' + money(item.product.price) + ' · ' + money(subtotal); detail.append(name, price);
+    const actions = document.createElement('div'); actions.className = 'cart-line-actions';
+    for (const [label, delta] of [['−', -1], ['+', 1]]) { const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = label; btn.setAttribute('aria-label', (delta > 0 ? 'Ajouter' : 'Retirer') + ' une unité de ' + item.product.name); btn.addEventListener('click', () => { item.quantity += delta; if (item.quantity <= 0) state.cart.delete(id); renderCart(); }); actions.append(btn); }
+    row.append(detail, actions); lines.append(row);
   }
-  $('cart-count').textContent=`${count} article(s)`;$('cart-subtotal').textContent=money(total);$('cart-total').textContent=money(total);
-  $('payment-split').hidden=$('payment-method').value!=='mixed';
+  $('cart-count').textContent = count + ' article(s)'; $('cart-subtotal').textContent = money(total); $('cart-total').textContent = money(total);
+  const method = $('payment-method').value; $('payment-split').hidden = method !== 'mixed';
+  if (method === 'cash') { $('cash-amount').value = String(total); $('mobile-amount').value = '0'; }
+  if (method === 'mobile_money') { $('cash-amount').value = '0'; $('mobile-amount').value = String(total); }
+  const checkout = $('checkout-button'); checkout.disabled = !state.activeCashSessionId || state.cart.size === 0;
+  checkout.textContent = checkout.disabled ? 'Ouvrir une session pour encaisser' : 'Encaisser la vente';
 }
 
+async function loadPosState() {
+  try {
+    const snapshot = await window.eden.getPosState(); state.posStaff = snapshot.staff || []; state.cashSessions = snapshot.cashSessions || [];
+    if (!state.cashSessions.some((session) => session.id === state.activeCashSessionId)) state.activeCashSessionId = state.cashSessions[0]?.id || '';
+    const staffSelect = $('pos-staff-select'); const previousStaff = staffSelect.value; staffSelect.replaceChildren();
+    for (const staff of state.posStaff) { const option = document.createElement('option'); option.value = staff.id; option.textContent = staff.displayName; option.disabled = state.cashSessions.some((session) => session.staffId === staff.id); staffSelect.append(option); }
+    if (state.posStaff.some((staff) => staff.id === previousStaff && !state.cashSessions.some((session) => session.staffId === staff.id))) staffSelect.value = previousStaff;
+    const sessionSelect = $('pos-session-select'); sessionSelect.replaceChildren();
+    if (!state.cashSessions.length) { const option = document.createElement('option'); option.value = ''; option.textContent = 'Aucune session ouverte'; sessionSelect.append(option); }
+    for (const session of state.cashSessions) { const option = document.createElement('option'); option.value = session.id; option.textContent = session.staffName + ' · fond ' + money(session.openingAmount); sessionSelect.append(option); }
+    sessionSelect.value = state.activeCashSessionId;
+    const selected = state.cashSessions.find((session) => session.id === state.activeCashSessionId);
+    $('pos-session-summary').textContent = selected ? 'Session de ' + selected.staffName + ' · espèces attendues : ' + money(selected.expectedCash) : 'Aucune session ouverte sur ce terminal.';
+    const selectedStaff = state.posStaff.find((staff) => staff.id === staffSelect.value);
+    $('open-session-button').disabled = !selectedStaff || state.cashSessions.some((session) => session.staffId === selectedStaff.id);
+    $('open-session-help').textContent = state.posStaff.length ? 'Choisissez un caissier sans session ouverte et indiquez le fond de caisse.' : 'Aucun membre du personnel actif n’est disponible. Synchronisez les données ou vérifiez le personnel.';
+    renderCart();
+  } catch (error) { $('pos-session-summary').textContent = error.message || 'Impossible de charger les sessions.'; }
+}
+
+async function openPosCashSession() {
+  const button = $('open-session-button'); button.disabled = true;
+  try {
+    const session = await window.eden.openCashSession({ staffId: $('pos-staff-select').value, openingAmount: Number($('opening-amount').value), terminalLabel: 'Eden Gestion Desktop' });
+    state.activeCashSessionId = session.id; $('pos-feedback').textContent = 'Session ouverte localement. Elle sera synchronisée dès que le terminal sera approuvé et connecté.'; $('pos-feedback').className = 'feedback success';
+    await loadPosState();
+  } catch (error) { $('pos-feedback').textContent = error.message || 'Ouverture de session impossible.'; $('pos-feedback').className = 'feedback error'; }
+  finally { button.disabled = false; void loadPosState(); }
+}
+
+async function checkoutPosSale() {
+  if (!state.activeCashSessionId || !state.cart.size) return;
+  const button = $('checkout-button'); button.disabled = true; button.textContent = 'Enregistrement local…';
+  try {
+    let total = 0; for (const item of state.cart.values()) total += item.product.price * item.quantity;
+    const method = $('payment-method').value;
+    const cashAmount = method === 'cash' ? total : method === 'mobile_money' ? 0 : Number($('cash-amount').value);
+    const mobileAmount = method === 'mobile_money' ? total : method === 'cash' ? 0 : Number($('mobile-amount').value);
+    const sale = await window.eden.createSale({ cashSessionId: state.activeCashSessionId, lines: [...state.cart.values()].map((item) => ({ productId: item.product.id, quantity: item.quantity })), paymentMethod: method, cashAmount, mobileAmount });
+    state.cart.clear(); $('cash-amount').value = '0'; $('mobile-amount').value = '0';
+    $('pos-feedback').textContent = 'Vente ' + sale.saleNumber + ' enregistrée localement : ' + money(sale.total) + '. Synchronisation en attente si le réseau ou l’approbation manque.'; $('pos-feedback').className = 'feedback success';
+    renderCart(); await Promise.all([loadPosState(), refreshDashboard(), loadProducts()]);
+  } catch (error) { $('pos-feedback').textContent = error.message || 'Encaissement impossible.'; $('pos-feedback').className = 'feedback error'; }
+  finally { button.disabled = !state.activeCashSessionId || state.cart.size === 0; button.textContent = button.disabled ? 'Ouvrir une session pour encaisser' : 'Encaisser la vente'; }
+}
 function switchPage(page) {
   document.querySelectorAll('.nav-item').forEach((button) => {
     const active = button.dataset.page === page;
@@ -171,6 +220,7 @@ function switchPage(page) {
   document.querySelectorAll('.page').forEach((section) => section.classList.toggle('active', section.id === `page-${page}`));
   $('page-title').textContent = page === 'products' ? 'Produits & stock' : page === 'sales' ? 'Caisse' : 'Vue d’ensemble';
   if (page === 'products' || page === 'sales') loadProducts();
+  if (page === 'sales') void loadPosState();
 }
 
 function openProductDialog(product = null) {
@@ -244,6 +294,10 @@ function initializeDashboard() {
   document.querySelectorAll('.nav-item').forEach((button) => button.addEventListener('click', () => switchPage(button.dataset.page)));
   $('new-product').addEventListener('click', () => openProductDialog());
   $('pos-search').addEventListener('input', (event) => { state.posQuery=event.target.value; renderPosProducts(); });
+  $('open-session-button').addEventListener('click', openPosCashSession);
+  $('pos-staff-select').addEventListener('change', () => { void loadPosState(); });
+  $('pos-session-select').addEventListener('change', (event) => { state.activeCashSessionId = event.target.value; void loadPosState(); });
+  $('checkout-button').addEventListener('click', checkoutPosSale);
   $('cart-clear').addEventListener('click', () => { state.cart.clear(); renderCart(); });
   $('payment-method').addEventListener('change', renderCart);
   $('close-dialog').addEventListener('click', closeProductDialog);
@@ -313,6 +367,7 @@ function initializeDashboard() {
   });
   void refreshDashboard();
   void loadProducts();
+  void loadPosState();
   window.eden.getStatus().then(renderStatus).catch((error) => renderStatus({ state: 'pending', message: error.message, outboxPending: 0, outboxFailed: 0 }));
 }
 

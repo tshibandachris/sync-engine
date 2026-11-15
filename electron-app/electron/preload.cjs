@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Sandboxed Electron preload scripts have a restricted require() surface.
 // Keep these small shape/size checks inline; the main process repeats every
 // validation and remains the security boundary.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const PRODUCT_FIELDS = new Set([
   'id', 'name', 'price', 'cost', 'sku', 'barcode', 'category', 'stockAlert',
 ]);
@@ -45,6 +47,24 @@ function validateDeviceEnrollmentInput(value) {
     throw new Error('Code d’activation ou nom du terminal invalide.');
   }
   return { activationCode, deviceName };
+}
+
+function validateOpenCashSessionInput(value) {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['staffId', 'openingAmount', 'terminalLabel'].includes(key)) || typeof value.staffId !== 'string' || !UUID_RE.test(value.staffId) || !Number.isSafeInteger(value.openingAmount) || value.openingAmount < 0 || (value.terminalLabel !== undefined && value.terminalLabel !== null && (typeof value.terminalLabel !== 'string' || value.terminalLabel.length > 40))) throw new Error('Invalid cash session input.');
+  return { staffId: value.staffId, openingAmount: value.openingAmount, terminalLabel: value.terminalLabel ?? null };
+}
+
+function validateCreateSaleInput(value) {
+  const allowed = new Set(['cashSessionId', 'lines', 'paymentMethod', 'cashAmount', 'mobileAmount', 'mobileMsisdn', 'mobileReference', 'customerNote']);
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !allowed.has(key)) || typeof value.cashSessionId !== 'string' || !UUID_RE.test(value.cashSessionId) || !Array.isArray(value.lines) || value.lines.length < 1 || value.lines.length > 100) throw new Error('Invalid sale input.');
+  const lines = value.lines.map((line) => {
+    if (!isPlainRecord(line) || Object.keys(line).some((key) => !['productId', 'quantity'].includes(key)) || typeof line.productId !== 'string' || !UUID_RE.test(line.productId) || !Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 100000) throw new Error('Invalid sale line.');
+    return { productId: line.productId, quantity: line.quantity };
+  });
+  if (!['cash', 'mobile_money', 'mixed'].includes(value.paymentMethod) || !Number.isSafeInteger(value.cashAmount) || value.cashAmount < 0 || !Number.isSafeInteger(value.mobileAmount) || value.mobileAmount < 0) throw new Error('Invalid sale payment.');
+  const limits = { mobileMsisdn: 20, mobileReference: 64, customerNote: 200 };
+  for (const [field, max] of Object.entries(limits)) if (value[field] !== undefined && value[field] !== null && (typeof value[field] !== 'string' || value[field].length > max)) throw new Error('Invalid sale field: ' + field + '.');
+  return { cashSessionId: value.cashSessionId, lines, paymentMethod: value.paymentMethod, cashAmount: value.cashAmount, mobileAmount: value.mobileAmount, mobileMsisdn: value.mobileMsisdn ?? null, mobileReference: value.mobileReference ?? null, customerNote: value.customerNote ?? null };
 }
 
 function validateProductInput(value) {
@@ -99,6 +119,9 @@ const api = Object.freeze({
   saveProduct: (product) => ipcRenderer.invoke('eden:products:save', validateProductInput(product)),
   enrollDevice: (credentials) => ipcRenderer.invoke('eden:device:enroll', validateEnrollmentCredentials(credentials)),
   registerDevice: (input) => ipcRenderer.invoke('eden:device:register', validateDeviceEnrollmentInput(input)),
+  getPosState: () => ipcRenderer.invoke('eden:pos:get-state'),
+  openCashSession: (input) => ipcRenderer.invoke('eden:pos:open-session', validateOpenCashSessionInput(input)),
+  createSale: (input) => ipcRenderer.invoke('eden:pos:create-sale', validateCreateSaleInput(input)),
   onStatus: (callback) => {
     if (typeof callback !== 'function') throw new TypeError('onStatus expects a function.');
     const listener = (_event, value) => callback(value);

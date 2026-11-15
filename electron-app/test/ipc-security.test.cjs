@@ -6,6 +6,8 @@ const {
   validateEnrollmentCredentials,
   validateDeviceEnrollmentInput,
   validateProductInput,
+  validateOpenCashSessionInput,
+  validateCreateSaleInput,
 } = require('../electron/security/ipc-security.cjs');
 
 function trustedEvent() {
@@ -76,4 +78,20 @@ test('product IPC accepts the supported DTO and rejects unknown or oversized fie
   assert.throws(() => validateProductInput({ name: 'x'.repeat(201), price: 2 }), /Invalid product field/);
   assert.throws(() => validateProductInput({ name: 'Farine', price: { value: 2 } }), /Invalid product field/);
   assert.throws(() => validateProductInput({ name: ' ', price: 2 }), /required/);
+});
+
+test('cash-session IPC accepts only a valid cashier and integer CDF opening float', () => {
+  const staffId = '00000000-0000-4000-8000-000000000101';
+  assert.deepEqual(validateOpenCashSessionInput({ staffId, openingAmount: 12000 }), { staffId, openingAmount: 12000, terminalLabel: null });
+  assert.throws(() => validateOpenCashSessionInput({ staffId, openingAmount: -1 }), /fond de caisse/);
+  assert.throws(() => validateOpenCashSessionInput({ staffId, openingAmount: 1.5 }), /fond de caisse/);
+  assert.throws(() => validateOpenCashSessionInput({ staffId, openingAmount: 0, isAdmin: true }), /Invalid cash session/);
+});
+
+test('sale IPC accepts bounded UUID product lines and integer payment fields', () => {
+  const input = { cashSessionId: '00000000-0000-4000-8000-000000000102', lines: [{ productId: '00000000-0000-4000-8000-000000000103', quantity: 2 }], paymentMethod: 'mixed', cashAmount: 600, mobileAmount: 400 };
+  assert.deepEqual(validateCreateSaleInput(input), { ...input, mobileMsisdn: null, mobileReference: null, customerNote: null });
+  assert.throws(() => validateCreateSaleInput({ ...input, lines: [{ productId: 'bad', quantity: 1 }] }), /ligne/);
+  assert.throws(() => validateCreateSaleInput({ ...input, extra: true }), /Invalid sale input/);
+  assert.throws(() => validateCreateSaleInput({ ...input, cashAmount: 1.5 }), /répartition/);
 });

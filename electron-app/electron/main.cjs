@@ -6,6 +6,7 @@ const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalPr
 const { pullChanges } = require('./sync/api-client.cjs');
 const { pushPendingBatch } = require('./sync/sync-coordinator.cjs');
 const { getOutboxStatus } = require('./sync/outbox.cjs');
+const { listLocalStaff, listOpenCashSessions, openCashSession, createLocalSale } = require('./db/pos.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
 const { DeviceEnrollmentAttemptStore } = require('./auth/device-enrollment-attempt-store.cjs');
@@ -20,6 +21,8 @@ const {
   validateEnrollmentCredentials,
   validateDeviceEnrollmentInput,
   validateProductInput,
+  validateOpenCashSessionInput,
+  validateCreateSaleInput,
 } = require('./security/ipc-security.cjs');
 
 let db;
@@ -532,6 +535,19 @@ app.whenReady().then(async () => {
     status = { ...status, outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
     return product;
+  });
+  registerTrustedHandler('eden:pos:get-state', () => ({ staff: listLocalStaff(db), cashSessions: listOpenCashSessions(db) }));
+  registerTrustedHandler('eden:pos:open-session', (input) => {
+    const session = openCashSession(db, validateOpenCashSessionInput(input));
+    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    return session;
+  });
+  registerTrustedHandler('eden:pos:create-sale', (input) => {
+    const sale = createLocalSale(db, validateCreateSaleInput(input));
+    status = { ...status, outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    return sale;
   });
   createWindow();
   startDeviceStatusPolling();
