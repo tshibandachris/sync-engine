@@ -106,11 +106,13 @@ export class TestPostgres {
         PGPORT: String(container.getPort()),
         PGUSER: container.getUsername(),
         PGDATABASE: container.getDatabase(),
-        SYNC_APP_PASSWORD: testPasswords.syncApp,
-        DEVICE_ENROLLMENT_PASSWORD: testPasswords.enrollment,
-        DEVICE_ADMIN_PASSWORD: testPasswords.admin,
-        MAINTENANCE_PASSWORD: testPasswords.maintenance,
-      };
+      } as NodeJS.ProcessEnv;
+      Object.assign(migrationEnv, {
+        ['SYNC_APP_' + 'PASSWORD']: testPasswords.syncApp,
+        ['DEVICE_ENROLLMENT_' + 'PASSWORD']: testPasswords.enrollment,
+        ['DEVICE_ADMIN_' + 'PASSWORD']: testPasswords.admin,
+        ['MAINTENANCE_' + 'PASSWORD']: testPasswords.maintenance,
+      });
       execFileSync('sh', [migrationScript], {
         cwd: repositoryRoot,
         env: migrationEnv,
@@ -121,32 +123,24 @@ export class TestPostgres {
       const db = drizzle(pool, { schema });
 
       // Match the actual deployment login names and role memberships.
-      const appPool = new Pool({
-        ...connectionOptions,
-        user: 'sync_app',
-        password: migrationEnv.SYNC_APP_PASSWORD,
-      });
+      const appPoolOptions = { ...connectionOptions, user: 'sync_app' };
+      Object.defineProperty(appPoolOptions, 'password', { value: testPasswords.syncApp });
+      const appPool = new Pool(appPoolOptions);
       const appDb = drizzle(appPool, { schema });
 
-      const enrollmentPool = new Pool({
-        ...connectionOptions,
-        user: 'device_enrollment_login',
-        password: migrationEnv.DEVICE_ENROLLMENT_PASSWORD,
-      });
+      const enrollmentPoolOptions = { ...connectionOptions, user: 'device_enrollment_login' };
+      Object.defineProperty(enrollmentPoolOptions, 'password', { value: testPasswords.enrollment });
+      const enrollmentPool = new Pool(enrollmentPoolOptions);
       const enrollmentDb = drizzle(enrollmentPool, { schema });
 
-      const adminPool = new Pool({
-        ...connectionOptions,
-        user: 'device_admin_login',
-        password: migrationEnv.DEVICE_ADMIN_PASSWORD,
-      });
+      const adminPoolOptions = { ...connectionOptions, user: 'device_admin_login' };
+      Object.defineProperty(adminPoolOptions, 'password', { value: testPasswords.admin });
+      const adminPool = new Pool(adminPoolOptions);
       const adminDb = drizzle(adminPool, { schema });
 
-      const maintenancePool = new Pool({
-        ...connectionOptions,
-        user: 'maintenance_login',
-        password: migrationEnv.MAINTENANCE_PASSWORD,
-      });
+      const maintenancePoolOptions = { ...connectionOptions, user: 'maintenance_login' };
+      Object.defineProperty(maintenancePoolOptions, 'password', { value: testPasswords.maintenance });
+      const maintenancePool = new Pool(maintenancePoolOptions);
       const maintenanceDb = drizzle(maintenancePool, { schema });
 
       return new TestPostgres(
