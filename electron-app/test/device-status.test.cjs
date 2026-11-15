@@ -92,6 +92,7 @@ test('pending, rejected and revoked are reported as distinct proof-authenticated
         verifyStatusProof({ url, options }, pair);
         return response(200, {
           deviceId: DEVICE_ID,
+          tenantId: TENANT_ID,
           approvalStatus,
           isActive: approvalStatus !== 'revoked',
           hasActiveCredential: approvalStatus !== 'revoked',
@@ -113,6 +114,7 @@ test('network and server refusals preserve state by never calling transition cal
     async () => response(403, { code: 'DEVICE_PENDING_APPROVAL', message: 'Pending' }),
   ]) {
     let transitions = 0;
+    const failures = [];
     const service = new DeviceStatusService({
       baseUrl: 'https://sync.example.test',
       getAgentToken: () => TOKEN,
@@ -120,10 +122,13 @@ test('network and server refusals preserve state by never calling transition cal
       getPrivateKeyPem: () => pair.privateKeyPem,
       fetchImpl,
       onStatus: () => { transitions += 1; },
+      onVerificationFailure: (failure) => failures.push(failure),
     });
     const result = await service.checkStatus();
     assert.equal(result.success, false);
     assert.equal(transitions, 0);
+    assert.equal(failures.length, 1);
+    assert.ok(['NETWORK_ERROR', 'HTTP_REFUSAL'].includes(failures[0].reason));
   }
 });
 
@@ -162,4 +167,44 @@ test('refuses to query status without the enrolled private key', async () => {
   assert.equal(result.success, false);
   assert.equal(result.reason, 'DEVICE_PROOF_NOT_READY');
   assert.equal(calls, 0);
+});
+
+test('reports invalid server contracts as retry-required without a trust transition', async () => {
+  const pair = generateDeviceKeyPair();
+  let transitions = 0;
+  let failure;
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => pair.privateKeyPem,
+    fetchImpl: async () => response(200, {
+      deviceId: DEVICE_ID, tenantId: '00000000-0000-4000-8000-000000000999',
+      approvalStatus: 'approved', isActive: true, hasActiveCredential: true,
+    }),
+    onStatus: () => { transitions += 1; },
+    onVerificationFailure: (value) => { failure = value; },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'INVALID_RESPONSE');
+  assert.equal(failure.reason, 'INVALID_RESPONSE');
+  assert.equal(transitions, 0);
+});
+
+test('distinguishes absent local proof material from a network verification failure', async () => {
+  let failure;
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => null,
+    onVerificationFailure: (value) => { failure = value; },
+    fetchImpl: async () => { throw new Error('must not perform network request'); },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.reason, 'LOCAL_CREDENTIAL_INVALID');
+  assert.equal(failure.reason, 'LOCAL_CREDENTIAL_INVALID');
 });
