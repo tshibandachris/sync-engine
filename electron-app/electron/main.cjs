@@ -37,6 +37,9 @@ let pendingEnrollmentAttempt = null;
 let enrollmentAttemptError = null;
 let deviceCredential = null;
 let deviceCredentialError = null;
+let deviceCredentialState = 'unchecked';
+let deviceVerificationState = 'not_checked';
+let deviceVerificationError = null;
 let deviceStatusService = null;
 let serverHasActiveCredential = false;
 // The encrypted device credential is the only source of the private key used for request proofs.
@@ -63,10 +66,12 @@ async function initializeDeviceToken() {
   deviceToken = await tokenStore.load();
   try {
     deviceCredential = await credentialStore.load();
+    deviceCredentialState = deviceCredential ? 'available' : 'missing';
     deviceTrustState = deriveDeviceTrustState(deviceCredential);
     deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.tenantId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
   } catch (error) {
     deviceCredentialError = error;
+    deviceCredentialState = 'integrity_error';
     deviceProofReady = false;
     deviceTrustState = 'unregistered';
     console.error('[device] encrypted credential unavailable; sync remains fail-closed:', error.message);
@@ -153,9 +158,11 @@ function readStatus() {
     deviceId: deviceCredential?.deviceId || null,
     deviceThumbprint: deviceCredential?.thumbprint || null,
     deviceCredentialError: deviceCredentialError?.message || null,
+    deviceCredentialState,
+    deviceVerificationState,
+    deviceVerificationError,
     pendingEnrollment: Boolean(pendingEnrollmentAttempt),
     enrollmentAttemptError: enrollmentAttemptError?.message || null,
-    canReadLocalData: canReadLocalData(agentAuthState, deviceTrustState),
     canReadLocalData: canReadLocalData(agentAuthState, deviceTrustState),
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
     canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
@@ -276,7 +283,22 @@ function startDeviceStatusPolling() {
       getDeviceId: () => deviceCredential?.deviceId || null,
       getTenantId: () => deviceCredential?.tenantId || null,
       getPrivateKeyPem: () => deviceCredential?.privateKeyPem || null,
+      onVerificationFailure: (failure) => {
+        deviceVerificationState = 'RETRY_REQUIRED';
+        deviceVerificationError = {
+          reason: failure.reason || 'VERIFICATION_FAILED',
+          code: failure.code || null,
+          statusCode: failure.statusCode || null,
+          message: failure.error || 'La vérification du statut serveur a échoué.',
+          occurredAt: new Date().toISOString(),
+        };
+        // Keep deviceTrustState and the last confirmed server decision unchanged.
+        status = { ...status, state: 'pending', message: `Vérification du terminal à réessayer (${deviceVerificationError.reason}) : ${deviceVerificationError.message}` };
+        windowRef?.webContents.send('eden:status', readStatus());
+      },
       onStatus: (serverStatus) => {
+        deviceVerificationState = 'verified';
+        deviceVerificationError = null;
         serverHasActiveCredential = serverStatus.hasActiveCredential;
         deviceTrustState = !serverStatus.isActive ? 'deactivated' : serverStatus.approvalStatus === 'pending_approval'
           ? 'awaiting_approval' : serverStatus.approvalStatus;
@@ -497,6 +519,9 @@ app.whenReady().then(async () => {
 
       deviceCredential = storedCredential;
       deviceCredentialError = null;
+      deviceCredentialState = 'available';
+      deviceVerificationState = 'not_checked';
+      deviceVerificationError = null;
       deviceProofReady = Boolean(storedCredential.deviceId && storedCredential.tenantId && storedCredential.privateKeyPem && storedCredential.algorithm === 'ES256');
       serverHasActiveCredential = true;
       // Never infer approval from the enrollment response. The status endpoint
