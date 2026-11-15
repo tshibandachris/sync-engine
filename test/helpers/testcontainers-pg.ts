@@ -168,12 +168,26 @@ export class TestPostgres {
   }
 
   async stop(): Promise<void> {
-    await this.maintenancePool.end();
-    await this.adminPool.end();
-    await this.enrollmentPool.end();
-    await this.appPool.end();
-    await this.pool.end();
-    await this.container.stop();
+    const results = await Promise.allSettled([
+      this.maintenancePool.end(),
+      this.adminPool.end(),
+      this.enrollmentPool.end(),
+      this.appPool.end(),
+      this.pool.end(),
+    ]);
+    const cleanupErrors = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason);
+
+    try {
+      await this.container.stop();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Test PostgreSQL resource cleanup failed');
+    }
   }
 }
 
