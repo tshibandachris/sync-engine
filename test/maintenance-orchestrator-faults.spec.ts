@@ -26,6 +26,7 @@ const storage = {} as AttachmentStorage;
 // Service simulé : chaque étape note son passage et renvoie des compteurs reconnaissables.
 function fakeService(calls: string[], over: Partial<MaintenanceServiceLike> = {}): MaintenanceServiceLike {
   return {
+    purgeExpiredDeviceProofNonces: async () => { calls.push('nonces'); return { deleted: 1 }; },
     purgeSyncLogs: async () => {
       calls.push('syncLogs');
       return { logsDeleted: 2 };
@@ -66,7 +67,7 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
   });
 
   const run = (service: MaintenanceServiceLike) =>
-    runMaintenanceCycle({ pool: pg.pool as Pool, db: pg.appDb, storage, service });
+    runMaintenanceCycle({ pool: pg.pool as Pool, db: pg.maintenanceDb, storage, service });
 
   it('une étape en échec ne bloque pas les suivantes et ne perd pas les compteurs acquis', async () => {
     const calls: string[] = [];
@@ -78,7 +79,7 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
       }),
     );
 
-    expect(calls).toEqual(['pending', 'tombstones', 'storage', 'scan']);
+    expect(calls).toEqual(['nonces', 'pending', 'tombstones', 'storage', 'scan']);
     expect(report.tenantsFailed).toBe(1);
     expect(report.tenantsSucceeded).toBe(0);
     const row = report.perTenant[0];
@@ -92,6 +93,24 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
     expect(row.orphansFound).toBe(1);
   });
 
+  it('une purge de nonces en échec est signalée sans bloquer les autres étapes', async () => {
+    const calls: string[] = [];
+    const report = await run(
+      fakeService(calls, {
+        purgeExpiredDeviceProofNonces: async () => {
+          throw new Error('nonce purge down');
+        },
+      }),
+    );
+
+    expect(calls).toEqual(['syncLogs', 'pending', 'tombstones', 'storage', 'scan']);
+    expect(report.tenantsFailed).toBe(1);
+    expect(report.perTenant[0].deviceProofNoncesDeleted).toBe(0);
+    expect(report.perTenant[0].error).toContain('deviceProofNonces: nonce purge down');
+    expect(report.perTenant[0].syncLogsDeleted).toBe(2);
+    expect(report.perTenant[0].orphansFound).toBe(1);
+  });
+
   it('si les tombstones échouent, la purge du stockage est sautée mais le scan tourne', async () => {
     const calls: string[] = [];
     const report = await run(
@@ -102,7 +121,7 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
       }),
     );
 
-    expect(calls).toEqual(['syncLogs', 'pending', 'scan']);
+    expect(calls).toEqual(['nonces', 'syncLogs', 'pending', 'scan']);
     const row = report.perTenant[0];
     expect(row.error).toBe('tombstones: tombstones down');
     expect(row.syncLogsDeleted).toBe(2);
@@ -180,14 +199,14 @@ describe('runMaintenanceCycle : pannes partielles et verrou', () => {
 
   it('si le déverrouillage échoue, la connexion du verrou est détruite (ce qui libère le verrou)', async () => {
     const { pool, released } = poolWithUnlock(false);
-    const report = await runMaintenanceCycle({ pool, db: pg.appDb, storage }, { tenantFilter: [] });
+    const report = await runMaintenanceCycle({ pool, db: pg.maintenanceDb, storage }, { tenantFilter: [] });
     expect(report.tenantsProcessed).toBe(0);
     expect(released).toEqual([true]);
   });
 
   it('quand le déverrouillage réussit, la connexion est rendue normalement au pool', async () => {
     const { pool, released } = poolWithUnlock(true);
-    await runMaintenanceCycle({ pool, db: pg.appDb, storage }, { tenantFilter: [] });
+    await runMaintenanceCycle({ pool, db: pg.maintenanceDb, storage }, { tenantFilter: [] });
     expect(released).toEqual([false]);
   });
 });

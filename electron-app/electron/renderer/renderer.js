@@ -21,12 +21,31 @@ function renderStatus(value) {
   else if (status.state === 'syncing') dot.classList.add('syncing');
   else if (status.state === 'pending') dot.classList.add('pending');
 
-  const label = status.state === 'syncing' ? 'Synchronisation…'
+  const label = status.syncState === 'blocked_revoked' ? 'Terminal révoqué · local uniquement'
+    : status.syncState === 'blocked_rejected' ? 'Terminal rejeté · local uniquement'
+    : status.syncState === 'blocked_deactivated' ? 'Terminal désactivé · local uniquement'
+    : status.syncState === 'blocked_proof_unavailable' ? 'Approbation confirmée · preuve ES256 requise'
+    : status.syncState === 'blocked_unapproved' ? 'Approbation requise · local uniquement'
+    : status.syncState === 'blocked_unregistered' ? 'Terminal non enregistré · local uniquement'
+    : status.state === 'syncing' ? 'Synchronisation…'
     : status.state === 'synced' ? 'Synchronisé'
     : status.state === 'pending' ? 'En attente / hors ligne' : 'Initialisation…';
   $('sync-label').textContent = label;
+  const enrollmentPanel = $('device-enrollment-panel');
+  if (enrollmentPanel) {
+    enrollmentPanel.hidden = Boolean(status.deviceId) || status.agentAuthState !== 'authenticated';
+    const enrollmentFeedback = $('device-enrollment-feedback');
+    if (status.enrollmentAttemptError) {
+      enrollmentFeedback.textContent = 'Une tentative d’enrôlement chiffrée ne peut pas être lue. Le stockage sécurisé doit être réparé avant toute nouvelle activation.';
+      enrollmentFeedback.className = 'feedback error';
+      $('register-device-button').disabled = true;
+    } else if (status.pendingEnrollment && !enrollmentFeedback.textContent) {
+      enrollmentFeedback.textContent = 'Une tentative précédente est conservée de manière chiffrée. Réutilisez le même code d’activation pour reprendre exactement la même preuve.';
+      enrollmentFeedback.className = 'feedback';
+    }
+  }
   $('sync-pill')?.setAttribute('title', status.message || label);
-  $('sync-button').disabled = status.state === 'syncing';
+  $('sync-button').disabled = status.state === 'syncing' || status.canRunSync === false;
   $('sync-button').textContent = status.state === 'syncing' ? 'Synchronisation…' : '↻ Synchroniser';
   $('metric-pending').textContent = String(status.outboxPending ?? 0);
   $('queue-detail').textContent = `${status.outboxPending ?? 0} opération(s) en attente ; ${status.outboxFailed ?? 0} en erreur.`;
@@ -174,15 +193,16 @@ async function saveProduct(event) {
 
 function renderAuthState(status) {
   const authState = status?.authState || 'storage-error';
-  $('app-shell').hidden = authState !== 'ready';
+  const localAccess = status?.canOperateLocally === true || authState === 'ready';
+  $('app-shell').hidden = !localAccess;
   $('enrollment-screen').hidden = authState !== 'enrollment-required';
-  $('storage-error-screen').hidden = authState !== 'storage-error';
-  if (authState === 'ready') initializeDashboard();
+  $('storage-error-screen').hidden = authState === 'storage-error' && !localAccess;
+  if (localAccess) initializeDashboard();
 }
 
 function handleStatus(status) {
   renderAuthState(status);
-  if (status?.authState === 'ready') renderStatus(status);
+  if (status?.authState === 'ready' || status?.canOperateLocally === true) renderStatus(status);
 }
 
 function initializeDashboard() {
@@ -202,6 +222,53 @@ function initializeDashboard() {
   $('product-search').addEventListener('input', async (event) => {
     state.query = event.target.value;
     await loadProducts();
+  });
+
+  $('device-enrollment-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = $('register-device-button');
+    const feedback = $('device-enrollment-feedback');
+    button.disabled = true;
+    button.textContent = 'Enrôlement sécurisé…';
+    feedback.className = 'feedback';
+    feedback.textContent = 'Génération de la clé P-256 et vérification du code auprès du serveur…';
+    try {
+      const result = await window.eden.registerDevice({
+        activationCode: $('activation-code').value,
+        deviceName: $('device-name').value,
+      });
+      if (!result?.success) throw new Error(result?.error || 'Enrôlement cryptographique impossible.');
+      $('activation-code').value = '';
+      feedback.className = 'feedback success';
+      feedback.textContent = `Terminal enregistré : ${result.deviceId}. Statut initial renvoyé par le serveur : ${result.approvalStatus}. Vérification du statut serveur en cours.`;
+      handleStatus(await window.eden.getStatus());
+    } catch (error) {
+      feedback.className = 'feedback error';
+      feedback.textContent = error.message || 'Enrôlement cryptographique impossible.';
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Enregistrer et sécuriser ce terminal';
+    }
+  });
+
+  $('device-status-button').addEventListener('click', async () => {
+    const button = $('device-status-button');
+    button.disabled = true;
+    button.textContent = 'Vérification…';
+    try {
+      const result = await window.eden.checkDeviceStatus();
+      if (!result?.success) {
+        setFeedback(result?.error || 'Statut du terminal indisponible. Les opérations locales sont conservées.', 'error');
+      } else {
+        handleStatus(await window.eden.getStatus());
+        setFeedback(`Statut serveur : ${result.approvalStatus}.`, 'success');
+      }
+    } catch (error) {
+      setFeedback(error.message || 'Impossible de vérifier le terminal.', 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Vérifier le terminal';
+    }
   });
   $('sync-button').addEventListener('click', async () => {
     try { renderStatus(await window.eden.refresh()); }
@@ -227,7 +294,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (!result?.success) throw new Error(result?.error || 'Enrôlement impossible.');
       $('device-token').value = '';
       feedback.className = 'feedback success';
-      feedback.textContent = 'Jeton chiffré et vérifié. Ouverture du tableau de bord…';
+      feedback.textContent = 'Session agent chiffrée et vérifiée. La caisse locale est disponible ; la synchronisation attendra l’approbation du terminal.';
       handleStatus(await window.eden.getStatus());
     } catch (error) {
       feedback.className = 'feedback error';

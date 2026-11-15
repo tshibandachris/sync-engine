@@ -59,7 +59,7 @@ describe('scanTenantOrphans', () => {
   let storage: MemStorage;
 
   beforeAll(() => {
-    svc = new SyncMaintenanceService(pg.appDb);
+    svc = new SyncMaintenanceService(pg.maintenanceDb);
     storage = new MemStorage();
   });
 

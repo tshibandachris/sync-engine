@@ -11,8 +11,8 @@ import { assertNonPrivilegedRole } from './role-guard.js';
 /**
  * CLI entry point for the maintenance cycle.
  *
- * Runs as a batch job, not as part of the API. Reads the same env vars
- * the API reads (DATABASE_URL, S3_*), builds its own pool and storage,
+ * Runs as a batch job, not as part of the API. Uses a dedicated
+ * MAINTENANCE_DATABASE_URL and restricted S3_* credentials.
  * runs one cycle, prints the report as JSON on stdout, and exits.
  *
  * Exit code:
@@ -24,8 +24,8 @@ import { assertNonPrivilegedRole } from './role-guard.js';
  * equivalent. See HANDOFF.md.
  */
 export async function bootstrapMaintenance(): Promise<number> {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error('DATABASE_URL requis.');
+  const databaseUrl = process.env.MAINTENANCE_DATABASE_URL;
+  if (!databaseUrl) throw new Error('MAINTENANCE_DATABASE_URL requis : connexion dédiée au rôle maintenance_login.');
   const bucket = process.env.S3_BUCKET;
   if (!bucket) throw new Error('S3_BUCKET requis.');
 
@@ -45,7 +45,7 @@ export async function bootstrapMaintenance(): Promise<number> {
     process.exit(1);
   }, Number(process.env.MAINTENANCE_DEADLINE_MS ?? 3_600_000));
   deadline.unref();
-  const db = drizzle(pool, { schema });
+  const maintenanceDb = drizzle(pool, { schema });
   const storage = new S3AttachmentStorage({
     bucket,
     region: process.env.S3_REGION,
@@ -60,7 +60,11 @@ export async function bootstrapMaintenance(): Promise<number> {
 
   try {
     await assertNonPrivilegedRole(pool);
-    const report: MaintenanceReport = await runMaintenanceCycle({ pool, db, storage });
+    const role = await pool.query<{ current_user: string }>('SELECT current_user');
+    if (role.rows[0]?.current_user !== 'maintenance_login') {
+      throw new Error('Refus de maintenance : MAINTENANCE_DATABASE_URL doit utiliser le rôle maintenance_login.');
+    }
+    const report: MaintenanceReport = await runMaintenanceCycle({ pool, db: maintenanceDb, storage });
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
 
     if (!report.skipped && report.tenantsProcessed === 0) {

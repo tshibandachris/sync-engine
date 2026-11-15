@@ -30,6 +30,23 @@ function validateEnrollmentCredentials(value) {
   return { token: value.token };
 }
 
+
+function validateDeviceEnrollmentInput(value) {
+  if (!isPlainRecord(value) ||
+      Object.keys(value).some((key) => !['activationCode', 'deviceName'].includes(key))) {
+    throw new Error('Invalid device enrollment input.');
+  }
+  const activationCode = typeof value.activationCode === 'string'
+    ? value.activationCode.trim().toUpperCase()
+    : '';
+  const deviceName = typeof value.deviceName === 'string' ? value.deviceName.trim() : '';
+  if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(activationCode) ||
+      !deviceName || deviceName.length > 120) {
+    throw new Error('Code d’activation ou nom du terminal invalide.');
+  }
+  return { activationCode, deviceName };
+}
+
 function validateProductInput(value) {
   if (!isPlainRecord(value) || Object.keys(value).some((key) => !PRODUCT_FIELDS.has(key))) {
     throw new Error('Invalid product input.');
@@ -74,11 +91,14 @@ function validateProductInput(value) {
 
 const api = Object.freeze({
   getStatus: () => ipcRenderer.invoke('eden:get-status'),
+  getDeviceStatus: () => ipcRenderer.invoke('eden:device:get-status'),
+  checkDeviceStatus: () => ipcRenderer.invoke('eden:device:check-status'),
   refresh: () => ipcRenderer.invoke('eden:refresh'),
   getDashboard: () => ipcRenderer.invoke('eden:dashboard'),
   listProducts: (search = '') => ipcRenderer.invoke('eden:products:list', validateSearchQuery(search)),
   saveProduct: (product) => ipcRenderer.invoke('eden:products:save', validateProductInput(product)),
   enrollDevice: (credentials) => ipcRenderer.invoke('eden:device:enroll', validateEnrollmentCredentials(credentials)),
+  registerDevice: (input) => ipcRenderer.invoke('eden:device:register', validateDeviceEnrollmentInput(input)),
   onStatus: (callback) => {
     if (typeof callback !== 'function') throw new TypeError('onStatus expects a function.');
     const listener = (_event, value) => callback(value);
