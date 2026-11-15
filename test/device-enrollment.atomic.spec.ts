@@ -242,9 +242,9 @@ describe('Device enrollment atomic pairing-code redemption', () => {
     const privileges = await pg.pool.query(
       `SELECT
         has_function_privilege('sync_app', $1, 'EXECUTE') AS sync_allowed,
-        has_function_privilege('device_enrollment_test', $1, 'EXECUTE') AS executor_allowed,
-        pg_has_role('device_enrollment_test', 'sync_app', 'MEMBER') AS executor_is_sync_member,
-        pg_has_role('device_enrollment_test', 'device_enrollment_executor', 'SET') AS can_set_executor_role`,
+        has_function_privilege('device_enrollment_login', $1, 'EXECUTE') AS executor_allowed,
+        pg_has_role('device_enrollment_login', 'sync_app', 'MEMBER') AS executor_is_sync_member,
+        pg_has_role('device_enrollment_login', 'device_enrollment_executor', 'SET') AS can_set_executor_role`,
       [signature],
     );
     expect(privileges.rows[0]).toEqual({
@@ -268,18 +268,18 @@ describe('Device enrollment atomic pairing-code redemption', () => {
   it('gives the enrollment login no direct table or helper-function access', async () => {
     const privileges = await pg.pool.query(`
       SELECT
-        has_table_privilege('device_enrollment_test', 'public.tenants', 'SELECT') AS can_read_tenants,
-        has_table_privilege('device_enrollment_test', 'public.devices', 'SELECT') AS can_read_devices,
-        has_table_privilege('device_enrollment_test', 'public.devices', 'INSERT') AS can_insert_devices,
-        has_table_privilege('device_enrollment_test', 'public.device_credentials', 'SELECT') AS can_read_credentials,
-        has_table_privilege('device_enrollment_test', 'public.device_credentials', 'INSERT') AS can_insert_credentials,
-        has_table_privilege('device_enrollment_test', 'public.device_approval_events', 'INSERT') AS can_insert_events,
-        has_table_privilege('device_enrollment_test', 'public.device_proof_nonces', 'SELECT') AS can_read_nonces,
-        has_table_privilege('device_enrollment_test', 'public.device_proof_nonces', 'INSERT') AS can_insert_nonces,
-        has_table_privilege('device_enrollment_test', 'public.device_enrollment_attempts', 'SELECT') AS can_read_attempts,
-        has_table_privilege('device_enrollment_test', 'public.device_enrollment_attempts', 'INSERT') AS can_insert_attempts,
-        has_function_privilege('device_enrollment_test', 'public.redeem_device_pairing_code(text)', 'EXECUTE') AS can_redeem_pairing_directly,
-        has_function_privilege('device_enrollment_test', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE') AS can_create_device_directly
+        has_table_privilege('device_enrollment_login', 'public.tenants', 'SELECT') AS can_read_tenants,
+        has_table_privilege('device_enrollment_login', 'public.devices', 'SELECT') AS can_read_devices,
+        has_table_privilege('device_enrollment_login', 'public.devices', 'INSERT') AS can_insert_devices,
+        has_table_privilege('device_enrollment_login', 'public.device_credentials', 'SELECT') AS can_read_credentials,
+        has_table_privilege('device_enrollment_login', 'public.device_credentials', 'INSERT') AS can_insert_credentials,
+        has_table_privilege('device_enrollment_login', 'public.device_approval_events', 'INSERT') AS can_insert_events,
+        has_table_privilege('device_enrollment_login', 'public.device_proof_nonces', 'SELECT') AS can_read_nonces,
+        has_table_privilege('device_enrollment_login', 'public.device_proof_nonces', 'INSERT') AS can_insert_nonces,
+        has_table_privilege('device_enrollment_login', 'public.device_enrollment_attempts', 'SELECT') AS can_read_attempts,
+        has_table_privilege('device_enrollment_login', 'public.device_enrollment_attempts', 'INSERT') AS can_insert_attempts,
+        has_function_privilege('device_enrollment_login', 'public.redeem_device_pairing_code(text)', 'EXECUTE') AS can_redeem_pairing_directly,
+        has_function_privilege('device_enrollment_login', 'public.register_device_enrollment(uuid,uuid,uuid,uuid,character varying,character varying,jsonb)', 'EXECUTE') AS can_create_device_directly
     `);
     expect(privileges.rows[0]).toEqual({
       can_read_tenants: false,
