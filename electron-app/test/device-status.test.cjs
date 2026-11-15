@@ -119,6 +119,7 @@ test('network and server refusals preserve state by never calling transition cal
       baseUrl: 'https://sync.example.test',
       getAgentToken: () => TOKEN,
       getDeviceId: () => DEVICE_ID,
+      getTenantId: () => TENANT_ID,
       getPrivateKeyPem: () => pair.privateKeyPem,
       fetchImpl,
       onStatus: () => { transitions += 1; },
@@ -165,7 +166,7 @@ test('refuses to query status without the enrolled private key', async () => {
   });
   const result = await service.checkStatus();
   assert.equal(result.success, false);
-  assert.equal(result.reason, 'DEVICE_PROOF_NOT_READY');
+  assert.equal(result.reason, 'LOCAL_CREDENTIAL_INVALID');
   assert.equal(calls, 0);
 });
 
