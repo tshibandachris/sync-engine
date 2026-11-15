@@ -27,7 +27,11 @@ function renderStatus(value) {
   });
   $('new-product').hidden = !canOperateLocally;
   $('device-status-button').hidden = !status.deviceId;
-  if (!canOperateLocally) state.cart.clear();
+  if (!canOperateLocally) {
+    state.cart.clear();
+    if (dashboardInitialized) renderCart();
+    if ($('product-dialog')?.open) closeProductDialog();
+  }
   const dot = $('sync-dot');
   dot.className = 'dot';
   if (status.state === 'synced') dot.classList.add('synced');
@@ -329,9 +333,16 @@ function renderAuthState(status) {
 }
 
 function handleStatus(status) {
+  const previousTrustState = state.status?.deviceTrustState;
   renderAuthState(status);
-  if (status?.authState === 'ready' || status?.canOperateLocally === true) renderStatus(status);
-  if (dashboardInitialized) void loadPosState();
+  if (status?.authState === 'ready' || status?.canReadLocalData === true) renderStatus(status);
+  if (dashboardInitialized && status?.canReadLocalData === true) {
+    if (previousTrustState !== status.deviceTrustState) {
+      void loadProducts();
+      void refreshDashboard();
+    }
+    void loadPosState();
+  }
 }
 
 function initializeDashboard() {
