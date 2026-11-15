@@ -224,9 +224,10 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
   }
 
   beforeAll(async () => {
-      originalEnvSnapshot = captureEnv(E2E_ENV_KEYS);
-      try {
-        pg = await startTestPostgres();
+    const envSnapshot = captureEnv(E2E_ENV_KEYS);
+    originalEnvSnapshot = envSnapshot;
+    try {
+      pg = await startTestPostgres();
       await assertEnrollmentDatabaseIdentity(pg.enrollmentPool);
       await assertDeviceAdminDatabaseIdentity(pg.adminPool);
 
@@ -261,7 +262,7 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
       await app.listen(0, '127.0.0.1');
       apiBaseUrl = await app.getUrl();
     } catch (error) {
-      restoreEnv(originalEnvSnapshot);
+      restoreEnv(envSnapshot);
       throw error;
     }
   }, 120_000);
@@ -279,6 +280,20 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
         expect(captureEnv(E2E_ENV_KEYS)).toEqual(originalEnvSnapshot);
       }
     }
+  });
+
+  it('T-B03-2 — restores environment when E2E setup throws', () => {
+    const snapshot = captureEnv(E2E_ENV_KEYS);
+    try {
+      process.env.JWKS_URL = 'https://invalid.test/jwks.json';
+      process.env.JWT_SECRET = 'temporary-test-secret';
+      throw new Error('simulated E2E setup failure');
+    } catch (error) {
+      expect((error as Error).message).toBe('simulated E2E setup failure');
+    } finally {
+      restoreEnv(snapshot);
+    }
+    expect(captureEnv(E2E_ENV_KEYS)).toEqual(snapshot);
   });
 
   it('F-01 — starts from an empty PostgreSQL schema after the production migration runner', () => {
