@@ -25,6 +25,7 @@ class DeviceStatusService {
     getPrivateKeyPem,
     fetchImpl = fetch,
     onStatus = () => {},
+    onVerificationFailure = () => {},
     timeoutMs = 10000,
   }) {
     this.baseUrl = baseUrl;
@@ -34,9 +35,15 @@ class DeviceStatusService {
     this.getPrivateKeyPem = getPrivateKeyPem;
     this.fetchImpl = fetchImpl;
     this.onStatus = onStatus;
+    this.onVerificationFailure = onVerificationFailure;
     this.timeoutMs = timeoutMs;
     this.pollTimer = null;
     this.checkInProgress = false;
+  }
+
+  reportFailure(result) {
+    try { this.onVerificationFailure(result); } catch { /* Reporting must not alter trust verification. */ }
+    return result;
   }
 
   async checkStatus() {
@@ -45,14 +52,14 @@ class DeviceStatusService {
     const deviceId = this.getDeviceId?.();
     const privateKeyPem = this.getPrivateKeyPem?.();
     if (!token || !deviceId) {
-      return { success: false, reason: 'NOT_ENROLLED_OR_UNAUTHENTICATED' };
+      return this.reportFailure({ success: false, reason: 'MISSING_CREDENTIAL', error: 'Device token or enrolled device ID is unavailable.' });
     }
     if (typeof privateKeyPem !== 'string' || !privateKeyPem.includes('BEGIN PRIVATE KEY')) {
-      return { success: false, reason: 'DEVICE_PROOF_NOT_READY' };
+      return this.reportFailure({ success: false, reason: 'LOCAL_CREDENTIAL_INVALID', error: 'The enrolled device proof key is unavailable.' });
     }
     const tenantId = this.getTenantId?.();
     if (typeof tenantId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tenantId)) {
-      return { success: false, reason: 'TENANT_BINDING_MISSING' };
+      return this.reportFailure({ success: false, reason: 'LOCAL_CREDENTIAL_INVALID', error: 'The enrolled tenant binding is unavailable.' });
     }
 
     this.checkInProgress = true;
@@ -73,18 +80,18 @@ class DeviceStatusService {
       const raw = await response.text();
       let body;
       try { body = raw ? JSON.parse(raw) : {}; }
-      catch { throw new Error(`Device status API returned invalid JSON (HTTP ${response.status}).`); }
+      catch { const error = new Error(`Device status API returned invalid JSON (HTTP ${response.status}).`); error.code = 'INVALID_JSON'; throw error; }
       if (!response.ok) {
         const error = new Error(body?.message || body?.code || `HTTP ${response.status}`);
         error.status = response.status;
-        error.code = body?.code || null;
+        error.code = body?.code || 'HTTP_REFUSAL';
         throw error;
       }
       if (!body || body.deviceId !== deviceId || body.tenantId !== tenantId ||
           !APPROVAL_STATES.has(body.approvalStatus) ||
           typeof body.isActive !== 'boolean' ||
           typeof body.hasActiveCredential !== 'boolean') {
-        throw new Error('Device status response does not match the expected server contract.');
+        const error = new Error('Device status response does not match the expected server contract.'); error.code = 'INVALID_RESPONSE'; throw error;
       }
 
       const status = {
@@ -98,8 +105,12 @@ class DeviceStatusService {
       this.onStatus(status);
       return { success: true, ...status };
     } catch (error) {
-      // A network/auth/API failure never changes trust state or local data.
-      return { success: false, error: error.message, statusCode: error.status || null, code: error.code || null };
+      // A failed verification is operational state only: it never changes the last confirmed trust decision or local data.
+      const reason = error.code === 'INVALID_JSON' || error.code === 'INVALID_RESPONSE' ? 'INVALID_RESPONSE'
+        : error.status ? 'HTTP_REFUSAL'
+        : error.name === 'AbortError' || error.name === 'TimeoutError' ? 'NETWORK_TIMEOUT'
+        : 'NETWORK_ERROR';
+      return this.reportFailure({ success: false, reason, error: error.message, statusCode: error.status || null, code: error.code || null });
     } finally {
       this.checkInProgress = false;
     }
