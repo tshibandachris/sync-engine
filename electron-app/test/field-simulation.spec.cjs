@@ -7,6 +7,10 @@ const { spawnSync } = require('node:child_process');
 
 const { openDatabase, applyPulledPage, getCursor } = require('../electron/db/client.cjs');
 const { pullChanges, pushChanges } = require('../electron/sync/api-client.cjs');
+const { generateDeviceKeyPair } = require('../electron/auth/device-crypto.cjs');
+
+const DEVICE_ID = '00000000-0000-4000-8000-000000000111';
+const DEVICE_KEYS = generateDeviceKeyPair();
 const { enqueueOutbox, preparePushBatch, getOutboxStatus } = require('../electron/sync/outbox.cjs');
 
 function fixture() {
@@ -103,6 +107,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
 
     const pulled = await pullChanges({
       baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
+      deviceId: DEVICE_ID, privateKeyPem: DEVICE_KEYS.privateKeyPem,
       lastPulledAt: 0, fetchImpl,
     });
     applyPulledPage(f.db, pulled);
@@ -119,6 +124,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
     await assert.rejects(
       pushChanges({
         baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
+        deviceId: DEVICE_ID, privateKeyPem: DEVICE_KEYS.privateKeyPem,
         idempotencyKey: batch.idempotencyKey, payload: batch.payload, fetchImpl,
       }),
       /Simulated network cut/,
@@ -133,6 +139,7 @@ test('Scénario 2 — coupure au milieu du cycle Pull/Push : page atomique, outb
     await assert.rejects(
       pullChanges({
         baseUrl: 'http://127.0.0.1:3000', token: 'field-test-token',
+        deviceId: DEVICE_ID, privateKeyPem: DEVICE_KEYS.privateKeyPem,
         lastPulledAt: 40, fetchImpl: async () => { throw new TypeError('Simulated pull disconnect'); },
       }),
       /Simulated pull disconnect/,

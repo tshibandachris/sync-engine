@@ -2,17 +2,9 @@ name: Electron client CI
 
 on:
   pull_request:
-    branches: [main]
-    paths:
-      - 'electron-app/**'
-      - 'docs/electron-architecture.md'
-      - '.github/workflows/electron-ci.yml'
+    branches: [main, validation/full-device-approval-signed-sync-v4]
   push:
-    branches: [main]
-    paths:
-      - 'electron-app/**'
-      - 'docs/electron-architecture.md'
-      - '.github/workflows/electron-ci.yml'
+    branches: [main, fix/maintenance-boundary-migration-resume-v1]
 
 jobs:
   electron-check:

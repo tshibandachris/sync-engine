@@ -1,0 +1,102 @@
+name: sync-engine-e2e-test
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: sync_engine_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - test_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sync_engine_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_NAME: sync_engine_test
+      SYNC_APP_PASSWORD: ${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}
+      DEVICE_ENROLLMENT_PASSWORD: ${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}
+      DEVICE_ADMIN_PASSWORD: ${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}
+      MAINTENANCE_PASSWORD: ${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+    restart: "no"
+
+  sync-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sync-engine:e2e-test
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: test
+      PORT: 3000
+      DATABASE_URL: postgres://sync_app:${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}@db:5432/sync_engine_test
+      DEVICE_ENROLLMENT_DATABASE_URL: postgres://device_enrollment_login:${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}@db:5432/sync_engine_test
+      DEVICE_ADMIN_DATABASE_URL: postgres://device_admin_login:${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}@db:5432/sync_engine_test
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required for test HS256}
+      AUTH_ALLOW_DEV_TOKEN: "false"
+      METRICS_PORT: 9465
+      OPS_METRICS_TOKEN: ${OPS_METRICS_TOKEN:?OPS_METRICS_TOKEN is required}
+      S3_BUCKET: sync-engine-e2e-test
+      S3_REGION: us-east-1
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:8334
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+    ports:
+      - "127.0.0.1:3300:3000"
+      - "127.0.0.1:9465:9465"
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+    volumes:
+      - test_object_data:/data
+    ports:
+      - "127.0.0.1:8334:9000"
+      - "127.0.0.1:9334:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      mc alias set test http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+      mc mb --ignore-existing test/sync-engine-e2e-test
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+    restart: "no"
+
+volumes:
+  test_pgdata:
+    name: sync_engine_e2e_test_pgdata
+  test_object_data:
+    name: sync_engine_e2e_test_object_data

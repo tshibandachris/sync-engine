@@ -1,5 +1,5 @@
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { withTenant } from './with-tenant.js';
 import type { AttachmentStorage } from './attachment-storage.js';
@@ -33,6 +33,10 @@ export interface PurgeTenantStorageResult {
 }
 
 export interface PurgePendingAttachmentsResult {
+  deleted: number;
+}
+
+export interface PurgeDeviceProofNoncesResult {
   deleted: number;
 }
 
@@ -70,32 +74,29 @@ export class SyncMaintenanceService {
     this.db = db;
   }
 
-  async purge(options: PurgeOptions = {}): Promise<PurgeResult> {
+  async purge(tenantId: string, options: PurgeOptions = {}): Promise<PurgeResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
     const ttlIdempotencyDays = options.ttlIdempotencyDays ?? 7;
     const ttlConflictsDays = options.ttlConflictsDays ?? 30;
-
     if (ttlIdempotencyDays < 0 || ttlConflictsDays < 0) {
       throw new Error('TTL ne peut pas etre negatif.');
     }
 
-    const result = await this.db.execute(sql`
-      SELECT purge_sync_tables(
-        ${ttlIdempotencyDays}::int,
-        ${ttlConflictsDays}::int
-      ) AS result
-    `);
-
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    const payload = row?.result as Record<string, unknown> | undefined;
-
-    if (!payload) {
-      throw new Error('purge_sync_tables a retourne un resultat vide.');
-    }
-
-    return {
-      idempotencyDeleted: Number(payload.idempotency_deleted ?? 0),
-      conflictsDeleted: Number(payload.conflicts_deleted ?? 0),
-    };
+    return withTenant(this.db, tenantId, async (tx) => {
+      const result = await tx.execute(sql`
+        SELECT public.purge_sync_tables(
+          ${ttlIdempotencyDays}::int,
+          ${ttlConflictsDays}::int
+        ) AS result
+      `);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      const payload = row?.result as Record<string, unknown> | undefined;
+      if (!payload) throw new Error('purge_sync_tables a retourne un resultat vide.');
+      return {
+        idempotencyDeleted: Number(payload.idempotency_deleted ?? 0),
+        conflictsDeleted: Number(payload.conflicts_deleted ?? 0),
+      };
+    }, { registerTenant: false });
   }
 
   async purgeTenantTombstones(
@@ -126,7 +127,7 @@ export class SyncMaintenanceService {
         ? (payload.orphaned_object_keys as string[])
         : [],
     };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -141,7 +142,7 @@ export class SyncMaintenanceService {
     ttlDays: number = 30,
   ): Promise<PurgeSyncLogsResult> {
     if (!tenantId) throw new Error('tenantId requis.');
-    if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
+    if (ttlDays < 30) throw new Error('ttl_days doit etre >= 30.');
 
     return withTenant(this.db, tenantId, async (tx) => {
       const result = await tx.execute(sql`
@@ -156,7 +157,7 @@ export class SyncMaintenanceService {
       }
 
       return { logsDeleted: Number(payload.logs_deleted ?? 0) };
-    });
+    }, { registerTenant: false });
   }
 
   /**
@@ -188,6 +189,32 @@ export class SyncMaintenanceService {
   }
 
   /**
+   * Removes only expired replay nonces for one tenant. The database function
+   * owns the narrowly scoped DELETE capability; sync_app has no table DELETE.
+   */
+  async purgeExpiredDeviceProofNonces(
+    tenantId: string,
+    batchSize: number = 5000,
+  ): Promise<PurgeDeviceProofNoncesResult> {
+    if (!tenantId) throw new Error('tenantId requis.');
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 10000) {
+      throw new Error('batchSize doit etre compris entre 1 et 10000.');
+    }
+
+    return withTenant(this.db, tenantId, async (tx) => {
+      const result = await tx.execute(sql`
+        SELECT public.purge_expired_device_proof_nonces(
+          ${tenantId}::uuid,
+          ${batchSize}::int
+        ) AS deleted
+      `);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new Error('purge_expired_device_proof_nonces a retourne un resultat vide.');
+      return { deleted: Number(row.deleted ?? 0) };
+    }, { registerTenant: false });
+  }
+
+  /**
    * Lists every object under the tenant's S3 prefix, cross-checks
    * against the object_key values that attachments rows still reference,
    * and reports (or deletes) the difference.
@@ -216,12 +243,11 @@ export class SyncMaintenanceService {
     const scanned = objects.length;
 
     const known = await withTenant(this.db, tenantId, async (tx) => {
-      const rows = await tx
-        .select({ objectKey: schema.attachments.objectKey })
-        .from(schema.attachments)
-        .where(eq(schema.attachments.tenantId, tenantId));
-      return new Set(rows.map((r) => r.objectKey));
-    });
+      const result = await tx.execute(sql`
+        SELECT public.list_tenant_attachment_object_keys(${tenantId}::uuid) AS object_key
+      `);
+      return new Set(result.rows.map((row) => String((row as Record<string, unknown>).object_key)));
+    }, { registerTenant: false });
 
     const orphans = objects
       .map((o) => o.key)
@@ -272,9 +298,8 @@ export class SyncMaintenanceService {
    * either the client never PUT anything, or the object was written but
    * never confirmed, in which case scanTenantOrphans will find it later.
    *
-   * Simple DELETE, no SECURITY DEFINER: sync_app holds the DELETE
-   * privilege on attachments (migration 011), and RLS scopes the row set
-   * to the tenant once withTenant has set the context.
+   * A narrow SECURITY DEFINER function owns the DELETE privilege; the
+   * maintenance login can invoke it only with a matching tenant context.
    */
   async purgeTenantPendingAttachments(
     tenantId: string,
@@ -283,18 +308,16 @@ export class SyncMaintenanceService {
     if (!tenantId) throw new Error('tenantId requis.');
     if (ttlDays < 0) throw new Error('ttlDays doit etre >= 0.');
 
-    const cutoffMs = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
-
     return withTenant(this.db, tenantId, async (tx) => {
-      const removed = await tx
-        .delete(schema.attachments)
-        .where(and(
-          eq(schema.attachments.tenantId, tenantId),
-          eq(schema.attachments.status, 'pending'),
-          lt(schema.attachments.createdAt, cutoffMs),
-        ))
-        .returning({ id: schema.attachments.id });
-      return { deleted: removed.length };
-    });
+      const result = await tx.execute(sql`
+        SELECT public.purge_tenant_pending_attachments(
+          ${tenantId}::uuid,
+          ${ttlDays}::int
+        ) AS deleted
+      `);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new Error('purge_tenant_pending_attachments a retourne un resultat vide.');
+      return { deleted: Number(row.deleted ?? 0) };
+    }, { registerTenant: false });
   }
 }

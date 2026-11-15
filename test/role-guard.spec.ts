@@ -28,8 +28,16 @@ describe('assertNonPrivilegedRole', () => {
     await expect(assertNonPrivilegedRole(pool)).rejects.toThrow(/ops/);
   });
 
-  it('accepte un role ordinaire', async () => {
-    const pool = fakePool([{ role: 'sync_app', rolsuper: false, rolbypassrls: false }]);
+  it('accepte maintenance_login avec sa seule appartenance autorisee', async () => {
+    const pool = fakePool([{
+      role: 'maintenance_login',
+      rolsuper: false,
+      rolbypassrls: false,
+      has_allowed_membership: true,
+      has_unexpected_membership: false,
+      allowed_membership_options_ok: true,
+      direct_membership_count: 1,
+    }]);
     await expect(assertNonPrivilegedRole(pool)).resolves.toBeUndefined();
   });
 
@@ -41,7 +49,7 @@ describe('assertNonPrivilegedRole', () => {
     await expect(assertNonPrivilegedRole(pg.pool as Pool)).rejects.toThrow(/superuser ou BYPASSRLS/);
   });
 
-  it('accepte le vrai role sync_app', async () => {
-    await expect(assertNonPrivilegedRole(pg.appPool as Pool)).resolves.toBeUndefined();
+  it('accepte le vrai role maintenance_login', async () => {
+    await expect(assertNonPrivilegedRole(pg.maintenancePool as Pool)).resolves.toBeUndefined();
   });
 });

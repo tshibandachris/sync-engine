@@ -19,13 +19,30 @@ services:
       - "3000:3000"
       - "9464:9464"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     labels:
       ofelia.enabled: "true"
       # Six fields: ofelia's cron starts with seconds.
       ofelia.job-exec.maintenance.schedule: "0 0 3 * * *"
       ofelia.job-exec.maintenance.command: "node dist/maintenance-runner.js"
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SYNC_APP_PASSWORD: ${SYNC_APP_PASSWORD:?SYNC_APP_PASSWORD is required}
+      DEVICE_ENROLLMENT_PASSWORD: ${DEVICE_ENROLLMENT_PASSWORD:?DEVICE_ENROLLMENT_PASSWORD is required}
+      DEVICE_ADMIN_PASSWORD: ${DEVICE_ADMIN_PASSWORD:?DEVICE_ADMIN_PASSWORD is required}
+      MAINTENANCE_PASSWORD: ${MAINTENANCE_PASSWORD:?MAINTENANCE_PASSWORD is required}
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+    restart: "no"
 
   ofelia:
     image: ghcr.io/netresearch/ofelia:1.0.1
@@ -42,7 +59,7 @@ services:
     environment:
       POSTGRES_DB: sync_engine
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
