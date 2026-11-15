@@ -64,7 +64,7 @@ async function initializeDeviceToken() {
   try {
     deviceCredential = await credentialStore.load();
     deviceTrustState = deriveDeviceTrustState(deviceCredential);
-    deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
+    deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.tenantId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
   } catch (error) {
     deviceCredentialError = error;
     deviceProofReady = false;
@@ -274,6 +274,7 @@ function startDeviceStatusPolling() {
       baseUrl: process.env.EDEN_SYNC_URL,
       getAgentToken: () => deviceToken,
       getDeviceId: () => deviceCredential?.deviceId || null,
+      getTenantId: () => deviceCredential?.tenantId || null,
       getPrivateKeyPem: () => deviceCredential?.privateKeyPem || null,
       onStatus: (serverStatus) => {
         serverHasActiveCredential = serverStatus.hasActiveCredential;
@@ -480,6 +481,7 @@ app.whenReady().then(async () => {
 
       const credential = {
         deviceId: serverEnrollment.deviceId,
+        tenantId: serverEnrollment.tenantId,
         privateKeyPem: attempt.privateKeyPem,
         publicKeyPem: attempt.publicKeyPem,
         thumbprint: attempt.thumbprint,
@@ -488,13 +490,14 @@ app.whenReady().then(async () => {
       await credentialStore.save(credential);
       const storedCredential = await credentialStore.load();
       if (!storedCredential || storedCredential.deviceId !== serverEnrollment.deviceId ||
+          storedCredential.tenantId !== serverEnrollment.tenantId ||
           storedCredential.thumbprint !== attempt.thumbprint) {
         throw new Error('La vérification de la credential chiffrée a échoué.');
       }
 
       deviceCredential = storedCredential;
       deviceCredentialError = null;
-      deviceProofReady = Boolean(storedCredential.deviceId && storedCredential.privateKeyPem && storedCredential.algorithm === 'ES256');
+      deviceProofReady = Boolean(storedCredential.deviceId && storedCredential.tenantId && storedCredential.privateKeyPem && storedCredential.algorithm === 'ES256');
       serverHasActiveCredential = true;
       // Never infer approval from the enrollment response. The status endpoint
       // is queried immediately and remains the only source of trust transitions.

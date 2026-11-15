@@ -21,6 +21,7 @@ class DeviceStatusService {
     baseUrl,
     getAgentToken,
     getDeviceId,
+    getTenantId,
     getPrivateKeyPem,
     fetchImpl = fetch,
     onStatus = () => {},
@@ -29,6 +30,7 @@ class DeviceStatusService {
     this.baseUrl = baseUrl;
     this.getAgentToken = getAgentToken;
     this.getDeviceId = getDeviceId;
+    this.getTenantId = getTenantId;
     this.getPrivateKeyPem = getPrivateKeyPem;
     this.fetchImpl = fetchImpl;
     this.onStatus = onStatus;
@@ -47,6 +49,10 @@ class DeviceStatusService {
     }
     if (typeof privateKeyPem !== 'string' || !privateKeyPem.includes('BEGIN PRIVATE KEY')) {
       return { success: false, reason: 'DEVICE_PROOF_NOT_READY' };
+    }
+    const tenantId = this.getTenantId?.();
+    if (typeof tenantId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tenantId)) {
+      return { success: false, reason: 'TENANT_BINDING_MISSING' };
     }
 
     this.checkInProgress = true;
@@ -74,7 +80,7 @@ class DeviceStatusService {
         error.code = body?.code || null;
         throw error;
       }
-      if (!body || body.deviceId !== deviceId ||
+      if (!body || body.deviceId !== deviceId || body.tenantId !== tenantId ||
           !APPROVAL_STATES.has(body.approvalStatus) ||
           typeof body.isActive !== 'boolean' ||
           typeof body.hasActiveCredential !== 'boolean') {
@@ -83,6 +89,7 @@ class DeviceStatusService {
 
       const status = {
         deviceId: body.deviceId,
+        tenantId: body.tenantId,
         approvalStatus: body.approvalStatus,
         isActive: body.isActive,
         hasActiveCredential: body.hasActiveCredential,

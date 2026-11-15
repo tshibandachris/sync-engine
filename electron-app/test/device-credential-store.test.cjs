@@ -32,6 +32,7 @@ function credential(deviceId = crypto.randomUUID()) {
   const pair = generateDeviceKeyPair();
   return {
     deviceId,
+    tenantId: crypto.randomUUID(),
     privateKeyPem: pair.privateKeyPem,
     publicKeyPem: pair.publicKeyPem,
     thumbprint: pair.thumbprint,
@@ -48,6 +49,18 @@ test('stores device ID and private key only as OS-encrypted bytes and verifies t
     assert.notEqual(bytes.toString('utf8'), JSON.stringify(value));
     assert.match(bytes.toString('utf8'), /^encrypted:/);
     assert.deepEqual(await f.store.load(), value);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('rejects credentials without a durable tenant binding', async () => {
+  const f = fixture();
+  try {
+    const value = credential();
+    delete value.tenantId;
+    await assert.rejects(f.store.save(value), /invalid shape/);
+    assert.equal(fs.existsSync(path.join(f.root, 'EdenGestion', CREDENTIAL_FILENAME)), false);
   } finally {
     f.cleanup();
   }

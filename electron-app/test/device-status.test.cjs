@@ -7,6 +7,7 @@ const { generateDeviceKeyPair } = require('../electron/auth/device-crypto.cjs');
 const { DeviceStatusService } = require('../electron/auth/device-status.cjs');
 
 const DEVICE_ID = '00000000-0000-4000-8000-000000000111';
+const TENANT_ID = '00000000-0000-4000-8000-000000000222';
 const TOKEN = 'agent-jwt';
 
 function response(status, body) {
@@ -48,11 +49,13 @@ test('status polling signs the exact status path with the enrolled device key', 
     baseUrl: 'https://sync.example.test/',
     getAgentToken: () => TOKEN,
     getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
     getPrivateKeyPem: () => pair.privateKeyPem,
     fetchImpl: async (url, options) => {
       request = { url, options };
       return response(200, {
         deviceId: DEVICE_ID,
+        tenantId: TENANT_ID,
         approvalStatus: 'approved',
         isActive: true,
         hasActiveCredential: true,
@@ -65,6 +68,7 @@ test('status polling signs the exact status path with the enrolled device key', 
   const result = await service.checkStatus();
   assert.equal(result.success, true);
   assert.equal(result.approvalStatus, 'approved');
+  assert.equal(result.tenantId, TENANT_ID);
   assert.equal(request.url, 'https://sync.example.test/api/v1/devices/status');
   assert.equal(request.options.method, 'GET');
   assert.equal(request.options.headers.authorization, 'Bearer ' + TOKEN);
@@ -82,6 +86,7 @@ test('pending, rejected and revoked are reported as distinct proof-authenticated
       baseUrl: 'https://sync.example.test',
       getAgentToken: () => TOKEN,
       getDeviceId: () => DEVICE_ID,
+      getTenantId: () => TENANT_ID,
       getPrivateKeyPem: () => pair.privateKeyPem,
       fetchImpl: async (url, options) => {
         verifyStatusProof({ url, options }, pair);
@@ -97,6 +102,7 @@ test('pending, rejected and revoked are reported as distinct proof-authenticated
     const result = await service.checkStatus();
     assert.equal(result.success, true);
     assert.equal(observed.approvalStatus, approvalStatus);
+    assert.equal(observed.tenantId, TENANT_ID);
   }
 });
 
@@ -119,6 +125,28 @@ test('network and server refusals preserve state by never calling transition cal
     assert.equal(result.success, false);
     assert.equal(transitions, 0);
   }
+});
+
+test('rejects a status response bound to another tenant without changing trust state', async () => {
+  const pair = generateDeviceKeyPair();
+  let transitions = 0;
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => pair.privateKeyPem,
+    fetchImpl: async () => response(200, {
+      deviceId: DEVICE_ID,
+      tenantId: '00000000-0000-4000-8000-000000000999',
+      approvalStatus: 'approved', isActive: true, hasActiveCredential: true,
+    }),
+    onStatus: () => { transitions += 1; },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.success, false);
+  assert.match(result.error, /expected server contract/);
+  assert.equal(transitions, 0);
 });
 
 test('refuses to query status without the enrolled private key', async () => {

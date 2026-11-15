@@ -47,6 +47,8 @@ test('deactivated terminals fail closed for writes and retain read access', () =
 
 test('main-process IPC handlers enforce read and write policy independently of renderer state', () => {
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8');
+  assert.match(source, /tenantId: serverEnrollment\.tenantId/);
+  assert.match(source, /getTenantId: \(\) => deviceCredential\?\.tenantId \|\| null/);
   assert.match(source, /registerTrustedHandler\('eden:dashboard', \(\) => \{\s*assertLocalReadAccess\(\);/);
   assert.match(source, /registerTrustedHandler\('eden:products:list',[\s\S]*?assertLocalReadAccess\(\);/);
   assert.match(source, /registerTrustedHandler\('eden:pos:get-state',[\s\S]*?assertLocalReadAccess\(\);/);
