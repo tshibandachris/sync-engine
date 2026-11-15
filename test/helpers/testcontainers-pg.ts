@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import * as schema from '../../src/schema.js';
 
 export class TestPostgres {
@@ -88,6 +89,12 @@ export class TestPostgres {
       // and role provisioning aligned with deployment.
       const repositoryRoot = process.cwd();
       const migrationScript = path.resolve(repositoryRoot, 'scripts/migrate.sh');
+      const testPasswords = {
+        syncApp: randomUUID(),
+        enrollment: randomUUID(),
+        admin: randomUUID(),
+        maintenance: randomUUID(),
+      };
       const migrationEnv = {
         ...process.env,
         DB_HOST: container.getHost(),
@@ -99,10 +106,10 @@ export class TestPostgres {
         PGPORT: String(container.getPort()),
         PGUSER: container.getUsername(),
         PGDATABASE: container.getDatabase(),
-        SYNC_APP_PASSWORD: 'sync_app_pw_test',
-        DEVICE_ENROLLMENT_PASSWORD: 'device_enrollment_login_pw_test',
-        DEVICE_ADMIN_PASSWORD: 'device_admin_login_pw_test',
-        MAINTENANCE_PASSWORD: 'maintenance_login_pw_test',
+        SYNC_APP_PASSWORD: testPasswords.syncApp,
+        DEVICE_ENROLLMENT_PASSWORD: testPasswords.enrollment,
+        DEVICE_ADMIN_PASSWORD: testPasswords.admin,
+        MAINTENANCE_PASSWORD: testPasswords.maintenance,
       };
       execFileSync('sh', [migrationScript], {
         cwd: repositoryRoot,
