@@ -7,7 +7,6 @@ const { pullChanges } = require('./sync/api-client.cjs');
 const { pushPendingBatch, closePendingCashSessions } = require('./sync/sync-coordinator.cjs');
 const { getOutboxStatus } = require('./sync/outbox.cjs');
 const { listLocalStaff, listOpenCashSessions, listRecentClosedCashSession, openCashSession, requestCashSessionClose, createLocalSale } = require('./db/pos.cjs');
-const { listLocalStaff, listOpenCashSessions, openCashSession, createLocalSale } = require('./db/pos.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
 const { DeviceEnrollmentAttemptStore } = require('./auth/device-enrollment-attempt-store.cjs');
