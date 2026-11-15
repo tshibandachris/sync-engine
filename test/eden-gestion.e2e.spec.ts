@@ -28,6 +28,31 @@ const AUDIENCE = 'eden-sync';
 const KEY_ID = 'eden-e2e-es256';
 const TEST_JWT_SECRET = 'test-only-jwt-module-secret-not-used-for-idp-verification';
 
+const E2E_ENV_KEYS = [
+  'NODE_ENV',
+  'JWT_SECRET',
+  'JWKS_URL',
+  'JWT_ISSUER',
+  'JWT_AUDIENCE',
+  'REDIS_URL',
+] as const;
+
+type EnvSnapshot = Map<(typeof E2E_ENV_KEYS)[number], { existed: boolean; value?: string }>;
+
+function captureEnv(keys: readonly (typeof E2E_ENV_KEYS)[number][]): EnvSnapshot {
+  return new Map(keys.map((key) => [key, {
+    existed: Object.prototype.hasOwnProperty.call(process.env, key),
+    value: process.env[key],
+  }]));
+}
+
+function restoreEnv(snapshot: EnvSnapshot): void {
+  for (const [key, entry] of snapshot) {
+    if (entry.existed) process.env[key] = entry.value!;
+    else delete process.env[key];
+  }
+}
+
 type EnrolledDevice = {
   deviceId: string;
   tenantId: string;
@@ -44,6 +69,7 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
   let idpPrivateKey: CryptoKey;
   let jwksDocument: { keys: Record<string, unknown>[] };
   let initialCounts = { devices: -1, sync_conflicts: -1, sync_logs: -1 };
+  let originalEnvSnapshot: EnvSnapshot | undefined;
 
   const tenantId = randomUUID();
   const agentId = randomUUID();
@@ -198,48 +224,61 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
   }
 
   beforeAll(async () => {
-    pg = await startTestPostgres();
-    await assertEnrollmentDatabaseIdentity(pg.enrollmentPool);
-    await assertDeviceAdminDatabaseIdentity(pg.adminPool);
+      originalEnvSnapshot = captureEnv(E2E_ENV_KEYS);
+      try {
+        pg = await startTestPostgres();
+      await assertEnrollmentDatabaseIdentity(pg.enrollmentPool);
+      await assertDeviceAdminDatabaseIdentity(pg.adminPool);
 
-    const counts = await pg.pool.query(`
-      SELECT
-        (SELECT count(*)::int FROM public.devices) AS devices,
-        (SELECT count(*)::int FROM public.sync_conflicts) AS sync_conflicts,
-        (SELECT count(*)::int FROM public.sync_logs) AS sync_logs
-    `);
-    initialCounts = counts.rows[0];
+      const counts = await pg.pool.query(`
+        SELECT
+          (SELECT count(*)::int FROM public.devices) AS devices,
+          (SELECT count(*)::int FROM public.sync_conflicts) AS sync_conflicts,
+          (SELECT count(*)::int FROM public.sync_logs) AS sync_logs
+      `);
+      initialCounts = counts.rows[0];
 
-    await pg.pool.query(
-      'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2)',
-      [tenantId, Date.now()],
-    );
+      await pg.pool.query(
+        'INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2)',
+        [tenantId, Date.now()],
+      );
 
-    await startOidcProvider();
-    process.env.NODE_ENV = 'test';
-    process.env.JWT_SECRET = TEST_JWT_SECRET;
-    process.env.JWKS_URL = `${idpBaseUrl}/jwks.json`;
-    process.env.JWT_ISSUER = ISSUER;
-    process.env.JWT_AUDIENCE = AUDIENCE;
-    process.env.REDIS_URL = '';
+      await startOidcProvider();
+      process.env.NODE_ENV = 'test';
+      process.env.JWT_SECRET = TEST_JWT_SECRET;
+      process.env.JWKS_URL = `${idpBaseUrl}/jwks.json`;
+      process.env.JWT_ISSUER = ISSUER;
+      process.env.JWT_AUDIENCE = AUDIENCE;
+      process.env.REDIS_URL = '';
 
-    app = await createApp(
-      pg.appDb as any,
-      pg.enrollmentDb as any,
-      pg.adminDb as any,
-      TEST_JWT_SECRET,
-      storage,
-    ) as unknown as INestApplication;
-    await app.listen(0, '127.0.0.1');
-    apiBaseUrl = await app.getUrl();
+      app = await createApp(
+        pg.appDb as any,
+        pg.enrollmentDb as any,
+        pg.adminDb as any,
+        TEST_JWT_SECRET,
+        storage,
+      ) as unknown as INestApplication;
+      await app.listen(0, '127.0.0.1');
+      apiBaseUrl = await app.getUrl();
+    } catch (error) {
+      restoreEnv(originalEnvSnapshot);
+      throw error;
+    }
   }, 120_000);
 
   afterAll(async () => {
-    await app?.close();
-    if (idpServer?.listening) {
-      await new Promise<void>((resolve) => idpServer!.close(() => resolve()));
+    try {
+      await app?.close();
+      if (idpServer?.listening) {
+        await new Promise<void>((resolve) => idpServer!.close(() => resolve()));
+      }
+      await pg?.stop();
+    } finally {
+      if (originalEnvSnapshot) {
+        restoreEnv(originalEnvSnapshot);
+        expect(captureEnv(E2E_ENV_KEYS)).toEqual(originalEnvSnapshot);
+      }
     }
-    await pg?.stop();
   });
 
   it('F-01 — starts from an empty PostgreSQL schema after the production migration runner', () => {
