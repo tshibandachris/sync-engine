@@ -70,6 +70,7 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
   let jwksDocument: { keys: Record<string, unknown>[] };
   let initialCounts = { devices: -1, sync_conflicts: -1, sync_logs: -1 };
   let originalEnvSnapshot: EnvSnapshot | undefined;
+  let resourcesClosed = false;
 
   const tenantId = randomUUID();
   const agentId = randomUUID();
@@ -118,6 +119,36 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
     });
     const address = idpServer.address() as AddressInfo;
     idpBaseUrl = `http://127.0.0.1:${address.port}`;
+  }
+
+  async function closeE2EResources(): Promise<void> {
+    const cleanupErrors: unknown[] = [];
+    if (app) {
+      try {
+        await app.close();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (idpServer?.listening) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          idpServer!.close((error) => error ? reject(error) : resolve());
+        });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (typeof pg !== 'undefined') {
+      try {
+        await pg.stop();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'E2E partial-resource cleanup failed');
+    }
   }
 
   async function signAgentToken(permissions: string[] = []) {
@@ -252,6 +283,10 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
       process.env.JWT_AUDIENCE = AUDIENCE;
       process.env.REDIS_URL = '';
 
+      if (process.env.E2E_FORCE_SETUP_FAILURE === '1') {
+        throw new Error('T-B03-2 controlled failure after PostgreSQL and OIDC allocation');
+      }
+
       app = await createApp(
         pg.appDb as any,
         pg.enrollmentDb as any,
@@ -262,38 +297,43 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
       await app.listen(0, '127.0.0.1');
       apiBaseUrl = await app.getUrl();
     } catch (error) {
-      restoreEnv(envSnapshot);
+      const injectedFailure = process.env.E2E_FORCE_SETUP_FAILURE === '1';
+      try {
+        await closeE2EResources();
+        resourcesClosed = true;
+      } finally {
+        restoreEnv(envSnapshot);
+        // This control flag belongs to the child-process harness, not to the
+        // application environment. Consume it so it cannot leak into another suite.
+        delete process.env.E2E_FORCE_SETUP_FAILURE;
+        expect(captureEnv(E2E_ENV_KEYS)).toEqual(envSnapshot);
+        if (injectedFailure) {
+          expect(idpServer?.listening ?? false).toBe(false);
+          expect(pg.pool.ended).toBe(true);
+          expect(pg.appPool.ended).toBe(true);
+          expect(pg.enrollmentPool.ended).toBe(true);
+          expect(pg.adminPool.ended).toBe(true);
+          expect(pg.maintenancePool.ended).toBe(true);
+          expect(process.env.E2E_FORCE_SETUP_FAILURE).toBeUndefined();
+          console.log('T-B03-2_EXTERNAL_CLEANUP_VERIFIED');
+        }
+      }
       throw error;
     }
   }, 120_000);
 
   afterAll(async () => {
     try {
-      await app?.close();
-      if (idpServer?.listening) {
-        await new Promise<void>((resolve) => idpServer!.close(() => resolve()));
+      if (!resourcesClosed) {
+        await closeE2EResources();
+        resourcesClosed = true;
       }
-      await pg?.stop();
     } finally {
       if (originalEnvSnapshot) {
         restoreEnv(originalEnvSnapshot);
         expect(captureEnv(E2E_ENV_KEYS)).toEqual(originalEnvSnapshot);
       }
     }
-  });
-
-  it('T-B03-2 — restores environment when E2E setup throws', () => {
-    const snapshot = captureEnv(E2E_ENV_KEYS);
-    try {
-      process.env.JWKS_URL = 'https://invalid.test/jwks.json';
-      process.env.JWT_SECRET = 'temporary-test-secret';
-      throw new Error('simulated E2E setup failure');
-    } catch (error) {
-      expect((error as Error).message).toBe('simulated E2E setup failure');
-    } finally {
-      restoreEnv(snapshot);
-    }
-    expect(captureEnv(E2E_ENV_KEYS)).toEqual(snapshot);
   });
 
   it('F-01 — starts from an empty PostgreSQL schema after the production migration runner', () => {
