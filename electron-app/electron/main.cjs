@@ -49,6 +49,7 @@ function requireDeviceToken() {
   if (!deviceToken) {
     throw new Error('Jeton d’appareil absent du stockage sécurisé. Réenrôlez cet appareil avant de synchroniser.');
   }
+  assertTenantBinding(db, extractTenantIdFromDeviceToken(deviceToken));
   return deviceToken;
 }
 
@@ -85,6 +86,7 @@ async function initializeDeviceToken() {
     const developmentToken = process.env.EDEN_SYNC_TOKEN;
     if (developmentToken) {
       const validated = validateDeviceToken(developmentToken);
+      bindTenant(db, extractTenantIdFromDeviceToken(validated), { allowLegacyMigration: true });
       await tokenStore.setToken(validated);
       deviceToken = await tokenStore.load();
     }
@@ -350,16 +352,20 @@ app.whenReady().then(async () => {
     if (deviceToken) return { success: false, error: 'Cette caisse est déjà enrôlée.' };
 
     let token;
+    let tenantId;
     try {
       token = validateDeviceToken(credentials?.token);
+      tenantId = extractTenantIdFromDeviceToken(token);
+      assertTenantBinding(db, tenantId);
     } catch (error) {
-      return { success: false, error: error.message || 'JWT invalide.' };
+      return { success: false, error: error.message || 'JWT ou rattachement d’entreprise invalide.' };
     }
 
     try {
       await tokenStore.setToken(token);
       const storedToken = await tokenStore.load();
       if (storedToken !== token) throw new Error('La vérification du stockage sécurisé a échoué.');
+      bindTenant(db, tenantId);
       deviceToken = storedToken;
       tokenStoreError = null;
       agentAuthState = 'authenticated';

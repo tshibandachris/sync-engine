@@ -11,6 +11,12 @@ function openDatabase(app) {
   db.pragma('busy_timeout = 5000');
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS device_binding (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      tenant_id TEXT NOT NULL,
+      bound_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
       applied_at INTEGER NOT NULL
@@ -164,7 +170,66 @@ function openDatabase(app) {
     migrate();
   }
 
+  // Forward-only migration: bind the local SQLite database to one tenant identity.
+  if (currentVersion < 3) {
+    const migrate = db.transaction(() => {
+      db.exec(`CREATE TABLE IF NOT EXISTS device_binding (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        tenant_id TEXT NOT NULL,
+        bound_at INTEGER NOT NULL
+      )`);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(3, Date.now());
+    });
+    migrate();
+  }
+
   return db;
+}
+
+function hasLocalBusinessData(db) {
+  const tables = ['products', 'staff', 'cash_sessions', 'sales', 'sale_lines', 'stock_movements', 'outbox', 'synced_entities', 'sync_state'];
+  let total = 0;
+  for (const table of tables) {
+    total += Number(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n || 0);
+  }
+  const hasBatches = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'outbox_batches'").get();
+  if (hasBatches) total += Number(db.prepare('SELECT COUNT(*) AS n FROM outbox_batches').get().n || 0);
+  return total > 0;
+}
+
+function assertTenantBinding(db, tenantId, { allowLegacyMigration = false } = {}) {
+  const tenantUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (typeof tenantId !== 'string' || !tenantUuid.test(tenantId)) {
+    throw new Error('Jeton d’appareil invalide : identifiant d’entreprise UUID absent ou invalide.');
+  }
+  tenantId = tenantId.toLowerCase();
+  const binding = db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get();
+  if (binding) {
+    if (binding.tenant_id !== tenantId) {
+      const error = new Error('Cette base locale est déjà rattachée à une autre entreprise. Les données hors ligne sont conservées et la synchronisation est bloquée.');
+      error.code = 'LOCAL_TENANT_MISMATCH';
+      throw error;
+    }
+    return { bound: true, tenantId: binding.tenant_id };
+  }
+  if (!allowLegacyMigration && hasLocalBusinessData(db)) {
+    const error = new Error('La base locale contient des données sans rattachement d’entreprise. Une vérification contrôlée est nécessaire avant le premier enrôlement. Aucune donnée n’a été supprimée.');
+    error.code = 'LOCAL_TENANT_UNBOUND_WITH_DATA';
+    throw error;
+  }
+  return { bound: false, tenantId };
+}
+
+function bindTenant(db, tenantId, options = {}) {
+  const state = assertTenantBinding(db, tenantId, options);
+  if (state.bound) return state;
+  db.prepare('INSERT INTO device_binding(singleton, tenant_id, bound_at) VALUES (1, ?, ?)')
+    .run(tenantId, Date.now());
+  const persisted = db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get();
+  if (!persisted || persisted.tenant_id !== tenantId) {
+    throw new Error('Impossible de confirmer le rattachement local à l’entreprise.');
+  }
+  return { bound: true, tenantId: persisted.tenant_id };
 }
 
 function applyPulledProducts(db, productChanges) {
@@ -653,4 +718,4 @@ function resetCursor(db) {
   db.prepare("DELETE FROM sync_state WHERE key = 'pull_cursor'").run();
 }
 
-module.exports = { openDatabase, applyPulledProducts, applyPulledPage, getCursor, resetCursor, listLocalProducts, saveLocalProduct, getDashboardSummary };
+module.exports = { openDatabase, applyPulledProducts, applyPulledPage, getCursor, resetCursor, listLocalProducts, saveLocalProduct, getDashboardSummary, hasLocalBusinessData, assertTenantBinding, bindTenant };

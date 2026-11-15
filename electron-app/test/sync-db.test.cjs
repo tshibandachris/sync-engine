@@ -263,7 +263,7 @@ test('persists pulled staff and cash sessions into local queryable tables', () =
     assert.equal(session.opening_amount, 10000);
     assert.equal(session.status, 'open');
     assert.equal(session.last_known_sync_seq, 4);
-    assert.equal(f.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 2);
+    assert.equal(f.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 3);
   } finally {
     f.cleanup(f.db);
   }
