@@ -15,6 +15,19 @@ function setFeedback(message, kind = '') {
 function renderStatus(value) {
   state.status = value || {};
   const status = state.status;
+  const canReadLocalData = status.canReadLocalData === true;
+  const canOperateLocally = status.canOperateLocally === true;
+  document.querySelectorAll('.nav-item').forEach((button) => { button.hidden = !canReadLocalData; });
+  document.querySelectorAll('.page').forEach((section) => {
+    if (section.id !== 'page-dashboard') section.hidden = !canReadLocalData;
+  });
+  const dashboard = $('page-dashboard');
+  if (dashboard) Array.from(dashboard.children).forEach((child) => {
+    if (child.id !== 'device-enrollment-panel') child.hidden = !canReadLocalData;
+  });
+  $('new-product').hidden = !canOperateLocally;
+  $('device-status-button').hidden = !status.deviceId;
+  if (!canOperateLocally) state.cart.clear();
   const dot = $('sync-dot');
   dot.className = 'dot';
   if (status.state === 'synced') dot.classList.add('synced');
@@ -99,14 +112,16 @@ function renderProducts(products) {
     stock.textContent = !known ? 'Non renseigné' : `${product.stockQuantity} unité(s)`;
     addCell(row, stock);
 
-    const actionCell = document.createElement('td');
-    const edit = document.createElement('button');
-    edit.className = 'btn small';
-    edit.type = 'button';
-    edit.textContent = 'Modifier';
-    edit.dataset.editProduct = product.id;
-    actionCell.append(edit);
-    row.append(actionCell);
+    if (state.status?.canOperateLocally === true) {
+      const actionCell = document.createElement('td');
+      const edit = document.createElement('button');
+      edit.className = 'btn small';
+      edit.type = 'button';
+      edit.textContent = 'Modifier';
+      edit.dataset.editProduct = product.id;
+      actionCell.append(edit);
+      row.append(actionCell);
+    }
     body.append(row);
   }
 }
@@ -143,7 +158,12 @@ function renderPosProducts() {
     const detail=document.createElement('span'); detail.textContent=product.sku || product.category || 'Article';
     const price=document.createElement('b'); price.textContent=money(product.price);
     button.append(name,detail,price);
-    button.addEventListener('click',()=>{const item=state.cart.get(product.id)||{product,quantity:0};item.quantity+=1;state.cart.set(product.id,item);renderCart();});
+    if (state.status?.canOperateLocally === true) {
+      button.addEventListener('click',()=>{const item=state.cart.get(product.id)||{product,quantity:0};item.quantity+=1;state.cart.set(product.id,item);renderCart();});
+    } else {
+      button.disabled = true;
+      button.title = 'Terminal en lecture seule : approbation serveur requise pour encaisser.';
+    }
     list.append(button);
   }
 }
@@ -155,15 +175,20 @@ function renderCart() {
     const row = document.createElement('div'); row.className = 'cart-line'; const detail = document.createElement('div');
     const name = document.createElement('strong'); name.textContent = item.product.name; const price = document.createElement('small'); price.textContent = item.quantity + ' × ' + money(item.product.price) + ' · ' + money(subtotal); detail.append(name, price);
     const actions = document.createElement('div'); actions.className = 'cart-line-actions';
-    for (const [label, delta] of [['−', -1], ['+', 1]]) { const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = label; btn.setAttribute('aria-label', (delta > 0 ? 'Ajouter' : 'Retirer') + ' une unité de ' + item.product.name); btn.addEventListener('click', () => { item.quantity += delta; if (item.quantity <= 0) state.cart.delete(id); renderCart(); }); actions.append(btn); }
+    for (const [label, delta] of [['−', -1], ['+', 1]]) { const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = label; btn.disabled = state.status?.canOperateLocally !== true; btn.setAttribute('aria-label', (delta > 0 ? 'Ajouter' : 'Retirer') + ' une unité de ' + item.product.name); btn.addEventListener('click', () => { item.quantity += delta; if (item.quantity <= 0) state.cart.delete(id); renderCart(); }); actions.append(btn); }
     row.append(detail, actions); lines.append(row);
   }
   $('cart-count').textContent = count + ' article(s)'; $('cart-subtotal').textContent = money(total); $('cart-total').textContent = money(total);
+  const canWrite = state.status?.canOperateLocally === true;
+  $('cart-clear').disabled = !canWrite;
+  $('payment-method').disabled = !canWrite;
+  $('cash-amount').disabled = !canWrite;
+  $('mobile-amount').disabled = !canWrite;
   const method = $('payment-method').value; $('payment-split').hidden = method !== 'mixed';
   if (method === 'cash') { $('cash-amount').value = String(total); $('mobile-amount').value = '0'; }
   if (method === 'mobile_money') { $('cash-amount').value = '0'; $('mobile-amount').value = String(total); }
   const activeSession = state.cashSessions.find((session) => session.id === state.activeCashSessionId);
-  const checkout = $('checkout-button'); checkout.disabled = !activeSession || activeSession.closeRequested || state.cart.size === 0;
+  const checkout = $('checkout-button'); checkout.disabled = !canWrite || !activeSession || activeSession.closeRequested || state.cart.size === 0;
   checkout.textContent = checkout.disabled ? 'Ouvrir une session pour encaisser' : 'Encaisser la vente';
 }
 
@@ -183,10 +208,10 @@ async function loadPosState() {
     $('pos-session-summary').textContent = selected
       ? (selected.closeRequested ? 'Clôture demandée · aucune nouvelle vente · espèces déclarées : ' + money(selected.closeClosingAmount ?? selected.expectedCash) + (selected.closeSyncError ? ' · erreur de synchronisation : ' + selected.closeSyncError : '') : 'Session de ' + selected.staffName + ' · espèces attendues : ' + money(selected.expectedCash))
       : recent ? 'Dernière session clôturée · ' + recent.staffName + ' · attendu ' + money(recent.expectedAmount) + ' · compté ' + money(recent.closingAmount) + ' · écart ' + money(recent.difference) : 'Aucune session ouverte sur ce terminal.';
-    $('close-session-button').disabled = !selected || selected.closeRequested;
+    $('close-session-button').disabled = state.status?.canOperateLocally !== true || !selected || selected.closeRequested;
     if (selected && document.activeElement !== $('closing-amount')) $('closing-amount').value = String(selected.expectedCash);
     const selectedStaff = state.posStaff.find((staff) => staff.id === staffSelect.value);
-    $('open-session-button').disabled = !selectedStaff || state.cashSessions.some((session) => session.staffId === selectedStaff.id);
+    $('open-session-button').disabled = state.status?.canOperateLocally !== true || !selectedStaff || state.cashSessions.some((session) => session.staffId === selectedStaff.id);
     $('open-session-help').textContent = state.posStaff.length ? 'Choisissez un caissier sans session ouverte et indiquez le fond de caisse.' : 'Aucun membre du personnel actif n’est disponible. Synchronisez les données ou vérifiez le personnel.';
     renderCart();
   } catch (error) { $('pos-session-summary').textContent = error.message || 'Impossible de charger les sessions.'; }
@@ -294,11 +319,13 @@ async function saveProduct(event) {
 
 function renderAuthState(status) {
   const authState = status?.authState || 'storage-error';
-  const localAccess = status?.canOperateLocally === true || authState === 'ready';
-  $('app-shell').hidden = !localAccess;
+  const localReadAccess = status?.canReadLocalData === true;
+  const canRegisterDevice = authState === 'ready' && !status?.deviceId;
+  const showShell = localReadAccess || canRegisterDevice;
+  $('app-shell').hidden = !showShell;
   $('enrollment-screen').hidden = authState !== 'enrollment-required';
-  $('storage-error-screen').hidden = authState === 'storage-error' && !localAccess;
-  if (localAccess) initializeDashboard();
+  $('storage-error-screen').hidden = authState === 'storage-error' && !showShell;
+  if (showShell) initializeDashboard();
 }
 
 function handleStatus(status) {

@@ -10,7 +10,7 @@ const { listLocalStaff, listOpenCashSessions, listRecentClosedCashSession, openC
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
 const { DeviceEnrollmentAttemptStore } = require('./auth/device-enrollment-attempt-store.cjs');
-const { deriveDeviceTrustState, canAccessLocalPOS, canRunSync } = require('./auth/device-state.cjs');
+const { deriveDeviceTrustState, canAccessLocalPOS, canReadLocalData, canRunSync } = require('./auth/device-state.cjs');
 const { DeviceStatusService } = require('./auth/device-status.cjs');
 const { generateDeviceKeyPair, createInitialEnrollmentProof } = require('./auth/device-crypto.cjs');
 const { enrollDevice: enrollDeviceWithProof } = require('./auth/device-enrollment-client.cjs');
@@ -123,6 +123,24 @@ function getDeviceFingerprint(hardwareInfo) {
     .digest('hex');
 }
 
+function assertLocalReadAccess() {
+  if (!canReadLocalData(agentAuthState, deviceTrustState)) {
+    throw new Error('Consultation locale indisponible : le terminal doit d’abord être enregistré auprès du serveur.');
+  }
+}
+
+function assertBusinessWriteAccess() {
+  if (canAccessLocalPOS(agentAuthState, deviceTrustState)) return;
+  const messages = {
+    unregistered: 'Terminal non enregistré : les opérations métier sont bloquées.',
+    awaiting_approval: 'Terminal en attente d’approbation : consultation en lecture seule.',
+    rejected: 'Terminal rejeté : consultation en lecture seule, aucune écriture métier autorisée.',
+    revoked: 'Terminal révoqué : consultation en lecture seule, aucune écriture métier autorisée.',
+    deactivated: 'Terminal désactivé : consultation en lecture seule, aucune écriture métier autorisée.',
+  };
+  throw new Error(messages[deviceTrustState] || 'Une approbation serveur est requise avant toute opération métier.');
+}
+
 function readStatus() {
   const outbox = db ? getOutboxStatus(db) : { pending: status.outboxPending, failed: status.outboxFailed };
   return {
@@ -137,6 +155,8 @@ function readStatus() {
     deviceCredentialError: deviceCredentialError?.message || null,
     pendingEnrollment: Boolean(pendingEnrollmentAttempt),
     enrollmentAttemptError: enrollmentAttemptError?.message || null,
+    canReadLocalData: canReadLocalData(agentAuthState, deviceTrustState),
+    canReadLocalData: canReadLocalData(agentAuthState, deviceTrustState),
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
     canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
     serverHasActiveCredential,
@@ -529,17 +549,27 @@ app.whenReady().then(async () => {
   });
 
   registerTrustedHandler('eden:refresh', () => doSync());
-  registerTrustedHandler('eden:dashboard', () => getDashboardSummary(db));
-  registerTrustedHandler('eden:products:list', (search = '') =>
-    listLocalProducts(db, { search: validateSearchQuery(search) }));
+  registerTrustedHandler('eden:dashboard', () => {
+    assertLocalReadAccess();
+    return getDashboardSummary(db);
+  });
+  registerTrustedHandler('eden:products:list', (search = '') => {
+    assertLocalReadAccess();
+    return listLocalProducts(db, { search: validateSearchQuery(search) });
+  });
   registerTrustedHandler('eden:products:save', (input) => {
+    assertBusinessWriteAccess();
     const product = saveLocalProduct(db, validateProductInput(input));
     status = { ...status, outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
     return product;
   });
-  registerTrustedHandler('eden:pos:get-state', () => ({ staff: listLocalStaff(db), cashSessions: listOpenCashSessions(db), recentClosedSession: listRecentClosedCashSession(db) }));
+  registerTrustedHandler('eden:pos:get-state', () => {
+    assertLocalReadAccess();
+    return { staff: listLocalStaff(db), cashSessions: listOpenCashSessions(db), recentClosedSession: listRecentClosedCashSession(db) };
+  });
   registerTrustedHandler('eden:pos:open-session', (input) => {
+    assertBusinessWriteAccess();
     const session = openCashSession(db, validateOpenCashSessionInput(input));
     status = { ...status, state: 'pending', message: 'Session de caisse locale en attente de synchronisation.', outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
@@ -547,6 +577,7 @@ app.whenReady().then(async () => {
     return session;
   });
   registerTrustedHandler('eden:pos:create-sale', (input) => {
+    assertBusinessWriteAccess();
     const sale = createLocalSale(db, validateCreateSaleInput(input));
     status = { ...status, state: 'pending', message: 'Vente locale enregistrée ; synchronisation en attente.', outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
@@ -554,6 +585,7 @@ app.whenReady().then(async () => {
     return sale;
   });
   registerTrustedHandler('eden:pos:close-session', (input) => {
+    assertBusinessWriteAccess();
     const request = requestCashSessionClose(db, validateCloseCashSessionInput(input));
     status = { ...status, state: 'pending', message: 'Clôture locale demandée ; confirmation serveur en attente.', outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());

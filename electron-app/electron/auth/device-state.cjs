@@ -11,8 +11,15 @@ function deriveDeviceTrustState(credential) {
   return credential?.deviceId ? 'awaiting_approval' : 'unregistered';
 }
 
-function canAccessLocalPOS(agentAuthState, _deviceTrustState) {
-  return agentAuthState === 'authenticated';
+function canReadLocalData(agentAuthState, deviceTrustState) {
+  return agentAuthState === 'authenticated' &&
+    ['awaiting_approval', 'approved', 'rejected', 'revoked', 'deactivated'].includes(deviceTrustState);
+}
+
+function canAccessLocalPOS(agentAuthState, deviceTrustState) {
+  // Offline-first writes are allowed only after a server-confirmed approval.
+  // A transient network/API failure does not change this trust state.
+  return agentAuthState === 'authenticated' && deviceTrustState === 'approved';
 }
 
 function canRunSync(agentAuthState, deviceTrustState, deviceProofReady = false) {
@@ -27,6 +34,7 @@ module.exports = {
   AGENT_AUTH_STATES,
   DEVICE_TRUST_STATES,
   canAccessLocalPOS,
+  canReadLocalData,
   canRunSync,
   deriveDeviceTrustState,
 };
