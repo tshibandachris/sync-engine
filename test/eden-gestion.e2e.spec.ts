@@ -35,6 +35,7 @@ const E2E_ENV_KEYS = [
   'JWT_ISSUER',
   'JWT_AUDIENCE',
   'REDIS_URL',
+  'E2E_FORCE_SETUP_FAILURE',
 ] as const;
 
 type EnvSnapshot = Map<(typeof E2E_ENV_KEYS)[number], { existed: boolean; value?: string }>;
@@ -303,9 +304,8 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
         resourcesClosed = true;
       } finally {
         restoreEnv(envSnapshot);
-        // This control flag belongs to the child-process harness, not to the
-        // application environment. Consume it so it cannot leak into another suite.
-        delete process.env.E2E_FORCE_SETUP_FAILURE;
+        // Restore the injected control flag to its exact pre-hook value too.
+        // The parent runner owns process isolation; this hook proves exact restoration.
         expect(captureEnv(E2E_ENV_KEYS)).toEqual(envSnapshot);
         if (injectedFailure) {
           expect(idpServer?.listening ?? false).toBe(false);
@@ -314,7 +314,7 @@ describe('Eden Gestion E2E — real PostgreSQL, NestJS API, OIDC JWKS and ES256 
           expect(pg.enrollmentPool.ended).toBe(true);
           expect(pg.adminPool.ended).toBe(true);
           expect(pg.maintenancePool.ended).toBe(true);
-          expect(process.env.E2E_FORCE_SETUP_FAILURE).toBeUndefined();
+          expect(process.env.E2E_FORCE_SETUP_FAILURE).toBe('1');
           console.log('T-B03-2_EXTERNAL_CLEANUP_VERIFIED');
         }
       }
