@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { generateDeviceKeyPair } = require('../electron/auth/device-crypto.cjs');
 const { DeviceStatusService } = require('../electron/auth/device-status.cjs');
+const { canAccessLocalPOS } = require('../electron/auth/device-state.cjs');
 
 const DEVICE_ID = '00000000-0000-4000-8000-000000000111';
 const TENANT_ID = '00000000-0000-4000-8000-000000000222';
@@ -208,4 +209,49 @@ test('distinguishes absent local proof material from a network verification fail
   const result = await service.checkStatus();
   assert.equal(result.reason, 'LOCAL_CREDENTIAL_INVALID');
   assert.equal(failure.reason, 'LOCAL_CREDENTIAL_INVALID');
+});
+
+test('network loss sets retry-required while preserving confirmed approval and pending local outbox', async () => {
+  const pair = generateDeviceKeyPair();
+  let deviceTrustState = 'approved';
+  let verificationState = 'verified';
+  const outbox = [{ id: 'sale-001', status: 'pending', amountMinor: 12500 }];
+  const before = structuredClone(outbox);
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => pair.privateKeyPem,
+    fetchImpl: async () => { throw new Error('network unavailable'); },
+    onStatus: () => { throw new Error('failed verification must not transition trust'); },
+    onVerificationFailure: () => { verificationState = 'RETRY_REQUIRED'; },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.reason, 'NETWORK_ERROR');
+  assert.equal(verificationState, 'RETRY_REQUIRED');
+  assert.equal(deviceTrustState, 'approved');
+  assert.equal(canAccessLocalPOS('authenticated', deviceTrustState), true);
+  assert.deepEqual(outbox, before);
+});
+
+test('classifies request timeout separately from other network failures', async () => {
+  const pair = generateDeviceKeyPair();
+  let failure;
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => pair.privateKeyPem,
+    fetchImpl: async () => {
+      const error = new Error('request timed out');
+      error.name = 'TimeoutError';
+      throw error;
+    },
+    onVerificationFailure: (value) => { failure = value; },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.reason, 'NETWORK_TIMEOUT');
+  assert.equal(failure.reason, 'NETWORK_TIMEOUT');
 });
