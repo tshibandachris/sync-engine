@@ -281,7 +281,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     expect(socket).toBeDefined();
 
     const initialStatus = await evaluate<any>(socket!, 'window.eden.getStatus()');
-    expect(initialStatus.authState).toBe('ready');
+    expect(initialStatus.authState, JSON.stringify(initialStatus)).toBe('ready');
     expect(initialStatus.agentAuthState).toBe('authenticated');
     expect(initialStatus.deviceTrustState).toBe('unregistered');
 
