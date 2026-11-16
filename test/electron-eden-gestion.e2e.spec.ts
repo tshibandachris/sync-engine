@@ -237,6 +237,18 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
       socket!.addEventListener('open', () => resolve(), { once: true });
       socket!.addEventListener('error', () => reject(new Error('Could not connect to Electron DevTools.')), { once: true });
     });
+    const preloadDeadline = Date.now() + 30_000;
+    while (Date.now() < preloadDeadline) {
+      try {
+        if (await evaluate<boolean>(socket, "typeof window.eden === 'object'")) break;
+      } catch {
+        // The renderer may still be evaluating its preload and first script.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!await evaluate<boolean>(socket, "typeof window.eden === 'object'")) {
+      throw new Error('Electron preload API window.eden was not exposed.');
+    }
   }, 180_000);
 
   afterAll(async () => {
