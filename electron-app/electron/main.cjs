@@ -72,14 +72,6 @@ async function initializeDeviceToken() {
   try {
     deviceCredential = await credentialStore.load();
     deviceCredentialState = deviceCredential ? 'available' : 'missing';
-    deviceApprovalState = await approvalStateStore.load();
-    if (deviceApprovalState &&
-        (deviceApprovalState.deviceId !== deviceCredential?.deviceId ||
-         deviceApprovalState.tenantId !== deviceCredential?.tenantId)) {
-      throw new Error('Cached approval decision is bound to a different device or tenant.');
-    }
-    deviceTrustState = deriveDeviceTrustState(deviceCredential, deviceApprovalState);
-    serverHasActiveCredential = deviceApprovalState?.hasActiveCredential === true;
     deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.tenantId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
   } catch (error) {
     deviceCredentialError = error;
@@ -88,19 +80,26 @@ async function initializeDeviceToken() {
     deviceTrustState = 'unregistered';
     console.error('[device] encrypted credential unavailable; sync remains fail-closed:', error.message);
   }
-  if (deviceCredential && !deviceApprovalState && !deviceApprovalStateError) {
-    // No confirmed decision has ever been cached: approval must be verified online.
-    deviceTrustState = 'awaiting_approval';
-  }
-  if (deviceCredential && approvalStateStore && deviceApprovalState === null) {
+  if (deviceCredential) {
     try {
-      // A missing file is normal for a newly enrolled device; corruption and
-      // identity mismatches are handled by the guarded load above.
-      serverHasActiveCredential = false;
+      deviceApprovalState = await approvalStateStore.load();
+      if (deviceApprovalState &&
+          (deviceApprovalState.deviceId !== deviceCredential.deviceId ||
+           deviceApprovalState.tenantId !== deviceCredential.tenantId)) {
+        throw new Error('Cached approval decision is bound to a different device or tenant.');
+      }
+      deviceTrustState = deriveDeviceTrustState(deviceCredential, deviceApprovalState);
+      serverHasActiveCredential = deviceApprovalState?.hasActiveCredential === true;
     } catch (error) {
       deviceApprovalStateError = error;
+      deviceApprovalState = null;
       deviceTrustState = 'awaiting_approval';
+      serverHasActiveCredential = false;
+      console.error('[device] encrypted approval decision unavailable; local writes remain blocked:', error.message);
     }
+  } else {
+    deviceTrustState = 'unregistered';
+    serverHasActiveCredential = false;
   }
   try {
     pendingEnrollmentAttempt = await enrollmentAttemptStore.load();
