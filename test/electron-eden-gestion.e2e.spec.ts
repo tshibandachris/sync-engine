@@ -102,7 +102,6 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
   let apiBaseUrl = '';
   let tenantId = '';
   let agentId = '';
-  let adminActorId = '';
   let agentToken = '';
   let activationCode = '';
   let tempRoot = '';
@@ -133,7 +132,6 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
 
     tenantId = randomUUID();
     agentId = randomUUID();
-    adminActorId = randomUUID();
     const storeId = randomUUID();
     await pg.pool.query('INSERT INTO public.tenants (id, first_seen_at) VALUES ($1, $2)', [tenantId, Date.now()]);
 
@@ -187,7 +185,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     const codeHash = createHash('sha256').update(activationCode, 'utf8').digest('hex');
     await pg.pool.query(
       'INSERT INTO public.device_pairing_codes (tenant_id, store_id, code_hash, created_by, expires_at) VALUES ($1, $2, $3, $4, now() + interval \'10 minutes\')',
-      [tenantId, storeId, codeHash, adminActorId],
+      [tenantId, storeId, codeHash, agentId],
     );
     agentToken = await signAgentToken();
 
@@ -342,7 +340,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     expect(audit.rows[1]).toMatchObject({
       from_status: 'pending_approval',
       to_status: 'approved',
-      actor_id: adminActorId,
+      actor_id: agentId,
     });
 
     const pairing = await pg.pool.query(
