@@ -37,6 +37,39 @@ test('a new database runs tenant binding v3 and POS close schema v4', () => {
   }
 });
 
+test('a database already at tenant-binding v3 receives the POS close columns in v4', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-tenant-binding-v3-'));
+  const dataDir = path.join(root, 'EdenGestion');
+  fs.mkdirSync(dataDir, { recursive: true });
+  const Database = require('better-sqlite3');
+  const legacy = new Database(path.join(dataDir, 'data.db'));
+  legacy.exec(`
+    CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+    INSERT INTO schema_migrations(version, applied_at) VALUES (3, 1);
+    CREATE TABLE device_binding (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      tenant_id TEXT NOT NULL,
+      bound_at INTEGER NOT NULL
+    );
+    INSERT INTO device_binding(singleton, tenant_id, bound_at)
+      VALUES (1, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1);
+  `);
+  legacy.close();
+  let db;
+  try {
+    db = openDatabase({ getPath: () => root });
+    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 4);
+    assert.equal(db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get().tenant_id,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const columns = db.pragma('table_info(cash_sessions)');
+    assert.ok(columns.some((column) => column.name === 'close_requested_at'));
+    assert.ok(columns.some((column) => column.name === 'close_sync_state'));
+  } finally {
+    if (db?.open) db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('an empty local database can be bound to one tenant and keeps the binding after restart', () => {
   const f = fixture();
   try {
