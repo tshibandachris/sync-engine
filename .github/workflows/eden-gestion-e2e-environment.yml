@@ -66,12 +66,7 @@ jobs:
         run: npx electron-rebuild -f -w better-sqlite3
 
       - name: Run E2E-01 integrated Electron to API to PostgreSQL activation
-        run: |
-          dbus-run-session -- bash -euo pipefail -c '
-            eval "$(gnome-keyring-daemon --start --components=secrets)"
-            printf "%s" "eden-e2e-temporary-keyring" | gnome-keyring-daemon --unlock
-            xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" npm run test:e2e:integrated
-          '
+        run: dbus-run-session -- bash scripts/e2e/run-integrated-e2e.sh
 
       - name: Upload E2E-01 acceptance evidence
         if: always()
