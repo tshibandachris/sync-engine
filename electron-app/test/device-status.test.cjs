@@ -211,6 +211,37 @@ test('distinguishes absent local proof material from a network verification fail
   assert.equal(failure.reason, 'LOCAL_CREDENTIAL_INVALID');
 });
 
+test('does not report a server decision as applied when durable approval persistence fails', async () => {
+  const pair = generateDeviceKeyPair();
+  let failure;
+  let applied = false;
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => pair.privateKeyPem,
+    fetchImpl: async () => response(200, {
+      deviceId: DEVICE_ID,
+      tenantId: TENANT_ID,
+      approvalStatus: 'approved',
+      isActive: true,
+      hasActiveCredential: true,
+    }),
+    onStatus: async () => {
+      const error = new Error('encrypted approval write failed');
+      error.code = 'LOCAL_APPROVAL_STATE_PERSISTENCE';
+      throw error;
+    },
+    onVerificationFailure: (value) => { failure = value; },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'LOCAL_STATE_PERSISTENCE_FAILED');
+  assert.equal(failure.reason, 'LOCAL_STATE_PERSISTENCE_FAILED');
+  assert.equal(applied, false);
+});
+
 test('network loss sets retry-required while preserving confirmed approval and pending local outbox', async () => {
   const pair = generateDeviceKeyPair();
   let deviceTrustState = 'approved';
