@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { INestApplication } from '@nestjs/common';
@@ -375,6 +375,46 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     );
     expect(pairing.rows[0]?.used_at).not.toBeNull();
 
+    const evidenceDirectory = path.join(process.env.GITHUB_WORKSPACE || process.cwd(), 'artifacts');
+    await mkdir(evidenceDirectory, { recursive: true });
+    const evidence = {
+      scenario: 'E2E-01',
+      result: 'PASS',
+      commit: process.env.GITHUB_SHA || null,
+      executedAt: new Date().toISOString(),
+      environment: {
+        electron: 'real Electron main process and renderer',
+        api: 'ephemeral NestJS API',
+        identityProvider: 'ephemeral local ES256 OIDC/JWKS',
+        database: 'ephemeral PostgreSQL Testcontainers',
+      },
+      device: {
+        deviceId: registration.deviceId,
+        tenantId,
+        keyThumbprint: localStatus.thumbprint,
+        approvalStatus: 'approved',
+      },
+      checks: {
+        agentTokenEncrypted: true,
+        deviceCredentialEncrypted: true,
+        tenantBindingPersistedInSqlite: true,
+        serverCredentialActive: true,
+        deviceProofPendingVerifiedByElectron: true,
+        deviceProofApprovalVerifiedByElectron: true,
+        activationCodeConsumed: true,
+        approvalAudit: audit.rows.map((row) => ({
+          eventType: row.event_type,
+          fromStatus: row.from_status,
+          toStatus: row.to_status,
+          actorId: row.actor_id,
+        })),
+      },
+    };
+    await writeFile(
+      path.join(evidenceDirectory, 'e2e-01-evidence.json'),
+      JSON.stringify(evidence, null, 2) + '\\n',
+      { mode: 0o600 },
+    );
     console.log('E2E_01_INTEGRATED_PASS');
     console.log('E2E_01_EVIDENCE tenant_binding=verified credential_encryption=verified es256=verified api=verified postgres=verified audit=verified');
   }, 120_000);
