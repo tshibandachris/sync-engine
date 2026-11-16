@@ -1,4 +1,4 @@
-name: Eden Gestion E2E environment
+name: Eden Gestion E2E — integrated acceptance
 
 on:
   pull_request:
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   e2e-environment:
-    name: PostgreSQL + OIDC/JWKS + Electron window smoke
+    name: E2E-01 real Electron + API + PostgreSQL
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
