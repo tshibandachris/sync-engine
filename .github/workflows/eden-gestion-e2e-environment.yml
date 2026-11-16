@@ -24,7 +24,7 @@ concurrency:
 jobs:
   e2e-environment:
     name: PostgreSQL + OIDC/JWKS + Electron window smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
       - name: Install Linux GUI runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes postgresql-client xvfb libgtk-3-0 libnss3 libasound2t64
+          sudo apt-get install --yes postgresql-client xvfb libgtk-3-0t64 libnss3 libasound2t64
 
       - name: Install API and E2E dependencies
         run: npm ci
