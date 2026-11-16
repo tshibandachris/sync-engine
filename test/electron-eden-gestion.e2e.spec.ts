@@ -412,7 +412,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     };
     await writeFile(
       path.join(evidenceDirectory, 'e2e-01-evidence.json'),
-      JSON.stringify(evidence, null, 2) + '\\n',
+      JSON.stringify(evidence, null, 2) + '\n',
       { mode: 0o600 },
     );
     console.log('E2E_01_INTEGRATED_PASS');
