@@ -102,11 +102,12 @@ class DeviceStatusService {
         hasActiveCredential: body.hasActiveCredential,
         serverTime: typeof body.serverTime === 'string' ? body.serverTime : null,
       };
-      this.onStatus(status);
+      await this.onStatus(status);
       return { success: true, ...status };
     } catch (error) {
       // A failed verification is operational state only: it never changes the last confirmed trust decision or local data.
       const reason = error.code === 'INVALID_JSON' || error.code === 'INVALID_RESPONSE' ? 'INVALID_RESPONSE'
+        : error.code === 'LOCAL_APPROVAL_STATE_PERSISTENCE' ? 'LOCAL_STATE_PERSISTENCE_FAILED'
         : error.status ? 'HTTP_REFUSAL'
         : error.name === 'AbortError' || error.name === 'TimeoutError' ? 'NETWORK_TIMEOUT'
         : 'NETWORK_ERROR';
