@@ -47,15 +47,23 @@ jobs:
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
 
-      - name: Install Electron dependencies and rebuild native SQLite
+      - name: Install Electron dependencies
         working-directory: electron-app
         run: npm ci --no-audit --no-fund
+
+      - name: Build SQLite native module for the Node.js test runtime
+        working-directory: electron-app
+        run: npm rebuild better-sqlite3
 
       - name: Run Electron SQLite, outbox and field-failure tests
         working-directory: electron-app
         run: |
           npm test
           npm run test:field
+
+      - name: Rebuild SQLite native module for the Electron runtime
+        working-directory: electron-app
+        run: npx electron-rebuild -f -w better-sqlite3
 
       - name: Launch the real Electron renderer under a virtual display
         run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' node scripts/electron-window-smoke.mjs
