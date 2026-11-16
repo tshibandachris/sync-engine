@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -95,6 +94,20 @@ async function evaluate<T>(socket: WebSocket, expression: string): Promise<T> {
   return response.result?.result?.value as T;
 }
 
+async function checkStatusUntilReady(socket: WebSocket, expected: 'pending_approval' | 'approved'): Promise<any> {
+  const deadline = Date.now() + 20_000;
+  let result: any;
+  while (Date.now() < deadline) {
+    result = await evaluate<any>(socket, 'window.eden.checkDeviceStatus()');
+    if (result?.success && result.approvalStatus === expected) return result;
+    if (result?.reason !== 'CHECK_ALREADY_RUNNING') {
+      throw new Error('Electron device-status verification failed: ' + JSON.stringify(result));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new Error('Timed out waiting for Electron device-status verification: ' + JSON.stringify(result));
+}
+
 describe('E2E-01 — activation nominale via le véritable client Electron', () => {
   let pg: TestPostgres;
   let app: INestApplication;
@@ -180,7 +193,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     await app.listen(0, '127.0.0.1');
     apiBaseUrl = await app.getUrl();
 
-    const suffix = randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase();
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 4).toUpperCase();
     activationCode = 'E2E1-' + suffix;
     const codeHash = createHash('sha256').update(activationCode, 'utf8').digest('hex');
     await pg.pool.query(
@@ -298,7 +311,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
       status: 'active',
     });
 
-    const pendingStatus = await evaluate<any>(socket!, 'window.eden.checkDeviceStatus()');
+    const pendingStatus = await checkStatusUntilReady(socket!, 'pending_approval');
     expect(pendingStatus).toMatchObject({
       success: true,
       deviceId: registration.deviceId,
@@ -314,7 +327,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     expect(approval.status).toBe(201);
     expect(approval.body.approvalStatus).toBe('approved');
 
-    const confirmedStatus = await evaluate<any>(socket!, 'window.eden.checkDeviceStatus()');
+    const confirmedStatus = await checkStatusUntilReady(socket!, 'approved');
     expect(confirmedStatus).toMatchObject({
       success: true,
       deviceId: registration.deviceId,
