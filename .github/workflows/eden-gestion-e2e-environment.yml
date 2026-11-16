@@ -73,6 +73,14 @@ jobs:
             xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" npm run test:e2e:integrated
           '
 
+      - name: Upload E2E-01 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-gestion-e2e-01-evidence
+          path: artifacts/e2e-01-evidence.json
+          if-no-files-found: warn
+
       - name: Launch the real Electron renderer under a virtual display
         run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' node scripts/electron-window-smoke.mjs
 
