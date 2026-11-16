@@ -37,7 +37,7 @@ jobs:
       - name: Install Linux GUI runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes postgresql-client xvfb libgtk-3-0t64 libnss3 libasound2t64
+          sudo apt-get install --yes postgresql-client sqlite3 xvfb dbus-x11 gnome-keyring libgtk-3-0t64 libnss3 libasound2t64
 
       - name: Install API and E2E dependencies
         run: npm ci
@@ -64,6 +64,13 @@ jobs:
       - name: Rebuild SQLite native module for the Electron runtime
         working-directory: electron-app
         run: npx electron-rebuild -f -w better-sqlite3
+
+      - name: Run E2E-01 integrated Electron to API to PostgreSQL activation
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "eden-e2e-temporary-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" npm run test:e2e:integrated
+          '
 
       - name: Launch the real Electron renderer under a virtual display
         run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' node scripts/electron-window-smoke.mjs
