@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const { createRequire } = require('node:module');
 const fs = require('node:fs/promises');
 const net = require('node:net');
@@ -256,7 +256,7 @@ if (process.versions.electron && process.argv[2] === 'seed') {
     console.error(error);
     process.exitCode = 1;
     const { app } = require('electron');
-    app.quit();
+    app.exit(1);
   });
 } else if (require.main === module) {
   runParent().catch((error) => {
