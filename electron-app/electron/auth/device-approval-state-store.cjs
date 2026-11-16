@@ -86,6 +86,11 @@ class DeviceApprovalStateStore {
       this.fs.writeFileSync(temporaryPath, encrypted, { mode: 0o600 });
       this.fs.renameSync(temporaryPath, this.filePath);
       try { this.fs.chmodSync(this.filePath, 0o600); } catch { /* Windows ACLs govern access on Windows. */ }
+      const persistedBytes = this.fs.readFileSync(this.filePath);
+      const persisted = this.validateState(JSON.parse(this.safeStorage.decryptString(persistedBytes)));
+      if (JSON.stringify(persisted) !== JSON.stringify(validated)) {
+        throw new Error('Persisted device approval decision does not match the confirmed server state.');
+      }
     } catch (error) {
       try { this.fs.rmSync(temporaryPath, { force: true }); } catch { /* Preserve the original error. */ }
       throw new Error('Unable to persist the encrypted device approval decision.', { cause: error });
