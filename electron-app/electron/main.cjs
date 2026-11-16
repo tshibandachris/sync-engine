@@ -351,6 +351,12 @@ function startDeviceStatusPolling() {
           if (!approvalStateStore) throw new Error('Encrypted approval decision store is unavailable.');
           await approvalStateStore.save(persistedDecision);
         } catch (error) {
+          deviceApprovalStateError = error;
+          // A valid server response that cannot be durably recorded must not
+          // leave this running process writable under an older approval.
+          deviceTrustState = 'awaiting_approval';
+          serverHasActiveCredential = false;
+          syncState = 'blocked_unapproved';
           error.code = 'LOCAL_APPROVAL_STATE_PERSISTENCE';
           throw error;
         }
