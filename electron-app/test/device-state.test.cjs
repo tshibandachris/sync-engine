@@ -8,6 +8,7 @@ const {
   canAccessLocalPOS,
   canReadLocalData,
   canRunSync,
+  deriveDeviceTrustState,
 } = require('../electron/auth/device-state.cjs');
 
 test('unregistered terminals cannot read or write business data', () => {
@@ -21,6 +22,26 @@ test('pending activation permits consultation only', () => {
   assert.equal(canReadLocalData('authenticated', 'awaiting_approval'), true);
   assert.equal(canAccessLocalPOS('authenticated', 'awaiting_approval'), false);
   assert.equal(canRunSync('authenticated', 'awaiting_approval', true), false);
+});
+
+test('restores only a matching persisted server decision and keeps unconfirmed credentials read-only', () => {
+  const credential = {
+    deviceId: '00000000-0000-4000-8000-000000000111',
+    tenantId: '00000000-0000-4000-8000-000000000222',
+  };
+  const approved = {
+    deviceId: credential.deviceId,
+    tenantId: credential.tenantId,
+    approvalStatus: 'approved',
+    isActive: true,
+    hasActiveCredential: true,
+    decisionVersion: '00000000-0000-4000-8000-000000000333',
+    confirmedAt: '2026-11-16T06:00:00.000Z',
+  };
+  assert.equal(deriveDeviceTrustState(credential, approved), 'approved');
+  assert.equal(deriveDeviceTrustState(credential, { ...approved, tenantId: '00000000-0000-4000-8000-000000000999' }), 'awaiting_approval');
+  assert.equal(deriveDeviceTrustState(credential, null), 'awaiting_approval');
+  assert.equal(canAccessLocalPOS('authenticated', deriveDeviceTrustState(credential, null)), false);
 });
 
 test('server approval enables offline-first local operations and eligible sync', () => {
@@ -49,6 +70,10 @@ test('main-process IPC handlers enforce read and write policy independently of r
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8');
   assert.match(source, /tenantId: serverEnrollment\.tenantId/);
   assert.match(source, /getTenantId: \(\) => deviceCredential\?\.tenantId \|\| null/);
+  assert.match(source, /new DeviceApprovalStateStore\(\{ app, safeStorage \}\)/);
+  assert.match(source, /deviceApprovalState = await approvalStateStore\.load\(\)/);
+  assert.match(source, /await approvalStateStore\.save\(persistedDecision\)/);
+  assert.match(source, /deviceTrustState = deriveDeviceTrustState\(deviceCredential, deviceApprovalState\)/);
   assert.match(source, /registerTrustedHandler\('eden:dashboard', \(\) => \{\s*assertLocalReadAccess\(\);/);
   assert.match(source, /registerTrustedHandler\('eden:products:list',[\s\S]*?assertLocalReadAccess\(\);/);
   assert.match(source, /registerTrustedHandler\('eden:pos:get-state',[\s\S]*?assertLocalReadAccess\(\);/);
