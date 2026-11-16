@@ -337,6 +337,7 @@ describe('E2E-01 — activation nominale via le véritable client Electron', () 
     });
 
     const localStatus = await evaluate<any>(socket!, 'window.eden.getDeviceStatus()');
+    expect(enrolledRows.rows[0].key_thumbprint).toBe(localStatus.thumbprint);
     expect(localStatus).toMatchObject({
       isEnrolled: true,
       deviceId: registration.deviceId,
