@@ -1,0 +1,70 @@
+name: Eden Gestion E2E environment
+
+on:
+  pull_request:
+    branches: [validation/full-device-approval-signed-sync-v4]
+    paths:
+      - '.github/workflows/eden-gestion-e2e-environment.yml'
+      - 'electron-app/**'
+      - 'src/**'
+      - 'test/**'
+      - 'migrations/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eden-gestion-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-environment:
+    name: PostgreSQL + OIDC/JWKS + Electron window smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Linux GUI runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client xvfb libgtk-3-0 libnss3 libasound2t64
+
+      - name: Install API and E2E dependencies
+        run: npm ci
+
+      - name: Run real PostgreSQL + local OIDC/JWKS API E2E tests
+        run: npm run test:e2e
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Install Electron dependencies and rebuild native SQLite
+        working-directory: electron-app
+        run: npm ci --no-audit --no-fund
+
+      - name: Run Electron SQLite, outbox and field-failure tests
+        working-directory: electron-app
+        run: |
+          npm test
+          npm run test:field
+
+      - name: Launch the real Electron renderer under a virtual display
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' node scripts/electron-window-smoke.mjs
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-gestion-e2e-environment-diagnostics
+          path: |
+            /tmp/eden-e2e-electron-*
+          if-no-files-found: ignore
