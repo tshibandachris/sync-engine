@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
+const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary, bindTenant } = require('./db/client.cjs');
 const { pullChanges } = require('./sync/api-client.cjs');
 const { pushPendingBatch, closePendingCashSessions } = require('./sync/sync-coordinator.cjs');
 const { getOutboxStatus } = require('./sync/outbox.cjs');
@@ -500,6 +500,10 @@ app.whenReady().then(async () => {
         initialProof,
         expectedThumbprint: attempt.thumbprint,
       });
+
+      // The authenticated server response is the authoritative tenant identity.
+      // bindTenant validates any existing binding and refuses to attach legacy local work silently.
+      bindTenant(db, serverEnrollment.tenantId);
 
       const credential = {
         deviceId: serverEnrollment.deviceId,
