@@ -65,6 +65,9 @@ jobs:
         working-directory: electron-app
         run: npx electron-rebuild -f -w better-sqlite3
 
+      - name: B-04 real Electron safeStorage restart and offline POS write
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' dbus-run-session -- bash scripts/e2e/run-device-approval-restart.sh
+
       - name: Run E2E-01 integrated Electron to API to PostgreSQL activation
         run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' dbus-run-session -- bash scripts/e2e/run-integrated-e2e.sh
 
