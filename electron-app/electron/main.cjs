@@ -80,6 +80,8 @@ async function initializeDeviceToken() {
     deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.tenantId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
   } catch (error) {
     deviceCredentialError = error;
+    // A failed tenant/device binding must not leave a usable in-memory credential.
+    deviceCredential = null;
     deviceCredentialState = 'integrity_error';
     deviceProofReady = false;
     deviceTrustState = 'unregistered';
