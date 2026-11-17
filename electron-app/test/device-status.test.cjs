@@ -108,29 +108,73 @@ test('pending, rejected and revoked are reported as distinct proof-authenticated
   }
 });
 
-test('network and server refusals preserve state by never calling transition callback', async () => {
+test('network failure preserves approval without imposing an authorization lockout', async () => {
   const pair = generateDeviceKeyPair();
-  for (const fetchImpl of [
-    async () => { throw new Error('network unavailable'); },
-    async () => response(403, { code: 'DEVICE_PENDING_APPROVAL', message: 'Pending' }),
+  let transitions = 0;
+  let failure;
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => pair.privateKeyPem,
+    fetchImpl: async () => { throw new Error('network unavailable'); },
+    onStatus: () => { transitions += 1; },
+    onVerificationFailure: (value) => { failure = value; },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'NETWORK_ERROR');
+  assert.equal(failure.requiresReadOnly, false);
+  assert.equal(transitions, 0);
+});
+
+test('HTTP 401 and 403 are classified as authorization refusals requiring read-only mode', async () => {
+  const pair = generateDeviceKeyPair();
+  for (const [statusCode, body, expectedReason] of [
+    [401, { code: 'INVALID_DEVICE_SIGNATURE', message: 'Invalid proof' }, 'AUTHENTICATION_REFUSAL'],
+    [403, { code: 'DEVICE_NOT_FOUND', message: 'Unknown device' }, 'IDENTITY_OR_PROOF_REFUSAL'],
   ]) {
     let transitions = 0;
-    const failures = [];
+    let failure;
     const service = new DeviceStatusService({
       baseUrl: 'https://sync.example.test',
       getAgentToken: () => TOKEN,
       getDeviceId: () => DEVICE_ID,
       getTenantId: () => TENANT_ID,
       getPrivateKeyPem: () => pair.privateKeyPem,
-      fetchImpl,
+      fetchImpl: async () => response(statusCode, body),
       onStatus: () => { transitions += 1; },
-      onVerificationFailure: (failure) => failures.push(failure),
+      onVerificationFailure: (value) => { failure = value; },
     });
     const result = await service.checkStatus();
     assert.equal(result.success, false);
+    assert.equal(result.reason, expectedReason);
+    assert.equal(result.requiresReadOnly, true);
+    assert.equal(failure.requiresReadOnly, true);
+    assert.equal(failure.statusCode, statusCode);
+    assert.equal(failure.code, body.code);
     assert.equal(transitions, 0);
-    assert.equal(failures.length, 1);
-    assert.ok(['NETWORK_ERROR', 'HTTP_REFUSAL'].includes(failures[0].reason));
+  }
+});
+
+test('HTTP 429 and 5xx preserve the confirmed decision without authorization lockout', async () => {
+  const pair = generateDeviceKeyPair();
+  for (const [statusCode, expectedReason] of [[429, 'SERVER_THROTTLED'], [503, 'SERVER_UNAVAILABLE']]) {
+    let failure;
+    const service = new DeviceStatusService({
+      baseUrl: 'https://sync.example.test',
+      getAgentToken: () => TOKEN,
+      getDeviceId: () => DEVICE_ID,
+      getTenantId: () => TENANT_ID,
+      getPrivateKeyPem: () => pair.privateKeyPem,
+      fetchImpl: async () => response(statusCode, { code: 'TEMPORARY_FAILURE', message: 'Retry later' }),
+      onVerificationFailure: (value) => { failure = value; },
+    });
+    const result = await service.checkStatus();
+    assert.equal(result.reason, expectedReason);
+    assert.equal(result.requiresReadOnly, false);
+    assert.equal(failure.requiresReadOnly, false);
   }
 });
 
