@@ -158,6 +158,24 @@ test('HTTP 401 and 403 are classified as authorization refusals requiring read-o
   }
 });
 
+test('malformed HTTP 401 response still requires read-only mode', async () => {
+  const pair = generateDeviceKeyPair();
+  let failure;
+  const service = new DeviceStatusService({
+    baseUrl: 'https://sync.example.test',
+    getAgentToken: () => TOKEN,
+    getDeviceId: () => DEVICE_ID,
+    getTenantId: () => TENANT_ID,
+    getPrivateKeyPem: () => pair.privateKeyPem,
+    fetchImpl: async () => ({ ok: false, status: 401, text: async () => 'not-json' }),
+    onVerificationFailure: (value) => { failure = value; },
+  });
+  const result = await service.checkStatus();
+  assert.equal(result.reason, 'AUTHENTICATION_REFUSAL');
+  assert.equal(result.requiresReadOnly, true);
+  assert.equal(failure.statusCode, 401);
+});
+
 test('HTTP 429 and 5xx preserve the confirmed decision without authorization lockout', async () => {
   const pair = generateDeviceKeyPair();
   for (const [statusCode, expectedReason] of [[429, 'SERVER_THROTTLED'], [503, 'SERVER_UNAVAILABLE']]) {
