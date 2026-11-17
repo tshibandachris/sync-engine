@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { spawnSync } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { openDatabase } = require('../electron/db/client.cjs');
