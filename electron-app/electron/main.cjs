@@ -73,6 +73,10 @@ async function initializeDeviceToken() {
   try {
     deviceCredential = await credentialStore.load();
     deviceCredentialState = deviceCredential ? 'available' : 'missing';
+    if (deviceCredential?.deviceId && deviceCredential?.tenantId) {
+      // Reconcile the persisted local tenant/device binding before restoring any POS permissions.
+      bindTenant(db, deviceCredential.tenantId, deviceCredential.deviceId);
+    }
     deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.tenantId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
   } catch (error) {
     deviceCredentialError = error;
@@ -594,7 +598,7 @@ app.whenReady().then(async () => {
 
       // The authenticated server response is the authoritative tenant identity.
       // bindTenant validates any existing binding and refuses to attach legacy local work silently.
-      bindTenant(db, serverEnrollment.tenantId);
+      bindTenant(db, serverEnrollment.tenantId, serverEnrollment.deviceId);
 
       const credential = {
         deviceId: serverEnrollment.deviceId,
