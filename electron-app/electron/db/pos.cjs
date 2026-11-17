@@ -145,7 +145,8 @@ function createLocalSale(db, input, now = Date.now()) {
 
   // Acquire the SQLite write lock before reading session/stock so concurrent app instances
   // cannot validate the same stale stock snapshot and oversell it.
-  return db.transaction(() => {
+  try {
+    return db.transaction(() => {
     const session = db.prepare(`
       SELECT id, staff_id AS staffId
       FROM cash_sessions
@@ -321,7 +322,16 @@ function createLocalSale(db, input, now = Date.now()) {
       lineCount: saleLines.length,
       createdAt: now,
     };
-  }).immediate();
+    }).immediate();
+  } catch (error) {
+    if (error?.code === 'SQLITE_BUSY' || error?.code === 'SQLITE_LOCKED') {
+      const busyError = new Error('La caisse est momentanément utilisée par une autre opération. Aucune vente n’a été enregistrée ; veuillez réessayer.');
+      busyError.code = 'POS_DATABASE_BUSY';
+      busyError.cause = error;
+      throw busyError;
+    }
+    throw error;
+  }
 }
 
 module.exports = {
