@@ -168,7 +168,7 @@ async function runParent() {
   const output = () => `stdout:\n${stdout}\nstderr:\n${stderr}`;
 
   try {
-    const seed = spawnSync(electronBinary, [
+    const seed = spawn(electronBinary, [
       '--password-store=gnome-libsecret',
       '--no-sandbox',
       '--disable-gpu',
@@ -176,10 +176,32 @@ async function runParent() {
       __filename,
       'seed',
       appDataPath,
-    ], { cwd: ELECTRON_DIR, env, encoding: 'utf8', timeout: 30_000 });
-    if (seed.error) throw seed.error;
-    assert.equal(seed.status, 0, `First Electron process could not persist the approved state.\n${seed.stdout}\n${seed.stderr}`);
-    assert.match(seed.stdout, /B04_SEED_OK backend=gnome_libsecret/);
+    ], { cwd: ELECTRON_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let seedStdout = '';
+    let seedStderr = '';
+    seed.stdout.on('data', (chunk) => { seedStdout += chunk.toString(); });
+    seed.stderr.on('data', (chunk) => { seedStderr += chunk.toString(); });
+
+    const seedExit = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        seed.kill('SIGKILL');
+        reject(new Error(`First Electron seed process timed out after 60 seconds.\\nstdout:\\n${seedStdout}\\nstderr:\\n${seedStderr}`));
+      }, 60_000);
+      seed.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(new Error(`Could not start the first Electron seed process: ${error.message}\\nstdout:\\n${seedStdout}\\nstderr:\\n${seedStderr}`));
+      });
+      seed.once('close', (code, signal) => {
+        clearTimeout(timeout);
+        resolve({ code, signal });
+      });
+    });
+    assert.equal(
+      seedExit.code,
+      0,
+      `First Electron process could not persist the approved state (signal=${seedExit.signal}).\\nstdout:\\n${seedStdout}\\nstderr:\\n${seedStderr}`
+    );
+    assert.match(seedStdout, /B04_SEED_OK backend=gnome_libsecret/);
 
     const port = await getFreePort();
     appProcess = spawn(electronBinary, [
