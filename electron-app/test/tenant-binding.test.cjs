@@ -27,7 +27,7 @@ function fixture() {
 test('a new database runs tenant binding v3 and POS close schema v4', () => {
   const f = fixture();
   try {
-    assert.equal(f.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 4);
+    assert.equal(f.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 5);
     assert.ok(f.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'device_binding'").get());
     const columns = f.db.pragma('table_info(cash_sessions)');
     assert.ok(columns.some((column) => column.name === 'close_requested_at'));
@@ -58,9 +58,10 @@ test('a database already at tenant-binding v3 receives the POS close columns in 
   let db;
   try {
     db = openDatabase({ getPath: () => root });
-    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 4);
+    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 5);
     assert.equal(db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get().tenant_id,
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    assert.equal(db.prepare('SELECT device_id FROM device_binding WHERE singleton = 1').get().device_id, null);
     const columns = db.pragma('table_info(cash_sessions)');
     assert.ok(columns.some((column) => column.name === 'close_requested_at'));
     assert.ok(columns.some((column) => column.name === 'close_sync_state'));
@@ -92,6 +93,47 @@ test('a database bound to another tenant refuses the new identity without deleti
     assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM products').get().n, 1);
     assert.equal(f.db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get().tenant_id,
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  } finally {
+    f.cleanup();
+  }
+});
+
+
+test('a tenant binding is upgraded to a durable device binding and survives restart', () => {
+  const f = fixture();
+  const tenantId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const deviceId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  try {
+    bindTenant(f.db, tenantId, deviceId);
+    f.db.prepare('INSERT INTO products(id, name, price) VALUES (?, ?, ?)').run('p1', 'Cahier', 500);
+    f.db.prepare("INSERT INTO outbox(entity_type, entity_id, operation, payload_json, created_at) VALUES ('sales', 'sale-1', 'create', '{}', 1)").run();
+    f.reopen();
+
+    assert.deepEqual(assertTenantBinding(f.db, tenantId, { deviceId }), {
+      bound: true, tenantId, deviceId,
+    });
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM products').get().n, 1);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM outbox').get().n, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a different device cannot reuse a tenant-bound database and local work remains intact', () => {
+  const f = fixture();
+  const tenantId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const originalDeviceId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const otherDeviceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  try {
+    bindTenant(f.db, tenantId, originalDeviceId);
+    f.db.prepare('INSERT INTO products(id, name, price) VALUES (?, ?, ?)').run('p1', 'Cahier', 500);
+    f.db.prepare("INSERT INTO outbox(entity_type, entity_id, operation, payload_json, created_at) VALUES ('sales', 'sale-1', 'create', '{}', 1)").run();
+
+    assert.throws(() => assertTenantBinding(f.db, tenantId, { deviceId: otherDeviceId }),
+      (error) => error.code === 'LOCAL_DEVICE_MISMATCH');
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM products').get().n, 1);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM outbox').get().n, 1);
+    assert.equal(f.db.prepare('SELECT device_id FROM device_binding WHERE singleton = 1').get().device_id, originalDeviceId);
   } finally {
     f.cleanup();
   }
