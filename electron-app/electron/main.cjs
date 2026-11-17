@@ -340,7 +340,13 @@ function startDeviceStatusPolling() {
           occurredAt: new Date().toISOString(),
         };
         // Keep deviceTrustState and the last confirmed server decision unchanged.
-        status = { ...status, state: 'pending', message: `Vérification du terminal à réessayer (${deviceVerificationError.reason}) : ${deviceVerificationError.message}` };
+        status = {
+          ...status,
+          state: 'pending',
+          message: deviceAuthorizationRefusal
+            ? `Refus serveur (${deviceVerificationError.statusCode || deviceVerificationError.reason}) : caisse en lecture seule et synchronisation suspendue jusqu’à une vérification réussie. Données locales et outbox conservées.`
+            : `Vérification du terminal à réessayer (${deviceVerificationError.reason}) : ${deviceVerificationError.message}`,
+        };
         windowRef?.webContents.send('eden:status', readStatus());
       },
       onStatus: async (serverStatus) => {
