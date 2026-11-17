@@ -31,11 +31,11 @@ async function seedWithRealElectron(appDataPath) {
     const { DeviceCredentialStore } = require(path.join(ELECTRON_DIR, 'electron/auth/device-credential-store.cjs'));
     const { DeviceApprovalStateStore } = require(path.join(ELECTRON_DIR, 'electron/auth/device-approval-state-store.cjs'));
     const { generateDeviceKeyPair } = require(path.join(ELECTRON_DIR, 'electron/auth/device-crypto.cjs'));
-    const { openDatabase } = require(path.join(ELECTRON_DIR, 'electron/db/client.cjs'));
+    const { openDatabase, bindTenant } = require(path.join(ELECTRON_DIR, 'electron/db/client.cjs'));
 
     const token = [
       Buffer.from(JSON.stringify({ alg: 'ES256' })).toString('base64url'),
-      Buffer.from(JSON.stringify({ sub: 'eden-b04-e2e', exp: 4102444800 })).toString('base64url'),
+      Buffer.from(JSON.stringify({ sub: 'eden-b04-e2e', tenantId: TENANT_ID, exp: 4102444800 })).toString('base64url'),
       'AA',
     ].join('.');
     const keyPair = generateDeviceKeyPair();
@@ -62,6 +62,7 @@ async function seedWithRealElectron(appDataPath) {
     await new DeviceApprovalStateStore({ app, safeStorage }).save(decision);
 
     db = openDatabase(app);
+    bindTenant(db, TENANT_ID);
     db.prepare(`
       INSERT INTO staff (id, display_name, role, is_active, created_at, updated_at)
       VALUES (?, ?, ?, 1, ?, ?)
@@ -176,7 +177,7 @@ async function runParent() {
       __filename,
       'seed',
       appDataPath,
-    ], { cwd: ELECTRON_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { cwd: ELECTRON_DIR, env: { ...env, ELECTRON_ENABLE_LOGGING: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
     let seedStdout = '';
     let seedStderr = '';
     seed.stdout.on('data', (chunk) => { seedStdout += chunk.toString(); });
@@ -185,11 +186,11 @@ async function runParent() {
     const seedExit = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         seed.kill('SIGKILL');
-        reject(new Error(`First Electron seed process timed out after 60 seconds.\\nstdout:\\n${seedStdout}\\nstderr:\\n${seedStderr}`));
+        reject(new Error(`First Electron seed process timed out after 60 seconds.\nstdout:\n${seedStdout}\nstderr:\n${seedStderr}`));
       }, 60_000);
       seed.once('error', (error) => {
         clearTimeout(timeout);
-        reject(new Error(`Could not start the first Electron seed process: ${error.message}\\nstdout:\\n${seedStdout}\\nstderr:\\n${seedStderr}`));
+        reject(new Error(`Could not start the first Electron seed process: ${error.message}\nstdout:\n${seedStdout}\nstderr:\n${seedStderr}`));
       });
       seed.once('close', (code, signal) => {
         clearTimeout(timeout);
@@ -199,7 +200,7 @@ async function runParent() {
     assert.equal(
       seedExit.code,
       0,
-      `First Electron process could not persist the approved state (signal=${seedExit.signal}).\\nstdout:\\n${seedStdout}\\nstderr:\\n${seedStderr}`
+      `First Electron process could not persist the approved state (signal=${seedExit.signal}).\nstdout:\n${seedStdout}\nstderr:\n${seedStderr}`
     );
     assert.match(seedStdout, /B04_SEED_OK backend=gnome_libsecret/);
 
@@ -273,14 +274,15 @@ async function runParent() {
   }
 }
 
-if (process.versions.electron && process.argv[2] === 'seed') {
-  seedWithRealElectron(process.argv[3]).catch((error) => {
+const seedIndex = process.versions.electron ? process.argv.indexOf('seed') : -1;
+if (seedIndex !== -1) {
+  seedWithRealElectron(process.argv[seedIndex + 1]).catch((error) => {
     console.error(error);
     process.exitCode = 1;
     const { app } = require('electron');
     app.exit(1);
   });
-} else if (require.main === module) {
+} else if (!process.versions.electron && require.main === module) {
   runParent().catch((error) => {
     console.error(error);
     process.exitCode = 1;
