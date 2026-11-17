@@ -45,6 +45,8 @@ test('opens a local cash session and queues its open-only sync payload', () => {
     assert.equal(listLocalStaff(f.db).length, 1);
     const session = openCashSession(f.db, { staffId: f.staffId, openingAmount: 10000 }, 1000);
     assert.equal(session.staffId, f.staffId);
+    assert.equal(session.status, 'open');
+    assert.equal(listOpenCashSessions(f.db)[0].status, 'open');
     assert.equal(session.openingAmount, 10000);
     assert.equal(session.expectedCash, 10000);
     const batch = preparePushBatch(f.db);
