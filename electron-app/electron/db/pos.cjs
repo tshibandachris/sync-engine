@@ -29,7 +29,7 @@ function listLocalStaff(db) {
 
 function listOpenCashSessions(db) {
   return db.prepare(`
-    SELECT cs.id, cs.staff_id AS staffId, s.display_name AS staffName,
+    SELECT cs.id, cs.status, cs.staff_id AS staffId, s.display_name AS staffName,
            cs.opened_at AS openedAt, cs.opening_amount AS openingAmount,
            cs.notes, cs.close_requested_at AS closeRequestedAt,
            cs.close_closing_amount AS closeClosingAmount,
