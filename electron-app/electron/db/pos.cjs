@@ -143,6 +143,9 @@ function createLocalSale(db, input, now = Date.now()) {
     throw new Error('Le panier doit contenir entre 1 et 100 lignes.');
   }
 
+  // Acquire the SQLite write lock before reading session/stock so concurrent app instances
+  // cannot validate the same stale stock snapshot and oversell it.
+  return db.transaction(() => {
   const session = db.prepare(`
     SELECT id, staff_id AS staffId
     FROM cash_sessions
@@ -321,6 +324,7 @@ function createLocalSale(db, input, now = Date.now()) {
     lineCount: saleLines.length,
     createdAt: now,
   };
+  }).immediate();
 }
 
 module.exports = {
