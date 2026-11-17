@@ -14,6 +14,7 @@ function openDatabase(app) {
     CREATE TABLE IF NOT EXISTS device_binding (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       tenant_id TEXT NOT NULL,
+      device_id TEXT,
       bound_at INTEGER NOT NULL
     );
 
@@ -176,6 +177,7 @@ function openDatabase(app) {
       db.exec(`CREATE TABLE IF NOT EXISTS device_binding (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         tenant_id TEXT NOT NULL,
+        device_id TEXT,
         bound_at INTEGER NOT NULL
       )`);
       db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(3, Date.now());
@@ -195,6 +197,18 @@ function openDatabase(app) {
     migrate();
   }
 
+  // Migration v5 binds the local database to both its tenant and its enrolled device.
+  if (currentVersion < 5) {
+    const migrate = db.transaction(() => {
+      const columns = db.pragma('table_info(device_binding)');
+      if (!columns.some((column) => column.name === 'device_id')) {
+        db.exec('ALTER TABLE device_binding ADD COLUMN device_id TEXT');
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(5, Date.now());
+    });
+    migrate();
+  }
+
   return db;
 }
 
@@ -209,39 +223,61 @@ function hasLocalBusinessData(db) {
   return total > 0;
 }
 
-function assertTenantBinding(db, tenantId, { allowLegacyMigration = false } = {}) {
+function assertTenantBinding(db, tenantId, { allowLegacyMigration = false, deviceId } = {}) {
   const tenantUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (typeof tenantId !== 'string' || !tenantUuid.test(tenantId)) {
     throw new Error('Jeton d’appareil invalide : identifiant d’entreprise UUID absent ou invalide.');
   }
+  if (deviceId !== undefined && (typeof deviceId !== 'string' || !tenantUuid.test(deviceId))) {
+    throw new Error('Identifiant du terminal absent ou invalide.');
+  }
   tenantId = tenantId.toLowerCase();
-  const binding = db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get();
+  if (deviceId !== undefined) deviceId = deviceId.toLowerCase();
+  const binding = db.prepare('SELECT tenant_id, device_id FROM device_binding WHERE singleton = 1').get();
   if (binding) {
     if (binding.tenant_id !== tenantId) {
       const error = new Error('Cette base locale est déjà rattachée à une autre entreprise. Les données hors ligne sont conservées et la synchronisation est bloquée.');
       error.code = 'LOCAL_TENANT_MISMATCH';
       throw error;
     }
-    return { bound: true, tenantId: binding.tenant_id };
+    if (deviceId !== undefined && binding.device_id && binding.device_id !== deviceId) {
+      const error = new Error('Cette base locale est déjà rattachée à un autre terminal. Les données hors ligne et l’outbox sont conservées ; écritures et synchronisation bloquées.');
+      error.code = 'LOCAL_DEVICE_MISMATCH';
+      throw error;
+    }
+    return deviceId === undefined
+      ? { bound: true, tenantId: binding.tenant_id }
+      : { bound: true, tenantId: binding.tenant_id, deviceId: binding.device_id || deviceId, deviceBindingNeedsUpgrade: !binding.device_id };
   }
   if (!allowLegacyMigration && hasLocalBusinessData(db)) {
     const error = new Error('La base locale contient des données sans rattachement d’entreprise. Une vérification contrôlée est nécessaire avant le premier enrôlement. Aucune donnée n’a été supprimée.');
     error.code = 'LOCAL_TENANT_UNBOUND_WITH_DATA';
     throw error;
   }
-  return { bound: false, tenantId };
+  return deviceId === undefined ? { bound: false, tenantId } : { bound: false, tenantId, deviceId };
 }
 
-function bindTenant(db, tenantId, options = {}) {
-  const state = assertTenantBinding(db, tenantId, options);
-  if (state.bound) return state;
-  db.prepare('INSERT INTO device_binding(singleton, tenant_id, bound_at) VALUES (1, ?, ?)')
-    .run(tenantId, Date.now());
-  const persisted = db.prepare('SELECT tenant_id FROM device_binding WHERE singleton = 1').get();
-  if (!persisted || persisted.tenant_id !== tenantId) {
-    throw new Error('Impossible de confirmer le rattachement local à l’entreprise.');
+function bindTenant(db, tenantId, deviceId) {
+  const state = assertTenantBinding(db, tenantId, { deviceId });
+  if (state.bound) {
+    if (deviceId !== undefined && state.deviceBindingNeedsUpgrade) {
+      db.prepare('UPDATE device_binding SET device_id = ? WHERE singleton = 1 AND device_id IS NULL')
+        .run(deviceId.toLowerCase());
+    }
+  } else {
+    db.prepare('INSERT INTO device_binding(singleton, tenant_id, device_id, bound_at) VALUES (1, ?, ?, ?)')
+      .run(tenantId.toLowerCase(), deviceId === undefined ? null : deviceId.toLowerCase(), Date.now());
   }
-  return { bound: true, tenantId: persisted.tenant_id };
+  const persisted = db.prepare('SELECT tenant_id, device_id FROM device_binding WHERE singleton = 1').get();
+  if (!persisted || persisted.tenant_id !== tenantId.toLowerCase() ||
+      (deviceId !== undefined && persisted.device_id !== deviceId.toLowerCase())) {
+    const error = new Error('Impossible de confirmer le rattachement local à l’entreprise et au terminal.');
+    error.code = deviceId !== undefined ? 'LOCAL_DEVICE_BINDING_PERSISTENCE' : 'LOCAL_TENANT_BINDING_PERSISTENCE';
+    throw error;
+  }
+  return deviceId === undefined
+    ? { bound: true, tenantId: persisted.tenant_id }
+    : { bound: true, tenantId: persisted.tenant_id, deviceId: persisted.device_id };
 }
 
 function applyPulledProducts(db, productChanges) {
