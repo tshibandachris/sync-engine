@@ -44,6 +44,7 @@ let deviceCredentialError = null;
 let deviceCredentialState = 'unchecked';
 let deviceVerificationState = 'not_checked';
 let deviceVerificationError = null;
+let deviceAuthorizationRefusal = false;
 let deviceStatusService = null;
 let serverHasActiveCredential = false;
 // The encrypted device credential is the only source of the private key used for request proofs.
@@ -159,8 +160,20 @@ function assertLocalReadAccess() {
   }
 }
 
+function canOperateLocally() {
+  return !deviceAuthorizationRefusal && canAccessLocalPOS(agentAuthState, deviceTrustState);
+}
+
+function canRunDeviceSync() {
+  return !deviceAuthorizationRefusal &&
+    canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential);
+}
+
 function assertBusinessWriteAccess() {
-  if (canAccessLocalPOS(agentAuthState, deviceTrustState)) return;
+  if (canOperateLocally()) return;
+  if (deviceAuthorizationRefusal) {
+    throw new Error('Refus d’authentification ou de preuve du serveur : caisse en lecture seule jusqu’à une vérification serveur réussie. Les données locales et l’outbox sont conservées.');
+  }
   const messages = {
     unregistered: 'Terminal non enregistré : les opérations métier sont bloquées.',
     awaiting_approval: 'Terminal en attente d’approbation : consultation en lecture seule.',
@@ -189,11 +202,12 @@ function readStatus() {
     deviceCredentialState,
     deviceVerificationState,
     deviceVerificationError,
+    deviceAuthorizationRefusal,
     pendingEnrollment: Boolean(pendingEnrollmentAttempt),
     enrollmentAttemptError: enrollmentAttemptError?.message || null,
     canReadLocalData: canReadLocalData(agentAuthState, deviceTrustState),
     canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
-    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
+    canRunSync: canRunDeviceSync(),
     serverHasActiveCredential,
     deviceProofReady,
     lastCursor: db ? getCursor(db) : status.lastCursor,
@@ -241,13 +255,16 @@ async function pushPending() {
 
 async function doSync() {
   if (!canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) {
-    syncState = deviceTrustState === 'revoked' ? 'blocked_revoked'
+    syncState = deviceAuthorizationRefusal ? 'blocked_verification_refusal'
+      : deviceTrustState === 'revoked' ? 'blocked_revoked'
       : deviceTrustState === 'rejected' ? 'blocked_rejected'
       : deviceTrustState === 'deactivated' ? 'blocked_deactivated'
       : deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved'
       : deviceTrustState === 'approved' ? 'blocked_proof_unavailable'
       : 'blocked_unregistered';
-    const message = deviceTrustState === 'revoked'
+    const message = deviceAuthorizationRefusal
+      ? 'Refus d’authentification ou de preuve du serveur : synchronisation suspendue et caisse en lecture seule. Les opérations locales et l’outbox sont conservées.'
+      : deviceTrustState === 'revoked'
       ? 'Terminal révoqué : synchronisation désactivée. Les opérations locales sont conservées.'
       : deviceTrustState === 'rejected'
         ? 'Enrôlement du terminal rejeté : synchronisation désactivée. Les opérations locales sont conservées.'
@@ -312,7 +329,9 @@ function startDeviceStatusPolling() {
       getTenantId: () => deviceCredential?.tenantId || null,
       getPrivateKeyPem: () => deviceCredential?.privateKeyPem || null,
       onVerificationFailure: (failure) => {
-        deviceVerificationState = 'RETRY_REQUIRED';
+        if (failure.requiresReadOnly === true) deviceAuthorizationRefusal = true;
+        deviceVerificationState = deviceAuthorizationRefusal ? 'REFUSAL_READ_ONLY' : 'RETRY_REQUIRED';
+        if (deviceAuthorizationRefusal) syncState = 'blocked_verification_refusal';
         deviceVerificationError = {
           reason: failure.reason || 'VERIFICATION_FAILED',
           code: failure.code || null,
@@ -365,6 +384,7 @@ function startDeviceStatusPolling() {
         deviceApprovalStateError = null;
         deviceVerificationState = 'verified';
         deviceVerificationError = null;
+        deviceAuthorizationRefusal = false;
         serverHasActiveCredential = serverStatus.hasActiveCredential;
         deviceTrustState = deriveDeviceTrustState(deviceCredential, deviceApprovalState);
         syncState = deviceTrustState === 'revoked' ? 'blocked_revoked'
