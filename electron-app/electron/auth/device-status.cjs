@@ -108,10 +108,22 @@ class DeviceStatusService {
       // A failed verification is operational state only: it never changes the last confirmed trust decision or local data.
       const reason = error.code === 'INVALID_JSON' || error.code === 'INVALID_RESPONSE' ? 'INVALID_RESPONSE'
         : error.code === 'LOCAL_APPROVAL_STATE_PERSISTENCE' ? 'LOCAL_STATE_PERSISTENCE_FAILED'
+        : error.status === 401 ? 'AUTHENTICATION_REFUSAL'
+        : error.status === 403 ? 'IDENTITY_OR_PROOF_REFUSAL'
+        : error.status === 429 ? 'SERVER_THROTTLED'
+        : error.status >= 500 ? 'SERVER_UNAVAILABLE'
         : error.status ? 'HTTP_REFUSAL'
         : error.name === 'AbortError' || error.name === 'TimeoutError' ? 'NETWORK_TIMEOUT'
         : 'NETWORK_ERROR';
-      return this.reportFailure({ success: false, reason, error: error.message, statusCode: error.status || null, code: error.code || null });
+      const requiresReadOnly = error.status === 401 || error.status === 403;
+      return this.reportFailure({
+        success: false,
+        reason,
+        requiresReadOnly,
+        error: error.message,
+        statusCode: error.status || null,
+        code: error.code || null,
+      });
     } finally {
       this.checkInProgress = false;
     }
