@@ -245,9 +245,10 @@ function assertTenantBinding(db, tenantId, { allowLegacyMigration = false, devic
       error.code = 'LOCAL_DEVICE_MISMATCH';
       throw error;
     }
-    return deviceId === undefined
-      ? { bound: true, tenantId: binding.tenant_id }
-      : { bound: true, tenantId: binding.tenant_id, deviceId: binding.device_id || deviceId, deviceBindingNeedsUpgrade: !binding.device_id };
+    if (deviceId === undefined) return { bound: true, tenantId: binding.tenant_id };
+    return binding.device_id
+      ? { bound: true, tenantId: binding.tenant_id, deviceId: binding.device_id }
+      : { bound: true, tenantId: binding.tenant_id, deviceId, deviceBindingNeedsUpgrade: true };
   }
   if (!allowLegacyMigration && hasLocalBusinessData(db)) {
     const error = new Error('La base locale contient des données sans rattachement d’entreprise. Une vérification contrôlée est nécessaire avant le premier enrôlement. Aucune donnée n’a été supprimée.');
@@ -257,8 +258,10 @@ function assertTenantBinding(db, tenantId, { allowLegacyMigration = false, devic
   return deviceId === undefined ? { bound: false, tenantId } : { bound: false, tenantId, deviceId };
 }
 
-function bindTenant(db, tenantId, deviceId) {
-  const state = assertTenantBinding(db, tenantId, { deviceId });
+function bindTenant(db, tenantId, deviceIdOrOptions) {
+  const options = deviceIdOrOptions && typeof deviceIdOrOptions === 'object' ? deviceIdOrOptions : {};
+  const deviceId = typeof deviceIdOrOptions === 'string' ? deviceIdOrOptions : undefined;
+  const state = assertTenantBinding(db, tenantId, { ...options, deviceId });
   if (state.bound) {
     if (deviceId !== undefined && state.deviceBindingNeedsUpgrade) {
       db.prepare('UPDATE device_binding SET device_id = ? WHERE singleton = 1 AND device_id IS NULL')
