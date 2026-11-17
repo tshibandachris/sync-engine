@@ -38,6 +38,7 @@ class DeviceCredentialStore {
   validateCredential(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value) ||
         !UUID_RE.test(value.deviceId || '') ||
+        !UUID_RE.test(value.tenantId || '') ||
         typeof value.privateKeyPem !== 'string' ||
         typeof value.publicKeyPem !== 'string' ||
         typeof value.thumbprint !== 'string' ||
@@ -50,6 +51,7 @@ class DeviceCredentialStore {
     }
     return {
       deviceId: value.deviceId,
+      tenantId: value.tenantId,
       privateKeyPem: value.privateKeyPem,
       publicKeyPem: value.publicKeyPem,
       thumbprint: value.thumbprint,

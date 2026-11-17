@@ -2,14 +2,16 @@ const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary } = require('./db/client.cjs');
+const { openDatabase, applyPulledPage, getCursor, listLocalProducts, saveLocalProduct, getDashboardSummary, bindTenant } = require('./db/client.cjs');
 const { pullChanges } = require('./sync/api-client.cjs');
-const { pushPendingBatch } = require('./sync/sync-coordinator.cjs');
+const { pushPendingBatch, closePendingCashSessions } = require('./sync/sync-coordinator.cjs');
 const { getOutboxStatus } = require('./sync/outbox.cjs');
+const { listLocalStaff, listOpenCashSessions, listRecentClosedCashSession, openCashSession, requestCashSessionClose, createLocalSale } = require('./db/pos.cjs');
 const { DeviceTokenStore } = require('./auth/device-token-store.cjs');
 const { DeviceCredentialStore } = require('./auth/device-credential-store.cjs');
+const { DeviceApprovalStateStore } = require('./auth/device-approval-state-store.cjs');
 const { DeviceEnrollmentAttemptStore } = require('./auth/device-enrollment-attempt-store.cjs');
-const { deriveDeviceTrustState, canAccessLocalPOS, canRunSync } = require('./auth/device-state.cjs');
+const { deriveDeviceTrustState, canAccessLocalPOS, canReadLocalData, canRunSync } = require('./auth/device-state.cjs');
 const { DeviceStatusService } = require('./auth/device-status.cjs');
 const { generateDeviceKeyPair, createInitialEnrollmentProof } = require('./auth/device-crypto.cjs');
 const { enrollDevice: enrollDeviceWithProof } = require('./auth/device-enrollment-client.cjs');
@@ -20,6 +22,9 @@ const {
   validateEnrollmentCredentials,
   validateDeviceEnrollmentInput,
   validateProductInput,
+  validateOpenCashSessionInput,
+  validateCreateSaleInput,
+  validateCloseCashSessionInput,
 } = require('./security/ipc-security.cjs');
 
 let db;
@@ -28,11 +33,18 @@ let tokenStore;
 let deviceToken;
 let tokenStoreError;
 let credentialStore;
+let approvalStateStore;
+let deviceApprovalState = null;
+let deviceApprovalStateError = null;
 let enrollmentAttemptStore;
 let pendingEnrollmentAttempt = null;
 let enrollmentAttemptError = null;
 let deviceCredential = null;
 let deviceCredentialError = null;
+let deviceCredentialState = 'unchecked';
+let deviceVerificationState = 'not_checked';
+let deviceVerificationError = null;
+let deviceAuthorizationRefusal = false;
 let deviceStatusService = null;
 let serverHasActiveCredential = false;
 // The encrypted device credential is the only source of the private key used for request proofs.
@@ -55,17 +67,46 @@ function requireDeviceToken() {
 async function initializeDeviceToken() {
   tokenStore = new DeviceTokenStore({ app, safeStorage });
   credentialStore = new DeviceCredentialStore({ app, safeStorage });
+  approvalStateStore = new DeviceApprovalStateStore({ app, safeStorage });
   enrollmentAttemptStore = new DeviceEnrollmentAttemptStore({ app, safeStorage });
   deviceToken = await tokenStore.load();
   try {
     deviceCredential = await credentialStore.load();
-    deviceTrustState = deriveDeviceTrustState(deviceCredential);
-    deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
+    deviceCredentialState = deviceCredential ? 'available' : 'missing';
+    if (deviceCredential?.deviceId && deviceCredential?.tenantId) {
+      // Reconcile the persisted local tenant/device binding before restoring any POS permissions.
+      bindTenant(db, deviceCredential.tenantId, deviceCredential.deviceId);
+    }
+    deviceProofReady = Boolean(deviceCredential?.deviceId && deviceCredential?.tenantId && deviceCredential?.privateKeyPem && deviceCredential?.algorithm === 'ES256');
   } catch (error) {
     deviceCredentialError = error;
+    // A failed tenant/device binding must not leave a usable in-memory credential.
+    deviceCredential = null;
+    deviceCredentialState = 'integrity_error';
     deviceProofReady = false;
     deviceTrustState = 'unregistered';
     console.error('[device] encrypted credential unavailable; sync remains fail-closed:', error.message);
+  }
+  if (deviceCredential) {
+    try {
+      deviceApprovalState = await approvalStateStore.load();
+      if (deviceApprovalState &&
+          (deviceApprovalState.deviceId !== deviceCredential.deviceId ||
+           deviceApprovalState.tenantId !== deviceCredential.tenantId)) {
+        throw new Error('Cached approval decision is bound to a different device or tenant.');
+      }
+      deviceTrustState = deriveDeviceTrustState(deviceCredential, deviceApprovalState);
+      serverHasActiveCredential = deviceApprovalState?.hasActiveCredential === true;
+    } catch (error) {
+      deviceApprovalStateError = error;
+      deviceApprovalState = null;
+      deviceTrustState = 'awaiting_approval';
+      serverHasActiveCredential = false;
+      console.error('[device] encrypted approval decision unavailable; local writes remain blocked:', error.message);
+    }
+  } else {
+    deviceTrustState = 'unregistered';
+    serverHasActiveCredential = false;
   }
   try {
     pendingEnrollmentAttempt = await enrollmentAttemptStore.load();
@@ -119,6 +160,36 @@ function getDeviceFingerprint(hardwareInfo) {
     .digest('hex');
 }
 
+function assertLocalReadAccess() {
+  if (!canReadLocalData(agentAuthState, deviceTrustState)) {
+    throw new Error('Consultation locale indisponible : le terminal doit d’abord être enregistré auprès du serveur.');
+  }
+}
+
+function canOperateLocally() {
+  return !deviceAuthorizationRefusal && canAccessLocalPOS(agentAuthState, deviceTrustState);
+}
+
+function canRunDeviceSync() {
+  return !deviceAuthorizationRefusal &&
+    canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential);
+}
+
+function assertBusinessWriteAccess() {
+  if (canOperateLocally()) return;
+  if (deviceAuthorizationRefusal) {
+    throw new Error('Refus d’authentification ou de preuve du serveur : caisse en lecture seule jusqu’à une vérification serveur réussie. Les données locales et l’outbox sont conservées.');
+  }
+  const messages = {
+    unregistered: 'Terminal non enregistré : les opérations métier sont bloquées.',
+    awaiting_approval: 'Terminal en attente d’approbation : consultation en lecture seule.',
+    rejected: 'Terminal rejeté : consultation en lecture seule, aucune écriture métier autorisée.',
+    revoked: 'Terminal révoqué : consultation en lecture seule, aucune écriture métier autorisée.',
+    deactivated: 'Terminal désactivé : consultation en lecture seule, aucune écriture métier autorisée.',
+  };
+  throw new Error(messages[deviceTrustState] || 'Une approbation serveur est requise avant toute opération métier.');
+}
+
 function readStatus() {
   const outbox = db ? getOutboxStatus(db) : { pending: status.outboxPending, failed: status.outboxFailed };
   return {
@@ -131,10 +202,18 @@ function readStatus() {
     deviceId: deviceCredential?.deviceId || null,
     deviceThumbprint: deviceCredential?.thumbprint || null,
     deviceCredentialError: deviceCredentialError?.message || null,
+    deviceApprovalStateError: deviceApprovalStateError?.message || null,
+    approvalDecisionVersion: deviceApprovalState?.decisionVersion || null,
+    approvalConfirmedAt: deviceApprovalState?.confirmedAt || null,
+    deviceCredentialState,
+    deviceVerificationState,
+    deviceVerificationError,
+    deviceAuthorizationRefusal,
     pendingEnrollment: Boolean(pendingEnrollmentAttempt),
     enrollmentAttemptError: enrollmentAttemptError?.message || null,
-    canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
-    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
+    canReadLocalData: canReadLocalData(agentAuthState, deviceTrustState),
+    canOperateLocally: canOperateLocally(),
+    canRunSync: canRunDeviceSync(),
     serverHasActiveCredential,
     deviceProofReady,
     lastCursor: db ? getCursor(db) : status.lastCursor,
@@ -181,14 +260,17 @@ async function pushPending() {
 }
 
 async function doSync() {
-  if (!canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) {
-    syncState = deviceTrustState === 'revoked' ? 'blocked_revoked'
+  if (!canRunDeviceSync()) {
+    syncState = deviceAuthorizationRefusal ? 'blocked_verification_refusal'
+      : deviceTrustState === 'revoked' ? 'blocked_revoked'
       : deviceTrustState === 'rejected' ? 'blocked_rejected'
       : deviceTrustState === 'deactivated' ? 'blocked_deactivated'
       : deviceTrustState === 'awaiting_approval' ? 'blocked_unapproved'
       : deviceTrustState === 'approved' ? 'blocked_proof_unavailable'
       : 'blocked_unregistered';
-    const message = deviceTrustState === 'revoked'
+    const message = deviceAuthorizationRefusal
+      ? 'Refus d’authentification ou de preuve du serveur : synchronisation suspendue et caisse en lecture seule. Les opérations locales et l’outbox sont conservées.'
+      : deviceTrustState === 'revoked'
       ? 'Terminal révoqué : synchronisation désactivée. Les opérations locales sont conservées.'
       : deviceTrustState === 'rejected'
         ? 'Enrôlement du terminal rejeté : synchronisation désactivée. Les opérations locales sont conservées.'
@@ -212,14 +294,15 @@ async function doSync() {
     // Pull reference data first (products, staff, sessions) before pushing queued sales.
     const initialPull = await pullAll();
     const push = await pushPending();
+    const closure = await closePendingCashSessions({ db, baseUrl: process.env.EDEN_SYNC_URL, token: requireDeviceToken(), deviceId: deviceCredential?.deviceId, privateKeyPem: deviceCredential?.privateKeyPem });
     // Pull once more to receive authoritative versions and server-assigned sync sequences.
-    const finalPull = push.sent ? await pullAll() : initialPull;
+    const finalPull = (push.sent || closure.closed > 0) ? await pullAll() : initialPull;
     const outbox = getOutboxStatus(db);
     syncState = 'idle';
     status = {
       ...status,
-      state: outbox.pending > 0 ? 'pending' : 'synced',
-      message: `Sync terminée : pull ${finalPull.productsProcessed} produit(s), curseur ${finalPull.cursor}; outbox ${outbox.pending} en attente (${outbox.failed} avec erreur).`,
+      state: outbox.pending > 0 || closure.retained > 0 ? 'pending' : 'synced',
+      message: `Sync terminée : pull ${finalPull.productsProcessed} produit(s), curseur ${finalPull.cursor}; outbox ${outbox.pending} en attente (${outbox.failed} avec erreur); clôtures confirmées ${closure.closed}, en attente ${closure.retained}.`,
       lastCursor: finalPull.cursor,
       outboxPending: outbox.pending,
       outboxFailed: outbox.failed,
@@ -249,11 +332,73 @@ function startDeviceStatusPolling() {
       baseUrl: process.env.EDEN_SYNC_URL,
       getAgentToken: () => deviceToken,
       getDeviceId: () => deviceCredential?.deviceId || null,
+      getTenantId: () => deviceCredential?.tenantId || null,
       getPrivateKeyPem: () => deviceCredential?.privateKeyPem || null,
-      onStatus: (serverStatus) => {
+      onVerificationFailure: (failure) => {
+        if (failure.requiresReadOnly === true) deviceAuthorizationRefusal = true;
+        deviceVerificationState = deviceAuthorizationRefusal ? 'REFUSAL_READ_ONLY' : 'RETRY_REQUIRED';
+        if (deviceAuthorizationRefusal) syncState = 'blocked_verification_refusal';
+        deviceVerificationError = {
+          reason: failure.reason || 'VERIFICATION_FAILED',
+          code: failure.code || null,
+          statusCode: failure.statusCode || null,
+          message: failure.error || 'La vérification du statut serveur a échoué.',
+          occurredAt: new Date().toISOString(),
+        };
+        // Keep deviceTrustState and the last confirmed server decision unchanged.
+        status = {
+          ...status,
+          state: 'pending',
+          message: deviceAuthorizationRefusal
+            ? `Refus serveur (${deviceVerificationError.statusCode || deviceVerificationError.reason}) : caisse en lecture seule et synchronisation suspendue jusqu’à une vérification réussie. Données locales et outbox conservées.`
+            : `Vérification du terminal à réessayer (${deviceVerificationError.reason}) : ${deviceVerificationError.message}`,
+        };
+        windowRef?.webContents.send('eden:status', readStatus());
+      },
+      onStatus: async (serverStatus) => {
+        const nextDecision = {
+          deviceId: serverStatus.deviceId,
+          tenantId: serverStatus.tenantId,
+          approvalStatus: serverStatus.approvalStatus,
+          isActive: serverStatus.isActive,
+          hasActiveCredential: serverStatus.hasActiveCredential,
+        };
+        const sameDecision = deviceApprovalState &&
+          deviceApprovalState.deviceId === nextDecision.deviceId &&
+          deviceApprovalState.tenantId === nextDecision.tenantId &&
+          deviceApprovalState.approvalStatus === nextDecision.approvalStatus &&
+          deviceApprovalState.isActive === nextDecision.isActive &&
+          deviceApprovalState.hasActiveCredential === nextDecision.hasActiveCredential;
+        const serverTime = typeof serverStatus.serverTime === 'string' &&
+          Number.isFinite(Date.parse(serverStatus.serverTime))
+          ? new Date(serverStatus.serverTime).toISOString()
+          : new Date().toISOString();
+        const persistedDecision = {
+          ...nextDecision,
+          decisionVersion: sameDecision ? deviceApprovalState.decisionVersion : crypto.randomUUID(),
+          confirmedAt: serverTime,
+        };
+        try {
+          if (!approvalStateStore) throw new Error('Encrypted approval decision store is unavailable.');
+          await approvalStateStore.save(persistedDecision);
+        } catch (error) {
+          deviceApprovalStateError = error;
+          // A valid server response that cannot be durably recorded must not
+          // leave this running process writable under an older approval.
+          deviceTrustState = 'awaiting_approval';
+          serverHasActiveCredential = false;
+          syncState = 'blocked_unapproved';
+          error.code = 'LOCAL_APPROVAL_STATE_PERSISTENCE';
+          throw error;
+        }
+        // Only mutate the active trust decision after its encrypted durable write succeeds.
+        deviceApprovalState = persistedDecision;
+        deviceApprovalStateError = null;
+        deviceVerificationState = 'verified';
+        deviceVerificationError = null;
+        deviceAuthorizationRefusal = false;
         serverHasActiveCredential = serverStatus.hasActiveCredential;
-        deviceTrustState = !serverStatus.isActive ? 'deactivated' : serverStatus.approvalStatus === 'pending_approval'
-          ? 'awaiting_approval' : serverStatus.approvalStatus;
+        deviceTrustState = deriveDeviceTrustState(deviceCredential, deviceApprovalState);
         syncState = deviceTrustState === 'revoked' ? 'blocked_revoked'
           : deviceTrustState === 'rejected' ? 'blocked_rejected'
           : deviceTrustState === 'deactivated' ? 'blocked_deactivated'
@@ -270,7 +415,7 @@ function startDeviceStatusPolling() {
             : `Statut serveur du terminal : ${serverStatus.approvalStatus}.`,
         };
         windowRef?.webContents.send('eden:status', readStatus());
-        if (canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential)) {
+        if (canRunDeviceSync()) {
           void doSync();
         }
       },
@@ -329,8 +474,8 @@ app.whenReady().then(async () => {
     thumbprint: deviceCredential?.thumbprint || null,
     trustState: deviceTrustState,
     syncState,
-    canOperateLocally: canAccessLocalPOS(agentAuthState, deviceTrustState),
-    canRunSync: canRunSync(agentAuthState, deviceTrustState, deviceProofReady && serverHasActiveCredential),
+    canOperateLocally: canOperateLocally(),
+    canRunSync: canRunDeviceSync(),
     serverHasActiveCredential,
     deviceProofReady,
   }));
@@ -453,23 +598,35 @@ app.whenReady().then(async () => {
         expectedThumbprint: attempt.thumbprint,
       });
 
+      // The authenticated server response is the authoritative tenant identity.
+      // bindTenant validates any existing binding and refuses to attach legacy local work silently.
+      bindTenant(db, serverEnrollment.tenantId, serverEnrollment.deviceId);
+
       const credential = {
         deviceId: serverEnrollment.deviceId,
+        tenantId: serverEnrollment.tenantId,
         privateKeyPem: attempt.privateKeyPem,
         publicKeyPem: attempt.publicKeyPem,
         thumbprint: attempt.thumbprint,
         algorithm: 'ES256',
       };
+      await approvalStateStore.clear();
+      deviceApprovalState = null;
+      deviceApprovalStateError = null;
       await credentialStore.save(credential);
       const storedCredential = await credentialStore.load();
       if (!storedCredential || storedCredential.deviceId !== serverEnrollment.deviceId ||
+          storedCredential.tenantId !== serverEnrollment.tenantId ||
           storedCredential.thumbprint !== attempt.thumbprint) {
         throw new Error('La vérification de la credential chiffrée a échoué.');
       }
 
       deviceCredential = storedCredential;
       deviceCredentialError = null;
-      deviceProofReady = Boolean(storedCredential.deviceId && storedCredential.privateKeyPem && storedCredential.algorithm === 'ES256');
+      deviceCredentialState = 'available';
+      deviceVerificationState = 'not_checked';
+      deviceVerificationError = null;
+      deviceProofReady = Boolean(storedCredential.deviceId && storedCredential.tenantId && storedCredential.privateKeyPem && storedCredential.algorithm === 'ES256');
       serverHasActiveCredential = true;
       // Never infer approval from the enrollment response. The status endpoint
       // is queried immediately and remains the only source of trust transitions.
@@ -524,14 +681,48 @@ app.whenReady().then(async () => {
   });
 
   registerTrustedHandler('eden:refresh', () => doSync());
-  registerTrustedHandler('eden:dashboard', () => getDashboardSummary(db));
-  registerTrustedHandler('eden:products:list', (search = '') =>
-    listLocalProducts(db, { search: validateSearchQuery(search) }));
+  registerTrustedHandler('eden:dashboard', () => {
+    assertLocalReadAccess();
+    return getDashboardSummary(db);
+  });
+  registerTrustedHandler('eden:products:list', (search = '') => {
+    assertLocalReadAccess();
+    return listLocalProducts(db, { search: validateSearchQuery(search) });
+  });
   registerTrustedHandler('eden:products:save', (input) => {
+    assertBusinessWriteAccess();
     const product = saveLocalProduct(db, validateProductInput(input));
     status = { ...status, outboxPending: getOutboxStatus(db).pending };
     windowRef?.webContents.send('eden:status', readStatus());
     return product;
+  });
+  registerTrustedHandler('eden:pos:get-state', () => {
+    assertLocalReadAccess();
+    return { staff: listLocalStaff(db), cashSessions: listOpenCashSessions(db), recentClosedSession: listRecentClosedCashSession(db) };
+  });
+  registerTrustedHandler('eden:pos:open-session', (input) => {
+    assertBusinessWriteAccess();
+    const session = openCashSession(db, validateOpenCashSessionInput(input));
+    status = { ...status, state: 'pending', message: 'Session de caisse locale en attente de synchronisation.', outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    if (canRunDeviceSync()) void doSync();
+    return session;
+  });
+  registerTrustedHandler('eden:pos:create-sale', (input) => {
+    assertBusinessWriteAccess();
+    const sale = createLocalSale(db, validateCreateSaleInput(input));
+    status = { ...status, state: 'pending', message: 'Vente locale enregistrée ; synchronisation en attente.', outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    if (canRunDeviceSync()) void doSync();
+    return sale;
+  });
+  registerTrustedHandler('eden:pos:close-session', (input) => {
+    assertBusinessWriteAccess();
+    const request = requestCashSessionClose(db, validateCloseCashSessionInput(input));
+    status = { ...status, state: 'pending', message: 'Clôture locale demandée ; confirmation serveur en attente.', outboxPending: getOutboxStatus(db).pending };
+    windowRef?.webContents.send('eden:status', readStatus());
+    if (canRunDeviceSync()) void doSync();
+    return request;
   });
   createWindow();
   startDeviceStatusPolling();

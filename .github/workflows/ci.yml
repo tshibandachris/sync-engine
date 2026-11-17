@@ -53,10 +53,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: B-03 real beforeAll failure and external cleanup proof
+        run: npm run test:e2e:setup-failure
+
+      - name: B-03 nominal E2E and JWKS-to-auth environment isolation chain
+        run: npm run test:e2e:b03-chain
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
       - name: TypeScript check
         run: npx tsc --noEmit
 
-      - name: Integration tests
+      - name: Full integration suite
         run: npx vitest run --reporter=verbose
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'

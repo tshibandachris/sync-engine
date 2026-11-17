@@ -66,6 +66,35 @@ function validateDeviceEnrollmentInput(value) {
   return { activationCode, deviceName };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validateOpenCashSessionInput(value) {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['staffId', 'openingAmount', 'terminalLabel'].includes(key))) throw new Error('Invalid cash session input.');
+  if (typeof value.staffId !== 'string' || !UUID_RE.test(value.staffId) || !Number.isSafeInteger(value.openingAmount) || value.openingAmount < 0) {
+    throw new Error('Le caissier et le fond de caisse doivent être valides.');
+  }
+  if (value.terminalLabel !== undefined && value.terminalLabel !== null && (typeof value.terminalLabel !== 'string' || value.terminalLabel.length > 40)) throw new Error('Nom du terminal invalide.');
+  return { staffId: value.staffId, openingAmount: value.openingAmount, terminalLabel: value.terminalLabel ?? null };
+}
+
+function validateCloseCashSessionInput(value) {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['cashSessionId', 'closingAmount', 'notes'].includes(key)) || typeof value.cashSessionId !== 'string' || !UUID_RE.test(value.cashSessionId) || !Number.isSafeInteger(value.closingAmount) || value.closingAmount < 0 || (value.notes !== undefined && value.notes !== null && (typeof value.notes !== 'string' || value.notes.length > 500))) throw new Error('Invalid cash-session close input.');
+  return { cashSessionId: value.cashSessionId, closingAmount: value.closingAmount, notes: value.notes ?? null };
+}
+
+function validateCreateSaleInput(value) {
+  const allowed = new Set(['cashSessionId', 'lines', 'paymentMethod', 'cashAmount', 'mobileAmount', 'mobileMsisdn', 'mobileReference', 'customerNote']);
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !allowed.has(key)) || typeof value.cashSessionId !== 'string' || !UUID_RE.test(value.cashSessionId) || !Array.isArray(value.lines) || value.lines.length < 1 || value.lines.length > 100) throw new Error('Invalid sale input.');
+  const lines = value.lines.map((line) => {
+    if (!isPlainRecord(line) || Object.keys(line).some((key) => !['productId', 'quantity'].includes(key)) || typeof line.productId !== 'string' || !UUID_RE.test(line.productId) || !Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 100000) throw new Error('Une ligne du panier est invalide.');
+    return { productId: line.productId, quantity: line.quantity };
+  });
+  if (!['cash', 'mobile_money', 'mixed'].includes(value.paymentMethod) || !Number.isSafeInteger(value.cashAmount) || value.cashAmount < 0 || !Number.isSafeInteger(value.mobileAmount) || value.mobileAmount < 0) throw new Error('Mode ou répartition du paiement invalide.');
+  const limits = { mobileMsisdn: 20, mobileReference: 64, customerNote: 200 };
+  for (const [field, max] of Object.entries(limits)) if (value[field] !== undefined && value[field] !== null && (typeof value[field] !== 'string' || value[field].length > max)) throw new Error('Champ invalide : ' + field + '.');
+  return { cashSessionId: value.cashSessionId, lines, paymentMethod: value.paymentMethod, cashAmount: value.cashAmount, mobileAmount: value.mobileAmount, mobileMsisdn: value.mobileMsisdn ?? null, mobileReference: value.mobileReference ?? null, customerNote: value.customerNote ?? null };
+}
+
 function validateProductInput(value) {
   if (!isPlainRecord(value) || Object.keys(value).some((key) => !PRODUCT_FIELDS.has(key))) {
     throw new Error('Invalid product input.');
@@ -114,4 +143,7 @@ module.exports = {
   validateEnrollmentCredentials,
   validateDeviceEnrollmentInput,
   validateProductInput,
+  validateOpenCashSessionInput,
+  validateCreateSaleInput,
+  validateCloseCashSessionInput,
 };

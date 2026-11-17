@@ -10,6 +10,26 @@ let container: Awaited<ReturnType<PostgreSqlContainer['start']>>;
 let admin: Pool;
 let root: string;
 let counter = 0;
+const databasePools = new Set<Pool>();
+const unexpectedPoolErrors: Error[] = [];
+
+function trackPool(pool: Pool): Pool {
+  databasePools.add(pool);
+  pool.on('error', (error: Error & { code?: string }) => {
+    if (error.code !== '57P01') unexpectedPoolErrors.push(error);
+  });
+  return pool;
+}
+
+async function closeTrackedPool(pool: Pool): Promise<void> {
+  if (!databasePools.has(pool)) return;
+  await pool.end();
+  databasePools.delete(pool);
+}
+
+async function closeDatabasePools(): Promise<void> {
+  await Promise.all([...databasePools].map((pool) => closeTrackedPool(pool)));
+}
 const script = path.resolve('scripts/migrate.sh');
 
 beforeAll(async () => {
@@ -19,13 +39,16 @@ beforeAll(async () => {
     host: container.getHost(), port: container.getPort(), database: 'postgres',
     user: 'postgres', password: 'postgres',
   });
+  admin.on('error', (error: Error) => unexpectedPoolErrors.push(error));
   root = await mkdtemp(path.join(tmpdir(), 'migrate-resume-'));
 }, 180_000);
 
 afterAll(async () => {
+  await closeDatabasePools();
   await admin?.end();
   await container?.stop();
   if (root) await rm(root, { recursive: true, force: true });
+  expect(unexpectedPoolErrors).toEqual([]);
 }, 30_000);
 
 async function database(): Promise<string> {
@@ -34,6 +57,8 @@ async function database(): Promise<string> {
   return name;
 }
 async function cleanup(name: string, dir: string): Promise<void> {
+  // Release every test-owned client before PostgreSQL force-drops this database.
+  await closeDatabasePools();
   await admin.query('DROP DATABASE IF EXISTS "' + name + '" WITH (FORCE)');
   await rm(dir, { recursive: true, force: true });
 }
@@ -66,27 +91,27 @@ function run(db: string, dir: string): Promise<{ code: number; output: string }>
   });
 }
 async function query(db: string, sql: string): Promise<any> {
-  const pool = new Pool({
+  const pool = trackPool(new Pool({
     host: container.getHost(), port: container.getPort(), database: db,
     user: 'postgres', password: 'postgres',
-  });
+  }));
   try {
     const r = await pool.query(sql);
     const value = r.rows[0] ? Object.values(r.rows[0])[0] : undefined;
     return typeof value === 'string' && value !== '' && Number.isFinite(Number(value))
       ? Number(value)
       : value;
-  } finally { await pool.end(); }
+  } finally { await closeTrackedPool(pool); }
 }
 async function ledger(db: string): Promise<string[]> {
-  const pool = new Pool({
+  const pool = trackPool(new Pool({
     host: container.getHost(), port: container.getPort(), database: db,
     user: 'postgres', password: 'postgres',
-  });
+  }));
   try {
     const r = await pool.query('SELECT filename FROM public.schema_migrations ORDER BY filename');
     return r.rows.map((x: { filename: string }) => x.filename);
-  } finally { await pool.end(); }
+  } finally { await closeTrackedPool(pool); }
 }
 
 describe('scripts/migrate.sh transactional resume on PostgreSQL 16', () => {
@@ -117,12 +142,12 @@ describe('scripts/migrate.sh transactional resume on PostgreSQL 16', () => {
   it('serializes two concurrent runs without duplicate migration effects or ledger rows', async () => {
     const db = await database(); const dir = await directory();
     try {
-      const setup = new Pool({
+      const setup = trackPool(new Pool({
         host: container.getHost(), port: container.getPort(), database: db,
         user: 'postgres', password: 'postgres',
-      });
+      }));
       await setup.query('CREATE TABLE schema_migrations (filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
-      await setup.end();
+      await closeTrackedPool(setup);
       await migration(dir, '001_slow.sql', 'SELECT pg_sleep(1); CREATE TABLE run_once (n integer); INSERT INTO run_once VALUES (1);');
       await migration(dir, '002_next.sql', 'CREATE TABLE after_lock (id integer);');
       const results = await Promise.all([run(db, dir), run(db, dir)]);

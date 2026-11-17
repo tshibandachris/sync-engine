@@ -1,0 +1,92 @@
+name: Eden Gestion E2E — integrated acceptance
+
+on:
+  pull_request:
+    branches: [validation/full-device-approval-signed-sync-v4]
+    paths:
+      - '.github/workflows/eden-gestion-e2e-environment.yml'
+      - 'electron-app/**'
+      - 'src/**'
+      - 'test/**'
+      - 'migrations/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eden-gestion-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-environment:
+    name: E2E-01 real Electron + API + PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Linux GUI runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client sqlite3 xvfb dbus-x11 gnome-keyring libgtk-3-0t64 libnss3 libasound2t64
+
+      - name: Install API and E2E dependencies
+        run: npm ci
+
+      - name: Run real PostgreSQL + local OIDC/JWKS API E2E tests
+        run: npm run test:e2e
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Install Electron dependencies
+        working-directory: electron-app
+        run: npm ci --no-audit --no-fund
+
+      - name: Build SQLite native module for the Node.js test runtime
+        working-directory: electron-app
+        run: npm rebuild better-sqlite3
+
+      - name: Run Electron SQLite, outbox and field-failure tests
+        working-directory: electron-app
+        run: |
+          npm test
+          npm run test:field
+
+      - name: Rebuild SQLite native module for the Electron runtime
+        working-directory: electron-app
+        run: npx electron-rebuild -f -w better-sqlite3
+
+      - name: B-04 real Electron safeStorage restart and offline POS write
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' dbus-run-session -- bash scripts/e2e/run-device-approval-restart.sh
+
+      - name: Run E2E-01 integrated Electron to API to PostgreSQL activation
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' dbus-run-session -- bash scripts/e2e/run-integrated-e2e.sh
+
+      - name: Upload E2E-01 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-gestion-e2e-01-evidence
+          path: artifacts/e2e-01-evidence.json
+          if-no-files-found: warn
+
+      - name: Launch the real Electron renderer under a virtual display
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24' node scripts/electron-window-smoke.mjs
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-gestion-e2e-environment-diagnostics
+          path: |
+            /tmp/eden-e2e-electron-*
+          if-no-files-found: ignore

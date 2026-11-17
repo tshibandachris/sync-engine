@@ -35,7 +35,7 @@ export class CashSessionService {
 
     return withTenant(this.db, tenantId, async (tx) => {
       const locked = await tx.execute(sql`
-        SELECT id, staff_id, status, opening_amount, closed_at, notes
+        SELECT id, staff_id, status, opened_at, opening_amount, closed_at, closing_amount, expected_amount, difference, notes, sync_seq
         FROM cash_sessions
         WHERE id = ${id}::uuid AND tenant_id = ${tenantId}::uuid
         FOR UPDATE
@@ -43,7 +43,16 @@ export class CashSessionService {
       const session = locked.rows[0] as Record<string, unknown> | undefined;
       if (!session) throw new NotFoundException('Session de caisse introuvable.');
       if (session.status === 'closed') {
-        throw new ConflictException('Cette session de caisse est déjà clôturée.');
+        if (Number(session.closing_amount) === body.closingAmount && (body.notes === undefined || body.notes === session.notes)) {
+          return {
+            id: String(session.id), staffId: String(session.staff_id), status: 'closed',
+            openedAt: Number(session.opened_at), closedAt: Number(session.closed_at),
+            openingAmount: Number(session.opening_amount), closingAmount: Number(session.closing_amount),
+            expectedAmount: Number(session.expected_amount), difference: Number(session.difference),
+            notes: session.notes === null ? null : String(session.notes), syncSeq: Number(session.sync_seq),
+          };
+        }
+        throw new ConflictException('Cette session de caisse est déjà clôturée avec un autre montant.');
       }
 
       const totals = await tx.execute(sql`

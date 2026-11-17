@@ -13,5 +13,8 @@ export default defineConfig({
     // across files so the Testcontainers containers do not contend.
     maxWorkers: 1,
     isolate: false,
+    // Also restore values changed through vi.stubEnv in any suite.
+    // Direct process.env assignments are restored explicitly by their owning suite.
+    unstubEnvs: true,
   },
 });
