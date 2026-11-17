@@ -80,7 +80,12 @@ class DeviceStatusService {
       const raw = await response.text();
       let body;
       try { body = raw ? JSON.parse(raw) : {}; }
-      catch { const error = new Error(`Device status API returned invalid JSON (HTTP ${response.status}).`); error.code = 'INVALID_JSON'; throw error; }
+      catch {
+        const error = new Error(`Device status API returned invalid JSON (HTTP ${response.status}).`);
+        error.code = 'INVALID_JSON';
+        error.status = response.status;
+        throw error;
+      }
       if (!response.ok) {
         const error = new Error(body?.message || body?.code || `HTTP ${response.status}`);
         error.status = response.status;
@@ -106,10 +111,10 @@ class DeviceStatusService {
       return { success: true, ...status };
     } catch (error) {
       // A failed verification is operational state only: it never changes the last confirmed trust decision or local data.
-      const reason = error.code === 'INVALID_JSON' || error.code === 'INVALID_RESPONSE' ? 'INVALID_RESPONSE'
-        : error.code === 'LOCAL_APPROVAL_STATE_PERSISTENCE' ? 'LOCAL_STATE_PERSISTENCE_FAILED'
-        : error.status === 401 ? 'AUTHENTICATION_REFUSAL'
+      const reason = error.status === 401 ? 'AUTHENTICATION_REFUSAL'
         : error.status === 403 ? 'IDENTITY_OR_PROOF_REFUSAL'
+        : error.code === 'INVALID_JSON' || error.code === 'INVALID_RESPONSE' ? 'INVALID_RESPONSE'
+        : error.code === 'LOCAL_APPROVAL_STATE_PERSISTENCE' ? 'LOCAL_STATE_PERSISTENCE_FAILED'
         : error.status === 429 ? 'SERVER_THROTTLED'
         : error.status >= 500 ? 'SERVER_UNAVAILABLE'
         : error.status ? 'HTTP_REFUSAL'
