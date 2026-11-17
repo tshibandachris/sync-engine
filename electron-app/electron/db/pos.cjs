@@ -311,16 +311,16 @@ function createLocalSale(db, input, now = Date.now()) {
       now,
     });
 
-  return {
-    id: saleId,
+    return {
+      id: saleId,
     saleNumber,
     total,
     paymentMethod,
     cashAmount,
     mobileAmount,
     lineCount: saleLines.length,
-    createdAt: now,
-  };
+      createdAt: now,
+    };
   }).immediate();
 }
 
