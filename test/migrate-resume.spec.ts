@@ -104,7 +104,7 @@ async function query(db: string, sql: string): Promise<any> {
   } finally { await closeTrackedPool(pool); }
 }
 async function ledger(db: string): Promise<string[]> {
-  const pool = new Pool({
+  const pool = trackPool(new Pool({
     host: container.getHost(), port: container.getPort(), database: db,
     user: 'postgres', password: 'postgres',
   }));
