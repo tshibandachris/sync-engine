@@ -146,127 +146,126 @@ function createLocalSale(db, input, now = Date.now()) {
   // Acquire the SQLite write lock before reading session/stock so concurrent app instances
   // cannot validate the same stale stock snapshot and oversell it.
   return db.transaction(() => {
-  const session = db.prepare(`
-    SELECT id, staff_id AS staffId
-    FROM cash_sessions
-    WHERE id = ? AND status = 'open' AND closed_at IS NULL AND close_requested_at IS NULL
-  `).get(input.cashSessionId);
-  if (!session) throw new Error('Aucune session de caisse ouverte ne permet cet encaissement.');
+    const session = db.prepare(`
+      SELECT id, staff_id AS staffId
+      FROM cash_sessions
+      WHERE id = ? AND status = 'open' AND closed_at IS NULL AND close_requested_at IS NULL
+    `).get(input.cashSessionId);
+    if (!session) throw new Error('Aucune session de caisse ouverte ne permet cet encaissement.');
 
-  const paymentMethod = input.paymentMethod;
-  if (!['cash', 'mobile_money', 'mixed'].includes(paymentMethod)) {
-    throw new Error('Mode de paiement invalide.');
-  }
-
-  const products = new Map();
-  for (const line of input.lines) {
-    requireUuid(line?.productId, 'productId');
-    if (!Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 100000) {
-      throw new Error('Chaque quantité doit être un entier strictement positif.');
-    }
-    const product = db.prepare(`
-      SELECT id, name, sku, price, cost, is_active AS isActive, deleted_at AS deletedAt
-      FROM products WHERE id = ?
-    `).get(line.productId);
-    if (!product || !product.isActive || product.deletedAt != null) {
-      throw new Error('Un produit du panier est introuvable ou inactif.');
-    }
-    const unitPrice = Number(product.price);
-    if (!Number.isSafeInteger(unitPrice) || unitPrice < 0) {
-      throw new Error('Le prix local du produit est invalide.');
-    }
-    const unitCost = product.cost == null ? null : Number(product.cost);
-    if (unitCost !== null && (!Number.isSafeInteger(unitCost) || unitCost < 0)) {
-      throw new Error('Le coût local du produit est invalide.');
-    }
-    const previous = products.get(product.id);
-    const quantity = (previous?.quantity || 0) + line.quantity;
-    if (!Number.isSafeInteger(quantity)) throw new Error('Quantité totale invalide.');
-    products.set(product.id, { product, quantity, unitPrice, unitCost });
-  }
-
-  let total = 0;
-  const saleLines = [];
-  const movements = [];
-  const saleId = randomUUID();
-  for (const { product, quantity, unitPrice, unitCost } of products.values()) {
-    const subtotal = quantity * unitPrice;
-    if (!Number.isSafeInteger(subtotal)) throw new Error('Sous-total hors limite.');
-    total += subtotal;
-    if (!Number.isSafeInteger(total)) throw new Error('Total de vente hors limite.');
-
-    const stock = db.prepare('SELECT SUM(quantity_delta) AS quantity FROM stock_movements WHERE product_id = ?').get(product.id);
-    if (stock.quantity != null && Number(stock.quantity) < quantity) {
-      throw new Error(`Stock insuffisant pour « ${product.name} ».`);
+    const paymentMethod = input.paymentMethod;
+    if (!['cash', 'mobile_money', 'mixed'].includes(paymentMethod)) {
+      throw new Error('Mode de paiement invalide.');
     }
 
-    const lineId = randomUUID();
-    saleLines.push({
-      id: lineId,
-      product_id: product.id,
-      product_name: product.name,
-      product_sku: product.sku ?? null,
-      quantity,
-      unit_price: unitPrice,
-      subtotal,
+    const products = new Map();
+    for (const line of input.lines) {
+      requireUuid(line?.productId, 'productId');
+      if (!Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 100000) {
+        throw new Error('Chaque quantité doit être un entier strictement positif.');
+      }
+      const product = db.prepare(`
+        SELECT id, name, sku, price, cost, is_active AS isActive, deleted_at AS deletedAt
+        FROM products WHERE id = ?
+      `).get(line.productId);
+      if (!product || !product.isActive || product.deletedAt != null) {
+        throw new Error('Un produit du panier est introuvable ou inactif.');
+      }
+      const unitPrice = Number(product.price);
+      if (!Number.isSafeInteger(unitPrice) || unitPrice < 0) {
+        throw new Error('Le prix local du produit est invalide.');
+      }
+      const unitCost = product.cost == null ? null : Number(product.cost);
+      if (unitCost !== null && (!Number.isSafeInteger(unitCost) || unitCost < 0)) {
+        throw new Error('Le coût local du produit est invalide.');
+      }
+      const previous = products.get(product.id);
+      const quantity = (previous?.quantity || 0) + line.quantity;
+      if (!Number.isSafeInteger(quantity)) throw new Error('Quantité totale invalide.');
+      products.set(product.id, { product, quantity, unitPrice, unitCost });
+    }
+
+    let total = 0;
+    const saleLines = [];
+    const movements = [];
+    const saleId = randomUUID();
+    for (const { product, quantity, unitPrice, unitCost } of products.values()) {
+      const subtotal = quantity * unitPrice;
+      if (!Number.isSafeInteger(subtotal)) throw new Error('Sous-total hors limite.');
+      total += subtotal;
+      if (!Number.isSafeInteger(total)) throw new Error('Total de vente hors limite.');
+
+      const stock = db.prepare('SELECT SUM(quantity_delta) AS quantity FROM stock_movements WHERE product_id = ?').get(product.id);
+      if (stock.quantity != null && Number(stock.quantity) < quantity) {
+        throw new Error(`Stock insuffisant pour « ${product.name} ».`);
+      }
+
+      const lineId = randomUUID();
+      saleLines.push({
+        id: lineId,
+        product_id: product.id,
+        product_name: product.name,
+        product_sku: product.sku ?? null,
+        quantity,
+        unit_price: unitPrice,
+        subtotal,
+        created_at: now,
+        updated_at: now,
+      });
+      movements.push({
+        id: randomUUID(),
+        product_id: product.id,
+        movement_type: 'sale',
+        quantity_delta: -quantity,
+        reference_id: saleId,
+        reference_type: 'sale',
+        unit_cost: unitCost,
+        notes: null,
+        created_at: now,
+        updated_at: now,
+        created_by: session.staffId,
+      });
+    }
+
+    if (total <= 0) throw new Error('Le total de la vente doit être supérieur à zéro.');
+    const cashAmount = input.cashAmount;
+    const mobileAmount = input.mobileAmount;
+    requireAmount(cashAmount, 'cashAmount');
+    requireAmount(mobileAmount, 'mobileAmount');
+    if (cashAmount + mobileAmount !== total) {
+      throw new Error('La somme des parts espèces et mobile money doit égaler le total.');
+    }
+    if ((paymentMethod === 'cash' && (cashAmount !== total || mobileAmount !== 0)) ||
+        (paymentMethod === 'mobile_money' && (mobileAmount !== total || cashAmount !== 0)) ||
+        (paymentMethod === 'mixed' && (cashAmount === 0 || mobileAmount === 0))) {
+      throw new Error('Répartition des moyens de paiement incohérente.');
+    }
+
+    const saleNumber = `S-${now.toString(36).toUpperCase()}-${saleId.slice(0, 8).toUpperCase()}`;
+    const payload = {
+      id: saleId,
+      cash_session_id: session.id,
+      staff_id: session.staffId,
+      sale_number: saleNumber,
+      total,
+      payment_method: paymentMethod,
+      cash_amount: cashAmount,
+      mobile_amount: mobileAmount,
+      mobile_msisdn: input.mobileMsisdn == null ? null : String(input.mobileMsisdn).trim() || null,
+      mobile_reference: input.mobileReference == null ? null : String(input.mobileReference).trim() || null,
+      customer_note: input.customerNote == null ? null : String(input.customerNote).trim() || null,
+      is_void: false,
+      voided_sale_id: null,
+      void_reason: null,
       created_at: now,
       updated_at: now,
-    });
-    movements.push({
-      id: randomUUID(),
-      product_id: product.id,
-      movement_type: 'sale',
-      quantity_delta: -quantity,
-      reference_id: saleId,
-      reference_type: 'sale',
-      unit_cost: unitCost,
-      notes: null,
-      created_at: now,
-      updated_at: now,
-      created_by: session.staffId,
-    });
-  }
+      lines: saleLines,
+      stock_movements: movements,
+    };
+    if (payload.mobile_msisdn && payload.mobile_msisdn.length > 20) throw new Error('Le numéro mobile money est trop long.');
+    if (payload.mobile_reference && payload.mobile_reference.length > 64) throw new Error('La référence mobile money est trop longue.');
+    if (payload.customer_note && payload.customer_note.length > 200) throw new Error('La note client est trop longue.');
 
-  if (total <= 0) throw new Error('Le total de la vente doit être supérieur à zéro.');
-  const cashAmount = input.cashAmount;
-  const mobileAmount = input.mobileAmount;
-  requireAmount(cashAmount, 'cashAmount');
-  requireAmount(mobileAmount, 'mobileAmount');
-  if (cashAmount + mobileAmount !== total) {
-    throw new Error('La somme des parts espèces et mobile money doit égaler le total.');
-  }
-  if ((paymentMethod === 'cash' && (cashAmount !== total || mobileAmount !== 0)) ||
-      (paymentMethod === 'mobile_money' && (mobileAmount !== total || cashAmount !== 0)) ||
-      (paymentMethod === 'mixed' && (cashAmount === 0 || mobileAmount === 0))) {
-    throw new Error('Répartition des moyens de paiement incohérente.');
-  }
-
-  const saleNumber = `S-${now.toString(36).toUpperCase()}-${saleId.slice(0, 8).toUpperCase()}`;
-  const payload = {
-    id: saleId,
-    cash_session_id: session.id,
-    staff_id: session.staffId,
-    sale_number: saleNumber,
-    total,
-    payment_method: paymentMethod,
-    cash_amount: cashAmount,
-    mobile_amount: mobileAmount,
-    mobile_msisdn: input.mobileMsisdn == null ? null : String(input.mobileMsisdn).trim() || null,
-    mobile_reference: input.mobileReference == null ? null : String(input.mobileReference).trim() || null,
-    customer_note: input.customerNote == null ? null : String(input.customerNote).trim() || null,
-    is_void: false,
-    voided_sale_id: null,
-    void_reason: null,
-    created_at: now,
-    updated_at: now,
-    lines: saleLines,
-    stock_movements: movements,
-  };
-  if (payload.mobile_msisdn && payload.mobile_msisdn.length > 20) throw new Error('Le numéro mobile money est trop long.');
-  if (payload.mobile_reference && payload.mobile_reference.length > 64) throw new Error('La référence mobile money est trop longue.');
-  if (payload.customer_note && payload.customer_note.length > 200) throw new Error('La note client est trop longue.');
-
-  const save = db.transaction(() => {
     db.prepare(`
       INSERT INTO sales (
         id, cash_session_id, staff_id, sale_number, total, payment_method,
@@ -311,8 +310,6 @@ function createLocalSale(db, input, now = Date.now()) {
       payload,
       now,
     });
-  });
-  save();
 
   return {
     id: saleId,
