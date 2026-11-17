@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { openDatabase } = require('../electron/db/client.cjs');
 const {
@@ -192,6 +193,60 @@ test('serializes competing sale writers and reports SQLITE_BUSY without queueing
   } finally {
     try { if (competingDb.inTransaction) competingDb.exec('ROLLBACK'); } catch {}
     if (competingDb.open) competingDb.close();
+    f.cleanup();
+  }
+});
+
+test('recovers atomically when the process exits during sale outbox insertion', () => {
+  const f = fixture();
+  let recoveredDb;
+  try {
+    const session = openCashSession(f.db, { staffId: f.staffId, openingAmount: 0 }, 1000);
+    f.db.prepare(`
+      CREATE TRIGGER simulate_power_loss_during_sale
+      BEFORE INSERT ON outbox
+      WHEN NEW.entity_type = 'sales'
+      BEGIN
+        SELECT simulate_power_loss();
+      END;
+    `).run();
+
+    const clientModule = path.resolve(__dirname, '../electron/db/client.cjs');
+    const posModule = path.resolve(__dirname, '../electron/db/pos.cjs');
+    const childScript = `
+      const { openDatabase } = require(${JSON.stringify(clientModule)});
+      const { createLocalSale } = require(${JSON.stringify(posModule)});
+      const root = process.argv[1];
+      const db = openDatabase({ getPath: () => root });
+      db.function('simulate_power_loss', () => process.exit(86));
+      createLocalSale(db, {
+        cashSessionId: ${JSON.stringify(session.id)},
+        lines: [{ productId: ${JSON.stringify(f.productId)}, quantity: 1 }],
+        paymentMethod: 'cash',
+        cashAmount: 500,
+        mobileAmount: 0,
+      }, 2000);
+      process.exit(0);
+    `;
+
+    f.db.close();
+    const child = spawnSync(process.execPath, ['-e', childScript, f.root], {
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+    assert.equal(child.error, undefined, child.error?.message);
+    assert.equal(child.status, 86, child.stderr);
+
+    // Reopening forces SQLite WAL recovery after the child exited without
+    // committing or closing its connection.
+    recoveredDb = openDatabase({ getPath: () => f.root });
+    assert.equal(recoveredDb.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 0);
+    assert.equal(recoveredDb.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 0);
+    assert.equal(recoveredDb.prepare('SELECT SUM(quantity_delta) AS n FROM stock_movements WHERE product_id = ?').get(f.productId).n, 10);
+    assert.equal(recoveredDb.prepare("SELECT COUNT(*) AS n FROM outbox WHERE entity_type = 'sales'").get().n, 0);
+    assert.equal(getOutboxStatus(recoveredDb).pending, 1);
+  } finally {
+    if (recoveredDb?.open) recoveredDb.close();
     f.cleanup();
   }
 });
