@@ -313,12 +313,12 @@ function createLocalSale(db, input, now = Date.now()) {
 
     return {
       id: saleId,
-    saleNumber,
-    total,
-    paymentMethod,
-    cashAmount,
-    mobileAmount,
-    lineCount: saleLines.length,
+      saleNumber,
+      total,
+      paymentMethod,
+      cashAmount,
+      mobileAmount,
+      lineCount: saleLines.length,
       createdAt: now,
     };
   }).immediate();
