@@ -34,7 +34,7 @@ function fixture() {
     ) VALUES (?, ?, 'opening', 10, NULL, NULL, 250, NULL, 100, 100, ?)
   `).run(randomUUID(), productId, staffId);
   return {
-    db, staffId, productId,
+    db, root, staffId, productId,
     cleanup() { if (db.open) db.close(); fs.rmSync(root, { recursive: true, force: true }); },
   };
 }
@@ -136,6 +136,62 @@ test('rejects overselling tracked stock without writing partial ledger records',
     assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 0);
     assert.equal(getOutboxStatus(f.db).pending, 1);
   } finally {
+    f.cleanup();
+  }
+});
+
+test('serializes competing sale writers and reports SQLITE_BUSY without queueing a sale', () => {
+  const f = fixture();
+  const competingDb = openDatabase({ getPath: () => f.root });
+  try {
+    const session = openCashSession(f.db, { staffId: f.staffId, openingAmount: 0 }, 1000);
+    f.db.prepare(`
+      UPDATE stock_movements SET quantity_delta = 1
+      WHERE product_id = ? AND movement_type = 'opening'
+    `).run(f.productId);
+
+    assert.equal(f.db.pragma('busy_timeout', { simple: true }), 5000);
+    f.db.pragma('busy_timeout = 25');
+    competingDb.pragma('busy_timeout = 25');
+
+    // Hold a write reservation from the second connection. The sale writer
+    // must wait for busy_timeout, then reject without creating any local work.
+    competingDb.exec('BEGIN IMMEDIATE');
+    assert.throws(() => createLocalSale(f.db, {
+      cashSessionId: session.id,
+      lines: [{ productId: f.productId, quantity: 1 }],
+      paymentMethod: 'cash',
+      cashAmount: 500,
+      mobileAmount: 0,
+    }, 2000), (error) => {
+      assert.equal(error.code, 'POS_DATABASE_BUSY');
+      assert.match(error.message, /Aucune vente n’a été enregistrée/);
+      assert.equal(error.cause?.code, 'SQLITE_BUSY');
+      return true;
+    });
+
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 0);
+    assert.equal(f.db.prepare('SELECT SUM(quantity_delta) AS n FROM stock_movements WHERE product_id = ?').get(f.productId).n, 1);
+    assert.equal(getOutboxStatus(f.db).pending, 1);
+
+    competingDb.exec('ROLLBACK');
+    const sale = createLocalSale(f.db, {
+      cashSessionId: session.id,
+      lines: [{ productId: f.productId, quantity: 1 }],
+      paymentMethod: 'cash',
+      cashAmount: 500,
+      mobileAmount: 0,
+    }, 2001);
+
+    assert.ok(sale.id);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 1);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 1);
+    assert.equal(f.db.prepare('SELECT SUM(quantity_delta) AS n FROM stock_movements WHERE product_id = ?').get(f.productId).n, 0);
+    assert.equal(getOutboxStatus(f.db).pending, 2);
+  } finally {
+    try { if (competingDb.inTransaction) competingDb.exec('ROLLBACK'); } catch {}
+    if (competingDb.open) competingDb.close();
     f.cleanup();
   }
 });
