@@ -24,7 +24,7 @@ function fixture() {
   };
 }
 
-test('a new database runs tenant binding v3 and POS close schema v4', () => {
+test('a new database runs tenant/device binding v5 and POS close schema', () => {
   const f = fixture();
   try {
     assert.equal(f.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 5);
@@ -37,7 +37,7 @@ test('a new database runs tenant binding v3 and POS close schema v4', () => {
   }
 });
 
-test('a database already at tenant-binding v3 receives the POS close columns in v4', () => {
+test('a database already at tenant-binding v3 receives POS close and device-binding migrations', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-tenant-binding-v3-'));
   const dataDir = path.join(root, 'EdenGestion');
   fs.mkdirSync(dataDir, { recursive: true });
@@ -104,7 +104,8 @@ test('a tenant binding is upgraded to a durable device binding and survives rest
   const tenantId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const deviceId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   try {
-    bindTenant(f.db, tenantId, deviceId);
+    bindTenant(f.db, tenantId); // Existing tenant-only installation before migration v5.
+    bindTenant(f.db, tenantId, deviceId); // Upgrade it using the persisted encrypted credential.
     f.db.prepare('INSERT INTO products(id, name, price) VALUES (?, ?, ?)').run('p1', 'Cahier', 500);
     f.db.prepare("INSERT INTO outbox(entity_type, entity_id, operation, payload_json, created_at) VALUES ('sales', 'sale-1', 'create', '{}', 1)").run();
     f.reopen();
