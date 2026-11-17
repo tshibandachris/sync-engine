@@ -18,6 +18,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function seedWithRealElectron(appDataPath) {
   const { app, safeStorage } = require('electron');
+  const appPackage = require(path.join(ELECTRON_DIR, 'package.json'));
+  app.setName(appPackage.productName || appPackage.name);
   app.setPath('appData', appDataPath);
   await app.whenReady();
 
@@ -214,7 +216,7 @@ async function runParent() {
       '--remote-allow-origins=*',
       '.',
       `--user-data-dir=${profilePath}`,
-    ], { cwd: ELECTRON_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { cwd: ELECTRON_DIR, env: { ...env, ELECTRON_ENABLE_LOGGING: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
     appProcess.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     appProcess.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
@@ -229,12 +231,13 @@ async function runParent() {
       await delay(300);
     }
 
-    assert.equal(status?.agentAuthState, 'authenticated', 'the stored agent token must survive process restart');
-    assert.equal(status?.deviceCredentialState, 'available', 'the encrypted ES256 credential must survive process restart');
-    assert.equal(status?.deviceTrustState, 'approved', 'the last confirmed server approval must be restored');
-    assert.equal(status?.canOperateLocally, true, 'the local POS write permission must be restored');
-    assert.equal(status?.serverHasActiveCredential, true, 'the cached active credential decision must be restored');
-    assert.equal(status?.deviceApprovalStateError, null, 'the encrypted approval decision must decrypt without error');
+    const statusDiagnostic = () => `status=${JSON.stringify(status)}\n${output()}`;
+    assert.equal(status?.agentAuthState, 'authenticated', `the stored agent token must survive process restart; ${statusDiagnostic()}`);
+    assert.equal(status?.deviceCredentialState, 'available', `the encrypted ES256 credential must survive process restart; ${statusDiagnostic()}`);
+    assert.equal(status?.deviceTrustState, 'approved', `the last confirmed server approval must be restored; ${statusDiagnostic()}`);
+    assert.equal(status?.canOperateLocally, true, `the local POS write permission must be restored; ${statusDiagnostic()}`);
+    assert.equal(status?.serverHasActiveCredential, true, `the cached active credential decision must be restored; ${statusDiagnostic()}`);
+    assert.equal(status?.deviceApprovalStateError, null, `the encrypted approval decision must decrypt without error; ${statusDiagnostic()}`);
 
     const session = await devTools.evaluate(
       `window.eden.openCashSession({ staffId: "${STAFF_ID}", openingAmount: 0, terminalLabel: "B04 restart" })`
