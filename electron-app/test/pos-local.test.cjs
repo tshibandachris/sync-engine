@@ -141,58 +141,84 @@ test('rejects overselling tracked stock without writing partial ledger records',
   }
 });
 
-test('serializes competing sale writers and reports SQLITE_BUSY without queueing a sale', () => {
+test('serializes two concurrent createLocalSale calls and rejects the loser without duplicate writes', async () => {
   const f = fixture();
-  const competingDb = openDatabase({ getPath: () => f.root });
+  let child;
   try {
     const session = openCashSession(f.db, { staffId: f.staffId, openingAmount: 0 }, 1000);
     f.db.prepare(`
       UPDATE stock_movements SET quantity_delta = 1
       WHERE product_id = ? AND movement_type = 'opening'
     `).run(f.productId);
-
     assert.equal(f.db.pragma('busy_timeout', { simple: true }), 5000);
     f.db.pragma('busy_timeout = 25');
-    competingDb.pragma('busy_timeout = 25');
 
-    // Hold a write reservation from the second connection. The sale writer
-    // must wait for busy_timeout, then reject without creating any local work.
-    competingDb.exec('BEGIN IMMEDIATE');
+    f.db.exec(`
+      CREATE TRIGGER pause_first_concurrent_sale
+      BEFORE INSERT ON sales
+      BEGIN
+        SELECT pause_sale_writer();
+      END;
+    `);
+
+    const posModule = path.resolve(__dirname, '../electron/db/pos.cjs');
+    const clientModule = path.resolve(__dirname, '../electron/db/client.cjs');
+    const childScript = `
+      const { openDatabase } = require(${JSON.stringify(clientModule)});
+      const { createLocalSale } = require(${JSON.stringify(posModule)});
+      const db = openDatabase({ getPath: () => process.argv[1] });
+      db.function('pause_sale_writer', () => {
+        process.stdout.write('SALE_WRITE_LOCKED\\n');
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+      });
+      createLocalSale(db, {
+        cashSessionId: ${JSON.stringify(session.id)},
+        lines: [{ productId: ${JSON.stringify(f.productId)}, quantity: 1 }],
+        paymentMethod: 'cash', cashAmount: 500, mobileAmount: 0,
+      }, 2000);
+      db.close();
+    `;
+
+    child = spawn(process.execPath, ['-e', childScript, f.root], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const lockAcquired = new Promise((resolve, reject) => {
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+        if (stdout.includes('SALE_WRITE_LOCKED')) resolve();
+      });
+      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.once('error', reject);
+      child.once('exit', (code) => {
+        if (!stdout.includes('SALE_WRITE_LOCKED')) reject(new Error(`sale writer exited before acquiring lock: ${code} ${stderr}`));
+      });
+    });
+    await lockAcquired;
+
     assert.throws(() => createLocalSale(f.db, {
       cashSessionId: session.id,
       lines: [{ productId: f.productId, quantity: 1 }],
-      paymentMethod: 'cash',
-      cashAmount: 500,
-      mobileAmount: 0,
-    }, 2000), (error) => {
+      paymentMethod: 'cash', cashAmount: 500, mobileAmount: 0,
+    }, 2001), (error) => {
       assert.equal(error.code, 'POS_DATABASE_BUSY');
       assert.match(error.message, /Aucune vente n’a été enregistrée/);
       assert.equal(error.cause?.code, 'SQLITE_BUSY');
       return true;
     });
 
-    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 0);
-    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 0);
-    assert.equal(f.db.prepare('SELECT SUM(quantity_delta) AS n FROM stock_movements WHERE product_id = ?').get(f.productId).n, 1);
-    assert.equal(getOutboxStatus(f.db).pending, 1);
+    const exit = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', (code, signal) => resolve({ code, signal }));
+    });
+    assert.deepEqual(exit, { code: 0, signal: null }, stderr);
 
-    competingDb.exec('ROLLBACK');
-    const sale = createLocalSale(f.db, {
-      cashSessionId: session.id,
-      lines: [{ productId: f.productId, quantity: 1 }],
-      paymentMethod: 'cash',
-      cashAmount: 500,
-      mobileAmount: 0,
-    }, 2001);
-
-    assert.ok(sale.id);
     assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sales').get().n, 1);
     assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM sale_lines').get().n, 1);
     assert.equal(f.db.prepare('SELECT SUM(quantity_delta) AS n FROM stock_movements WHERE product_id = ?').get(f.productId).n, 0);
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE entity_type = 'sales'").get().n, 1);
     assert.equal(getOutboxStatus(f.db).pending, 2);
   } finally {
-    try { if (competingDb.inTransaction) competingDb.exec('ROLLBACK'); } catch {}
-    if (competingDb.open) competingDb.close();
+    if (child && child.exitCode === null && child.signalCode === null) child.kill();
     f.cleanup();
   }
 });
