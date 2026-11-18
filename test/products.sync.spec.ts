@@ -14,6 +14,59 @@ describe('Products sync / integration', () => {
 
   beforeAll(async () => {
     pg = await startTestPostgres();
+
+    // Provision product-test tenants through the privileged PostgreSQL harness,
+    // before SyncPushService can issue any query as sync_app.
+    const harness = await pg.pool.query('SELECT current_user AS role');
+    expect(harness.rows[0].role).toBe('postgres');
+    await pg.pool.query(
+      'INSERT INTO tenants (id, first_seen_at) VALUES ($1, $3), ($2, $3) ON CONFLICT (id) DO NOTHING',
+      [tenantA, tenantB, Date.now()],
+    );
+    const seeded = await pg.pool.query(
+      'SELECT id, status FROM tenants WHERE id = ANY($1::uuid[]) ORDER BY id',
+      [[tenantA, tenantB]],
+    );
+    expect(seeded.rows).toHaveLength(2);
+    expect(seeded.rows.every((row: { status: string }) => row.status === 'pending')).toBe(true);
+    console.log(
+      `[products.sync] privileged tenant provisioning: role=${harness.rows[0].role}; created/verified=${seeded.rows.length}; status=pending; before sync_app operations`,
+    );
+
+    // Emit runtime evidence for migration 045 from this isolated PostgreSQL DB.
+    const counts = await pg.pool.query(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE status = 'active')::int AS active,
+              count(*) FILTER (WHERE status = 'pending')::int AS pending,
+              count(*) FILTER (WHERE status = 'suspended')::int AS suspended,
+              count(*) FILTER (WHERE status IS NULL OR status NOT IN ('pending', 'active', 'suspended'))::int AS invalid
+         FROM tenants`,
+    );
+    const expectedTotal = pg.tenantCountBefore045 + 2;
+    expect(counts.rows[0]).toEqual({
+      total: expectedTotal,
+      active: pg.tenantCountBefore045,
+      pending: 2,
+      suspended: 0,
+      invalid: 0,
+    });
+    console.log(
+      `[migration-045 evidence] tenants_before=${pg.tenantCountBefore045}; tenants_after=${counts.rows[0].total}; active=${counts.rows[0].active}; pending=${counts.rows[0].pending}; suspended=${counts.rows[0].suspended}; invalid=${counts.rows[0].invalid}`,
+    );
+
+    const roles = await pg.pool.query(
+      `SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+              rolinherit, rolreplication, rolbypassrls
+         FROM pg_catalog.pg_roles
+        WHERE rolname IN ('tenant_provisioning_function_owner', 'tenant_provisioning_executor')
+        ORDER BY rolname`,
+    );
+    expect(roles.rows).toHaveLength(2);
+    expect(roles.rows.every((role: { rolcanlogin: boolean }) => role.rolcanlogin === false)).toBe(true);
+    console.log(
+      '[migration-045 evidence] pg_roles=' + JSON.stringify(roles.rows),
+    );
+
     push = new SyncPushService(pg.appDb);
     pull = new SyncPullService(pg.appDb);
   }, 120_000);
