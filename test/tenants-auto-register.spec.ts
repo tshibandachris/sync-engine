@@ -79,7 +79,7 @@ describe('withTenant — existence explicite du tenant', () => {
     const tenantId = randomUUID();
     const maintenance = new SyncMaintenanceService(pg.appDb);
 
-    await expect(maintenance.purge(tenantId)).rejects.toMatchObject({
+    await expect(maintenance.purgeExpiredDeviceProofNonces(tenantId)).rejects.toMatchObject({
       name: 'TenantNotFoundError',
       code: 'TENANT_NOT_FOUND',
       tenantId,
