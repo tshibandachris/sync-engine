@@ -162,12 +162,19 @@ describe('purge_tenant_sync_logs', () => {
   });
 
   it("restaure le contexte de l'appelant : purger B ne bascule pas la transaction de A", async () => {
+    await pg.pool.query(
+      `INSERT INTO tenants (id, first_seen_at)
+       VALUES ($1, $2)
+       ON CONFLICT (id) DO NOTHING`,
+      [tenantA, Date.now()],
+    );
+
     try {
       const currentTenant = await withTenant(pg.maintenanceDb, tenantA, async (tx) => {
         await tx.execute(sql`SELECT public.purge_tenant_sync_logs(${tenantB}::uuid, 30)`);
         const ctx = await tx.execute(sql`SELECT current_setting('app.current_tenant_id', true) AS v`);
         return String((ctx.rows[0] as Record<string, unknown>).v);
-      }, { registerTenant: false });
+      });
       expect(currentTenant).toBe(tenantA);
     } finally {
       // The Drizzle transaction owns and releases its connection.
