@@ -96,7 +96,7 @@ export class SyncMaintenanceService {
         idempotencyDeleted: Number(payload.idempotency_deleted ?? 0),
         conflictsDeleted: Number(payload.conflicts_deleted ?? 0),
       };
-    }, { registerTenant: false });
+    });
   }
 
   async purgeTenantTombstones(
@@ -127,7 +127,7 @@ export class SyncMaintenanceService {
         ? (payload.orphaned_object_keys as string[])
         : [],
     };
-    }, { registerTenant: false });
+    });
   }
 
   /**
@@ -157,7 +157,7 @@ export class SyncMaintenanceService {
       }
 
       return { logsDeleted: Number(payload.logs_deleted ?? 0) };
-    }, { registerTenant: false });
+    });
   }
 
   /**
@@ -211,7 +211,7 @@ export class SyncMaintenanceService {
       const row = result.rows[0] as Record<string, unknown> | undefined;
       if (!row) throw new Error('purge_expired_device_proof_nonces a retourne un resultat vide.');
       return { deleted: Number(row.deleted ?? 0) };
-    }, { registerTenant: false });
+    });
   }
 
   /**
@@ -247,7 +247,7 @@ export class SyncMaintenanceService {
         SELECT public.list_tenant_attachment_object_keys(${tenantId}::uuid) AS object_key
       `);
       return new Set(result.rows.map((row) => String((row as Record<string, unknown>).object_key)));
-    }, { registerTenant: false });
+    });
 
     const orphans = objects
       .map((o) => o.key)
@@ -318,6 +318,6 @@ export class SyncMaintenanceService {
       const row = result.rows[0] as Record<string, unknown> | undefined;
       if (!row) throw new Error('purge_tenant_pending_attachments a retourne un resultat vide.');
       return { deleted: Number(row.deleted ?? 0) };
-    }, { registerTenant: false });
+    });
   }
 }
