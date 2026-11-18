@@ -65,7 +65,7 @@ describe('withTenant — existence explicite du tenant', () => {
     await pg.pool.query('REVOKE SELECT ON tenants FROM sync_app');
     try {
       await expect(withTenant(pg.appDb, tenantId, callback)).rejects.toMatchObject({
-        code: '42501',
+        cause: { code: '42501' },
       });
       expect(callback).not.toHaveBeenCalled();
       expect(await tenantCount(tenantId)).toBe(0);
