@@ -18,63 +18,113 @@ Un rollback complet n'est envisageable que si la checklist de capture de la sect
 
 Ne jamais improviser un `GRANT ALL`, un `DROP ... IF EXISTS` généralisé, une suppression de tenant, une promotion automatique de `pending` vers `active`, ou une modification manuelle du ledger pour « faire passer » le runner.
 
-## 2. Capture préalable obligatoire — avant d'appliquer 045
+## 2. Capture préalable obligatoire — avant 045
 
-L'audit statique ne permet pas de connaître les changements manuels d'une base réelle. Pour rendre un rollback complet possible, conserver un dossier de preuve horodaté, protégé et associé à l'identifiant de l'environnement.
+La capture doit être produite avant l'application de 045, horodatée, liée à l'environnement et conservée dans un emplacement protégé. Les commandes ci-dessous sont des exemples à exécuter par un opérateur habilité sur la base cible ; elles ne sont pas exécutées dans le cadre de cette PR.
 
-### 2.1 État de migration et de la table
+### 2.1 Sauvegarde, ledger et définition du schéma
 
-- [ ] Sauvegarde PostgreSQL complète effectuée et restauration de cette sauvegarde testée.
-- [ ] Résultat du ledger avant migration archivé.
-- [ ] Définition complète de `public.tenants` capturée (`pg_dump --schema-only` ou équivalent).
-- [ ] Liste des colonnes, types, valeurs par défaut, nullabilité, contraintes, index et commentaires capturée.
-- [ ] Nombre de lignes et export cohérent des lignes de `public.tenants` conservés.
-- [ ] Valeurs de `id` et `first_seen_at` conservées pour rapprochement.
-- [ ] État RLS et politiques de la table capturés, même si 045 ne les modifie pas.
+- [ ] Sauvegarde PostgreSQL complète effectuée et restauration testée sur une base isolée.
+- [ ] Version PostgreSQL, identité de l'environnement et révision applicative consignées.
+- [ ] Ledger archivé.
+- [ ] Dump de schéma et de données historiques de tenants conservés.
+- [ ] Nombre de lignes, UUID et first_seen_at conservés.
 
-### 2.2 Privilèges effectifs et ACL
+~~~sql
+SELECT current_database(), current_user,
+       current_setting('server_version'), clock_timestamp();
 
-Capturer les privilèges avant migration avec les deux approches suivantes :
+SELECT filename, applied_at
+FROM public.schema_migrations
+ORDER BY filename;
 
-```sql
+SELECT count(*) AS tenant_count FROM public.tenants;
+SELECT id, first_seen_at FROM public.tenants ORDER BY id;
+~~~
+
+Depuis un terminal disposant de pg_dump :
+
+~~~sh
+pg_dump --schema-only --no-owner --no-privileges "$DATABASE_URL" \
+  --table=public.tenants > tenants-before-045.schema.sql
+pg_dump --data-only --column-inserts "$DATABASE_URL" \
+  --table=public.tenants > tenants-before-045.data.sql
+~~~
+
+Ces exports ne remplacent pas la sauvegarde complète et son test de restauration.
+
+### 2.2 Colonnes, contraintes, index, RLS et commentaires
+
+~~~sql
+SELECT column_name, ordinal_position, data_type, udt_name,
+       is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'tenants'
+ORDER BY ordinal_position;
+
+SELECT c.conname, pg_catalog.pg_get_constraintdef(c.oid, true) AS definition
+FROM pg_catalog.pg_constraint c
+WHERE c.conrelid = 'public.tenants'::regclass
+ORDER BY c.conname;
+
+SELECT indexname, indexdef
+FROM pg_catalog.pg_indexes
+WHERE schemaname = 'public' AND tablename = 'tenants'
+ORDER BY indexname;
+
+SELECT c.relrowsecurity, c.relforcerowsecurity,
+       pg_catalog.obj_description(c.oid, 'pg_class') AS table_comment
+FROM pg_catalog.pg_class c
+WHERE c.oid = 'public.tenants'::regclass;
+
+SELECT a.attname, pg_catalog.col_description(a.attrelid, a.attnum) AS column_comment
+FROM pg_catalog.pg_attribute a
+WHERE a.attrelid = 'public.tenants'::regclass
+  AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+
+SELECT schemaname, tablename, policyname, permissive, roles,
+       cmd, qual, with_check
+FROM pg_catalog.pg_policies
+WHERE schemaname = 'public' AND tablename = 'tenants'
+ORDER BY policyname;
+~~~
+
+### 2.3 Privilèges effectifs et ACL
+
+~~~sql
 SELECT
   has_table_privilege('sync_app', 'public.tenants', 'SELECT') AS can_select,
   has_table_privilege('sync_app', 'public.tenants', 'INSERT') AS can_insert,
   has_table_privilege('sync_app', 'public.tenants', 'UPDATE') AS can_update,
   has_table_privilege('sync_app', 'public.tenants', 'DELETE') AS can_delete;
-```
 
-Dans `psql`, conserver également la sortie de :
-
-```text
-\dp public.tenants
-```
-
-Capturer les droits explicites par rôle :
-
-```sql
 SELECT grantee, privilege_type, is_grantable
 FROM information_schema.role_table_grants
-WHERE table_schema = 'public'
-  AND table_name = 'tenants'
+WHERE table_schema = 'public' AND table_name = 'tenants'
 ORDER BY grantee, privilege_type;
-```
 
-La requête `information_schema` ne remplace pas `has_table_privilege` : cette dernière vérifie le droit effectif, qui peut inclure des héritages ou appartenances.
+SELECT n.nspname, x.grantee, x.privilege_type, x.is_grantable
+FROM pg_catalog.pg_namespace n
+CROSS JOIN LATERAL pg_catalog.aclexplode(
+  COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))
+) x
+WHERE n.nspname = 'public'
+ORDER BY x.grantee, x.privilege_type;
+~~~
 
-### 2.3 Rôles et dépendances
+Dans psql, archiver aussi les sorties de :
 
-Pour chacun des rôles `tenant_provisioning_function_owner` et `tenant_provisioning_executor`, capturer :
+~~~text
+\dp public.tenants
+\dn+ public
+~~~
 
-- existence avant 045 ;
-- attributs de rôle (`LOGIN`, `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `INHERIT`, `REPLICATION`, `BYPASSRLS`) ;
-- appartenances de rôles dans les deux sens ;
-- privilèges sur le schéma `public` et sur `public.tenants` ;
-- objets possédés et dépendances éventuelles.
+La requête has_table_privilege mesure les droits effectifs ; les vues ACL montrent les attributions explicites. Conserver les deux.
 
-Exemple de capture des attributs :
+### 2.4 Rôles, appartenances, propriétaires et dépendances
 
-```sql
+~~~sql
 SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
        rolinherit, rolreplication, rolbypassrls
 FROM pg_catalog.pg_roles
@@ -83,16 +133,63 @@ WHERE rolname IN (
   'tenant_provisioning_executor'
 )
 ORDER BY rolname;
-```
 
-### 2.4 Commentaires et données de cycle de vie
+SELECT granted.rolname AS granted_role,
+       member.rolname AS member_role, m.admin_option
+FROM pg_catalog.pg_auth_members m
+JOIN pg_catalog.pg_roles granted ON granted.oid = m.roleid
+JOIN pg_catalog.pg_roles member ON member.oid = m.member
+WHERE granted.rolname IN (
+  'tenant_provisioning_function_owner', 'tenant_provisioning_executor'
+) OR member.rolname IN (
+  'tenant_provisioning_function_owner', 'tenant_provisioning_executor'
+)
+ORDER BY granted_role, member_role;
 
-- [ ] Commentaire historique de la table `public.tenants` capturé.
-- [ ] Commentaires historiques des colonnes existantes capturés.
-- [ ] Export des nouvelles valeurs de cycle de vie prévu avant toute suppression de colonne : `status`, `created_at`, `created_by`, `suspended_at`, `suspended_reason`.
-- [ ] Les exports sont protégés comme des données métier et leur restauration a été testée.
+SELECT c.relkind, n.nspname, c.relname,
+       pg_catalog.pg_get_userbyid(c.relowner) AS owner
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relowner IN (
+  SELECT oid FROM pg_catalog.pg_roles
+  WHERE rolname IN ('tenant_provisioning_function_owner',
+                    'tenant_provisioning_executor')
+)
+ORDER BY n.nspname, c.relname;
 
-**Sans ces captures, l'état antérieur des rôles préexistants, des ACL manuelles, des commentaires et des données ajoutées après 045 ne peut pas être reconstitué avec certitude.** Le rollback reste conditionnel.
+SELECT p.oid::regprocedure AS routine,
+       pg_catalog.pg_get_userbyid(p.proowner) AS owner
+FROM pg_catalog.pg_proc p
+WHERE p.proowner IN (
+  SELECT oid FROM pg_catalog.pg_roles
+  WHERE rolname IN ('tenant_provisioning_function_owner',
+                    'tenant_provisioning_executor')
+)
+ORDER BY routine;
+~~~
+
+Auditer également les objets hors schéma public, les propriétaires de bases/schémas et les privilèges par défaut. Les requêtes ci-dessus sont ciblées et ne prouvent pas seules l'absence de toute dépendance.
+
+### 2.5 Commentaires et preuve de capture
+
+- [ ] Commentaire de table et commentaires de toutes les colonnes historiques sauvegardés.
+- [ ] Attributs, ACL, existence/absence et appartenances des deux rôles sauvegardés.
+- [ ] Propriétaires et dépendances audités.
+- [ ] Artefacts horodatés, protégés, vérifiables et associés à un capture_id unique.
+
+Si la capture n'a pas été faite avant 045, les états antérieurs des rôles, ACL manuelles, propriétaires et commentaires ne peuvent pas être reconstitués avec certitude à partir du dépôt.
+
+### 2.6 Données à archiver après 045, avant le rollback
+
+Les valeurs de cycle de vie n'existent pas avant 045. Elles doivent donc être exportées après application de 045 et avant toute suppression de colonne :
+
+~~~sql
+SELECT id, status, created_at, created_by, suspended_at, suspended_reason
+FROM public.tenants
+ORDER BY id;
+~~~
+
+L'export couvre tous les tenants et tous les statuts, est rapproché par UUID, stocké hors de la base à modifier et testé en lecture/restauration. Sans export complet validé, aucun DROP COLUMN n'est autorisé.
 
 ## 3. Précontrôles avant toute intervention
 
@@ -150,68 +247,60 @@ Une ligne `pending` ne doit pas être supprimée ou activée automatiquement. So
 
 ## 4. Ce que le rollback restaure exactement
 
-Les trois notions suivantes ne doivent jamais être confondues :
+Trois notions ne doivent jamais être confondues :
 
 - **État historique prouvé :** état explicitement défini par les migrations antérieures, notamment 016.
-- **État effectif observé juste avant 045 :** état réel capturé avant application ; il peut différer de l'historique à cause d'interventions manuelles ou de migrations non suivies.
-- **État antérieur non capturé :** état qui ne peut pas être reconstitué après coup avec les seules migrations du dépôt.
+- **État effectif capturé juste avant 045 :** état réel de l'environnement, y compris les interventions manuelles et migrations hors dépôt ; il prévaut pour restaurer fidèlement cet environnement.
+- **État antérieur non capturé :** inconnu. Il ne faut ni le deviner ni prétendre le restaurer.
 
-| Élément | Changement introduit par 045 | Cible du rollback | Source / condition |
+| Élément | Cible après rollback | Source de l'état restauré | Condition / limite |
 |---|---|---|---|
-| Colonnes `status`, `created_at`, `created_by`, `suspended_at`, `suspended_reason` | Ajout de cinq colonnes | Les retirer uniquement après export et validation de conservation des données | Schéma antérieur prouvé par 016 ; données post-045 à archiver |
-| Contraintes `tenants_status_check`, `tenants_suspension_state_check` | Deux contraintes CHECK | Les retirer avant les colonnes correspondantes | Noms et définitions prouvés par 045 |
-| Droits de `sync_app` sur `public.tenants` | 045 retire tous les droits à `PUBLIC` et `sync_app`, puis accorde SELECT à `sync_app` | Restaurer exactement SELECT et INSERT pour `sync_app`, sans UPDATE ni DELETE | Migration 016 : `REVOKE ALL ... FROM PUBLIC, sync_app`, puis `GRANT SELECT, INSERT` |
-| Droits de `PUBLIC` sur `public.tenants` | 045 exécute `REVOKE ALL` | Aucun droit accordé à PUBLIC | Migration 016 révoque explicitement ALL à PUBLIC |
-| Rôle `tenant_provisioning_function_owner` | Créé s'il est absent ; sinon réutilisé si attributs compatibles ; reçoit USAGE sur `public` et SELECT/INSERT/UPDATE sur tenants | S'il a été créé par 045 : retirer ses ACL et le supprimer uniquement sans dépendance. S'il préexistait : restaurer son état capturé, sinon décision en attente | Capture préalable obligatoire ; 016 ne prouve pas son état antérieur |
-| Rôle `tenant_provisioning_executor` | Créé s'il est absent ; sinon réutilisé ; reçoit USAGE sur `public` | Même règle : supprimer uniquement s'il a été créé par 045 et sans dépendance ; sinon restaurer la capture | Capture préalable obligatoire |
-| Privilèges de schéma des deux rôles | USAGE pour executor ; USAGE final pour function_owner (CREATE accordé puis révoqué) | Restaurer l'ACL capturée ; si rôle nouvellement créé, retirer les droits avant suppression | État antérieur non prouvé par 016 |
-| Commentaire de `public.tenants` | Remplacé par le commentaire de registre métier de 045 | Restaurer le commentaire capturé ; si non capturé, décision en attente | Pas de cible historique fiable dans l'audit statique |
-| Commentaires des cinq nouvelles colonnes | Ajoutés par 045 | Disparaissent avec les colonnes après archivage des données | Définitions prouvées par 045 |
-| Fonctions et triggers | Aucun changement par 045 | Aucune action de rollback | Audit de 045 |
-| Politiques RLS et activation RLS | Aucun changement par 045 ; RLS de tenants reste désactivée | Aucune action de rollback attribuable à 045 | Audit et tests de 045 |
+| Structure de public.tenants | Colonnes historiques id, first_seen_at | Migration 016 + dump pré-045 | Ne retirer les colonnes 045 qu'après capture pré-045 et archive post-045 validée |
+| Contraintes tenants_status_check et tenants_suspension_state_check | Absentes | Définitions créées par 045 | Retirer avant les colonnes, après contrôle exact |
+| Droits sync_app | SELECT et INSERT, sans UPDATE ni DELETE | Migration 016 ; confirmer avec ACL pré-045 | Jamais GRANT ALL |
+| Droits PUBLIC | Aucun droit sur public.tenants | Migration 016 + capture effective | Ne pas réattribuer de privilège |
+| Rôle tenant_provisioning_function_owner | État capturé ; absent uniquement si la capture prouve son absence | Capture pré-045 | Si état non capturé ou dépendances inconnues : conserver, ne pas supprimer |
+| Rôle tenant_provisioning_executor | État capturé ; absent uniquement si la capture prouve son absence | Capture pré-045 | Même garde-fou |
+| ACL du schéma public | État capturé avant 045 | Capture pré-045 | Ne pas déduire l'état antérieur de 016 |
+| Commentaire de table et colonnes historiques | Texte exact capturé avant 045 | Capture pré-045 | Sans capture, ne pas inventer de commentaire |
+| Commentaires des cinq nouvelles colonnes | Disparaissent avec les colonnes | 045 | Exporter les valeurs avant suppression |
+| Fonctions, triggers et RLS | Inchangés | Audit de 045 | 045 n'en crée/modifie aucun et ne change pas RLS |
+| Données de cycle de vie | Conservées dans une archive vérifiée | Export post-045, rapprochement par UUID | Archive absente/incomplète : arrêt, pas de DROP |
 
-### 4.1 Restauration précise de `sync_app`
+### 4.1 Droits exacts de sync_app
 
-La cible historique est strictement :
+L'état historique prouvé par 016 est :
 
-```sql
+~~~sql
 REVOKE ALL ON TABLE public.tenants FROM sync_app;
 GRANT SELECT, INSERT ON TABLE public.tenants TO sync_app;
-```
+~~~
 
-Ne pas remplacer cette séquence par `GRANT ALL`. Ne pas oublier INSERT. La migration 016 constitue la preuve de cet état historique.
+Aucun UPDATE, DELETE ou GRANT ALL. La cible effective est true, true, false, false pour SELECT, INSERT, UPDATE, DELETE. Les droits PUBLIC restent révoqués conformément à 016. Le dump ACL pré-045 prévaut si l'environnement avait des changements manuels.
 
-Après exécution, la requête `has_table_privilege` doit retourner :
+### 4.2 Rôles : aucune suppression par défaut
 
-| Droit | Résultat attendu |
-|---|---:|
-| SELECT | true |
-| INSERT | true |
-| UPDATE | false |
-| DELETE | false |
+045 crée chaque rôle seulement s'il est absent ; sinon il le réutilise si ses attributs sont compatibles. L'état post-migration ne révèle donc pas si le rôle existait avant.
 
-Vérifier également `PUBLIC` : aucun droit ne doit lui être réattribué, conformément à 016.
+- Capture prouvant l'absence + audit prouvant aucune dépendance, propriété ou appartenance : suppression éventuellement possible après révocation des ACL ajoutées par 045.
+- Capture prouvant l'existence : restaurer attributs, ACL et appartenances depuis la capture.
+- Capture absente/incomplète : ne pas supprimer le rôle et ne pas deviner les ACL. Préserver le rôle et soumettre sa remise en état à une décision distincte.
 
-### 4.2 Rôles préexistants : règle de non-destruction
+Le squelette SQL ne supprime automatiquement aucun rôle.
 
-045 ne conserve pas la provenance des rôles : un rôle créé par 045 et un rôle déjà présent avec des attributs compatibles peuvent avoir le même état après migration.
+## 5. Tableau à trois états — withTenant()
 
-- Si la capture prouve que le rôle n'existait pas avant 045, sa suppression n'est envisageable qu'après révocation des ACL ajoutées et vérification qu'il ne possède aucun objet, aucune dépendance et aucune appartenance.
-- Si la capture prouve qu'il existait, restaurer ses ACL et attributs à partir de cette capture.
-- Si l'existence antérieure ou les ACL ne sont pas connues, **ne pas supprimer le rôle et ne pas deviner ses privilèges**. Laisser le rôle en place, isoler les droits ajoutés par 045 lorsque cela est sûr, et consigner une décision en attente.
+Le rollback SQL et le code applicatif sont indépendants. La matrice décrit les trois états applicatifs utiles :
 
-## 5. Interaction avec `withTenant()` et traitement des tenants
+| État | Schéma SQL | Code withTenant() | Comportement attendu |
+|---|---|---|---|
+| A — situation antérieure | 045 rollbackée, privilèges historiques restaurés | Ancienne version avec inscription implicite | Le chemin historique peut insérer le tenant grâce à SELECT, INSERT, sous réserve des autres changements applicatifs |
+| B — transition mixte | 045 active, sync_app limité à SELECT | Ancienne version avec inscription implicite | L'INSERT implicite peut échouer ; le fallback doit être vérifié, ne pas supposer qu'il fonctionne |
+| C — contrat cible | 045 active, provisioning explicite | Nouvelle version stricte qui refuse un tenant absent | Le tenant doit être provisionné avant l'opération tenant-scoped ; aucun INSERT implicite par withTenant() |
 
-Le rollback SQL de 045 et le comportement applicatif de `withTenant()` sont deux opérations distinctes. Un rollback SQL ne rétablit pas automatiquement le code applicatif antérieur.
+Si le schéma est rollbacké mais que la nouvelle version stricte reste déployée, l'absence du tenant demeure une erreur : restaurer INSERT en SQL ne réintroduit pas l'inscription implicite. Toute réversion de withTenant() exige une approbation séparée et des tests applicatifs identifiés. Ne pas modifier ce code dans le cadre du rollback SQL.
 
-| Schéma SQL | Code applicatif | Conséquence |
-|---|---|---|
-| 045 active | Ancien `withTenant()` avec inscription implicite | L'INSERT historique peut échouer car `sync_app` n'a plus INSERT ; le comportement de rattrapage applicatif doit être vérifié |
-| 045 rollbackée | Ancien `withTenant()` | Les droits historiques SELECT/INSERT sont restaurés ; l'ancien parcours peut retrouver son comportement, sous réserve des autres changements |
-| 045 rollbackée | Nouveau `withTenant()` qui refuse un tenant absent | L'absence du tenant reste une erreur ; restaurer les droits SQL ne réintroduit pas l'inscription implicite |
-| 045 active | Nouveau `withTenant()` | Contrat cible : le tenant doit être provisionné explicitement avant l'opération tenant-scoped |
 
-**Toute réversion applicative est une décision séparée.** Elle nécessite une approbation explicite, un commit applicatif identifié et des tests propres. Ne pas retoucher `withTenant()` pendant un rollback SQL non autorisé.
 
 ### 5.1 Règle de conservation des tenants `pending`
 
@@ -232,34 +321,163 @@ Le rollback du schéma ne doit pas effacer la piste d'audit du cycle de vie.
 
 ## 6. Procédure opérationnelle — uniquement après approbation distincte
 
-1. Déclarer une fenêtre de maintenance et suspendre les écritures applicatives concernées selon le plan d'exploitation approuvé.
-2. Confirmer l'environnement, l'identité de la base et la révision applicative.
-3. Vérifier le ledger `public.schema_migrations` et l'état réel du schéma.
-4. Effectuer une sauvegarde fraîche et vérifier qu'elle est restaurable.
-5. Capturer les privilèges effectifs, ACL, rôles, commentaires, données et inventaire des tenants.
-6. Vérifier que l'archive des cinq colonnes de cycle de vie est complète et lisible.
-7. Exécuter le rollback testé sur une copie isolée avant toute base réelle.
-8. Si l'état d'un rôle, d'un commentaire ou d'une donnée est inconnu, appliquer le mode conditionnel : préserver et arrêter la partie destructive correspondante.
-9. Restaurer les droits historiques de `sync_app` exactement comme en section 4.1.
-10. Retirer les contraintes puis les colonnes 045 uniquement si les données sont archivées et la décision métier validée.
-11. Traiter les rôles de provisioning selon la preuve de leur existence antérieure et leurs dépendances ; aucune suppression aveugle.
-12. Vérifier les privilèges, le schéma, les données conservées et les journaux.
-13. Redémarrer les services seulement après validation des contrôles et de la compatibilité applicative.
+1. Déclarer une fenêtre de maintenance et suspendre les écritures concernées.
+2. Confirmer l'environnement, la révision applicative et le SHA déployé.
+3. Vérifier ledger, schéma, rôles, ACL et privilèges effectifs.
+4. Effectuer une sauvegarde fraîche et vérifier sa restauration.
+5. Vérifier la capture pré-045 et l'archive post-045 des cinq colonnes.
+6. Tester le script candidat sur une copie isolée représentative.
+7. Si une preuve manque ou si un état diverge, arrêter sans DDL destructif.
+8. Exécuter le rollback uniquement après autorisation distincte.
+9. Vérifier ledger, registre de rollback, schéma, privilèges, archive et compatibilité applicative.
 
-### 6.1 Ledger et garde-fou de double exécution
+### 6.1 Stratégie du ledger et du registre schema_rollbacks
 
-Le runner consulte `public.schema_migrations`. Ne pas supprimer ou modifier sa ligne 045 comme opération improvisée : cela pourrait provoquer une réapplication automatique de 045 au prochain lancement du runner si le fichier de migration est toujours présent.
+**Conserver la ligne 045 dans public.schema_migrations.** Le runner consulte ce ledger et ignore une migration déjà enregistrée. Supprimer la ligne 045 pourrait provoquer la réapplication du fichier au prochain lancement du runner. Le rollback ne modifie ni ne supprime aucune ligne de schema_migrations.
 
-Le script de rollback doit avoir un précontrôle atomique, dans la même transaction que les changements :
+La trace est conservée séparément dans public.schema_rollbacks. Cette table n'est pas le ledger des migrations. Elle est créée et alimentée dans la même transaction que le rollback : un échec annule aussi la création du registre et l'insertion.
 
-- si le ledger indique que 045 est appliquée **et** que les objets attendus sont présents, le rollback peut commencer ;
-- si le ledger n'indique pas 045 et que les objets 045 sont absents, arrêter comme « déjà rollbacké / rien à faire » ;
-- si le ledger et le schéma se contredisent, échouer immédiatement et demander une investigation ;
-- si les objets sont partiellement présents, ne pas tenter de réparation automatique.
+~~~sql
+CREATE TABLE public.schema_rollbacks (
+  migration_filename text PRIMARY KEY,
+  rolled_back_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  rollback_version text NOT NULL,
+  reason text NOT NULL,
+  evidence_reference text NOT NULL,
+  capture_id text NOT NULL,
+  executed_by name NOT NULL DEFAULT current_user
+);
+~~~
 
-La ligne du ledger doit rester cohérente avec la stratégie de migrations du dépôt. La façon de tracer un rollback sans déclencher une réapplication de 045 doit être décidée avec le propriétaire du runner avant de produire un script exécutable. **Ce point est bloquant pour une exécution réelle.**
+Insertion, dans la transaction du rollback :
 
-Un script non idempotent est acceptable uniquement s'il échoue de façon explicite et contrôlée à la seconde exécution, avant tout DDL. Ne pas utiliser `DROP COLUMN IF EXISTS` comme substitut au garde-fou : cela masque les états partiels et les erreurs de séquencement.
+~~~sql
+INSERT INTO public.schema_rollbacks (
+  migration_filename, rollback_version, reason,
+  evidence_reference, capture_id
+) VALUES (
+  '045_tenants_business_registry.sql',
+  'rollback-045-v1',
+  :'rollback_reason',
+  :'evidence_reference',
+  :'capture_id'
+);
+~~~
+
+Les trois paramètres psql doivent être fournis par l'opérateur à partir des preuves réelles. Les droits d'écriture au registre doivent être limités au rôle d'exploitation approuvé ; la protection contre UPDATE/DELETE et la rétention d'audit doivent être définies avant exécution réelle.
+
+### 6.2 Garde-fou d'idempotence
+
+Le script prend un verrou consultatif transactionnel, puis vérifie l'existence d'une ligne pour 045 :
+
+~~~sql
+SELECT migration_filename, rolled_back_at, rollback_version,
+       capture_id, evidence_reference
+FROM public.schema_rollbacks
+WHERE migration_filename = '045_tenants_business_registry.sql';
+~~~
+
+- Si une ligne existe, **refuser proprement la seconde exécution** avec le message ROLLBACK_ALREADY_RECORDED: 045_tenants_business_registry.sql. Aucun DDL n'est exécuté.
+- Si aucune ligne n'existe, continuer seulement si tous les précontrôles sont satisfaits.
+- Si le registre existe avec une structure inattendue ou si les preuves divergent, refuser et demander une investigation.
+
+La seconde exécution n'est pas un no-op silencieux : elle retourne une erreur explicite avant toute opération destructive.
+
+### 6.3 Structure du script SQL inverse — squelette non exécutable tel quel
+
+L'ensemble doit être exécuté dans une seule transaction PostgreSQL. Les précontrôles doivent vérifier les définitions exactes, pas seulement les noms.
+
+~~~sql
+BEGIN;
+
+-- Sérialiser les tentatives concurrentes.
+SELECT pg_catalog.pg_advisory_xact_lock(
+  pg_catalog.hashtextextended('rollback:045_tenants_business_registry.sql', 0)
+);
+
+-- Créer le registre dans la transaction si absent.
+CREATE TABLE IF NOT EXISTS public.schema_rollbacks (
+  migration_filename text PRIMARY KEY,
+  rolled_back_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  rollback_version text NOT NULL,
+  reason text NOT NULL,
+  evidence_reference text NOT NULL,
+  capture_id text NOT NULL,
+  executed_by name NOT NULL DEFAULT current_user
+);
+
+-- Refuser une seconde exécution avant tout DDL de rollback.
+DO $guard$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.schema_rollbacks
+    WHERE migration_filename = '045_tenants_business_registry.sql'
+  ) THEN
+    RAISE EXCEPTION
+      'ROLLBACK_ALREADY_RECORDED: 045_tenants_business_registry.sql';
+  END IF;
+END
+$guard$;
+
+-- Précontrôles fail-closed : chacun lève RAISE EXCEPTION en cas d'échec.
+-- 1) exactement une ligne 045 dans schema_migrations ;
+-- 2) cinq colonnes et deux contraintes 045 présentes avec définitions attendues ;
+-- 3) deux rôles présents avec attributs post-045 attendus ;
+-- 4) ACL post-045 conformes à 045 ;
+-- 5) capture pré-045 complète, capture_id et evidence_reference vérifiables ;
+-- 6) export post-045 des cinq colonnes complet, testé et rapproché ;
+-- 7) aucune divergence de schéma, dépendance ou écriture concurrente.
+-- Tout échec => REFUS D'EXÉCUTION, avant toute instruction destructive.
+
+-- Ne jamais modifier ni supprimer la ligne de schema_migrations.
+-- Restaurer uniquement les privilèges historiques prouvés.
+REVOKE ALL ON TABLE public.tenants FROM PUBLIC, sync_app;
+GRANT SELECT, INSERT ON TABLE public.tenants TO sync_app;
+
+-- Restaurer commentaires et ACL de schéma depuis la capture validée.
+-- Sans valeur exacte capturée : RAISE EXCEPTION.
+
+-- Retirer les contraintes exactes après contrôle.
+ALTER TABLE public.tenants
+  DROP CONSTRAINT tenants_status_check,
+  DROP CONSTRAINT tenants_suspension_state_check;
+
+-- Vérifier à nouveau l'archive juste avant toute suppression.
+-- Archive absente/incomplète : RAISE EXCEPTION ; aucun DROP COLUMN.
+ALTER TABLE public.tenants
+  DROP COLUMN status,
+  DROP COLUMN created_at,
+  DROP COLUMN created_by,
+  DROP COLUMN suspended_at,
+  DROP COLUMN suspended_reason;
+
+-- Restaurer les rôles préexistants depuis la capture.
+-- Ne supprimer aucun rôle automatiquement dans ce squelette.
+
+-- Vérifier état final : colonnes/contraintes absentes, ACL exactes,
+-- commentaires et rôles conformes à la capture, données rapprochées.
+-- Toute divergence lève une exception et annule la transaction.
+
+INSERT INTO public.schema_rollbacks (
+  migration_filename, rollback_version, reason,
+  evidence_reference, capture_id
+) VALUES (
+  '045_tenants_business_registry.sql',
+  'rollback-045-v1',
+  :'rollback_reason',
+  :'evidence_reference',
+  :'capture_id'
+);
+
+-- Contrôler le registre et l'état final avant validation.
+COMMIT;
+~~~
+
+Ce squelette décrit l'ordre et les garde-fous ; il n'est pas un script prêt à exécuter. Les contrôles de capture et d'archive doivent être raccordés à un format de preuve vérifiable. Si un précontrôle échoue, le script lève une exception, la transaction est annulée et **il refuse de s'exécuter**. Aucun DROP COLUMN n'est permis avant validation de l'archive.
+
+Le registre créé et alimenté dans la même transaction ne conserve aucune trace de succès si la transaction échoue. Après un commit réussi, sa ligne bloque une seconde exécution. schema_migrations reste inchangé, ce qui évite le rejeu de 045 par le runner.
+
+
 
 ## 7. Vérifications après rollback
 
@@ -290,50 +508,32 @@ Résultat exigé : `true, true, false, false`, dans cet ordre. Archiver aussi `\
 
 ## 8. Tests de rollback obligatoires en PostgreSQL isolé
 
-Tous les tests sont exécutés sur une base jetable, avec la même version PostgreSQL et les mêmes migrations que l'environnement cible. Aucun test ne doit utiliser Supabase réel.
-
-### 8.1 Test fonctionnel de base
+Tous les tests sont exécutés sur une base jetable avec la même version PostgreSQL et la même séquence de migrations que l'environnement cible. Aucun test ne doit utiliser Supabase réel.
 
 1. Appliquer les migrations jusqu'à 044.
-2. Capturer l'état historique de `tenants`, des privilèges et des rôles.
+2. Exécuter les captures pré-045 et vérifier qu'elles sont exploitables.
 3. Appliquer 045.
-4. Vérifier les cinq colonnes, les deux contraintes, les deux rôles, les commentaires et les ACL post-045.
-5. Créer des fixtures représentant un tenant historique, un tenant post-045 `pending` et un tenant suspendu, avec leurs données de cycle de vie.
-6. Exécuter le rollback candidat.
-7. Vérifier la restauration des privilèges historiques et l'absence des objets 045 ciblés.
-8. Vérifier que les UUID et données conservées sont identiques et que l'archive contient toutes les valeurs de cycle de vie.
+4. Créer des fixtures : tenant historique, tenant post-045 pending, active et suspended.
+5. Exporter et vérifier les cinq colonnes de cycle de vie.
+6. Exécuter le script candidat ; vérifier schéma, ACL, registre, ledger et archive.
+7. Relancer le script : il doit retourner ROLLBACK_ALREADY_RECORDED avant tout DDL ; comparer l'état à l'instantané après le premier rollback.
+8. Injecter un échec avant COMMIT : la transaction doit annuler toutes les modifications et ne laisser aucune trace de succès.
+9. Vérifier les cas divergents ci-dessous.
+10. Relancer le runner : il ne doit pas réappliquer 045 puisque sa ligne reste dans schema_migrations.
 
-### 8.2 Test explicite de double exécution
+Cas négatifs obligatoires :
+- ledger absent + objets 045 absents : refus / rien à rollback ;
+- ledger absent + objets 045 présents : refus et investigation ;
+- ledger présent + objets 045 absents sans trace de rollback : refus et investigation ;
+- ledger présent + schéma 045 complet : seul état admissible pour le chemin normal ;
+- schéma partiel ou définition différente : refus avant DDL ;
+- capture pré-045 manquante : refus du rollback destructif ;
+- archive post-045 manquante/incomplète : refus avant tout DROP COLUMN ;
+- rôle préexistant ou d'existence antérieure inconnue : aucune suppression ;
+- seconde exécution : erreur explicite, pas de double exécution silencieuse ;
+- tentatives concurrentes : verrou et contrôle du registre empêchent deux rollbacks simultanés.
 
-Le test doit conserver les preuves des deux passages :
 
-1. Exécuter le script de rollback une première fois.
-2. Vérifier intégralement l'état post-rollback : ledger, colonnes, contraintes, rôles, ACL, données et archive.
-3. Enregistrer un instantané de cet état.
-4. Exécuter le même script une seconde fois.
-5. Vérifier que l'état est strictement identique à l'instantané.
-6. Vérifier que le second passage s'est arrêté proprement avant tout DDL, ou a terminé comme no-op idempotent.
-7. Vérifier qu'aucune erreur inattendue, aucun changement de privilège et aucune perte de donnée ne sont survenus.
-
-Si le script est conçu comme non idempotent, le deuxième passage doit être bloqué par le garde-fou de la section 6.1. Le test doit prouver que le blocage intervient avant toute instruction destructive. Un échec silencieux ou un état partiellement modifié est un échec du test.
-
-### 8.3 Tests de divergence et de reprise
-
-- [ ] Ledger absent + objets 045 absents : arrêt « déjà rollbacké / rien à faire ».
-- [ ] Ledger absent + objets 045 présents : arrêt et investigation.
-- [ ] Ledger présent + objets 045 absents : arrêt et investigation.
-- [ ] Ledger présent + schéma 045 complet : chemin de rollback normal.
-- [ ] Schéma partiel : arrêt sans tentative de réparation.
-- [ ] Rôle préexistant avec ACL capturées : restauration exacte.
-- [ ] Rôle préexistant sans capture : pas de suppression, décision en attente.
-- [ ] Tenant `pending` dont l'origine est prouvée : conservation et rapprochement.
-- [ ] Tenant `pending` d'origine inconnue : conservation, aucune promotion, décision en attente.
-- [ ] Échec injecté avant commit : transaction annulée, aucun état partiel.
-- [ ] Rejouer les migrations ordinaires après rollback pour confirmer que le runner ne réapplique pas 045 de manière inattendue.
-
-### 8.4 Interaction applicative
-
-Tester séparément les combinaisons de la matrice de la section 5. Ne pas conclure qu'un rollback SQL restaure l'ancien comportement applicatif. La validation doit couvrir le code réellement déployé, pas uniquement le schéma.
 
 ## 9. Critères d'arrêt immédiat
 
