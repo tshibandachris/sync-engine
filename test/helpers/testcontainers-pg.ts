@@ -413,3 +413,27 @@ export class TestPostgres {
 export async function startTestPostgres(): Promise<TestPostgres> {
   return TestPostgres.start();
 }
+
+/**
+ * Provisionne explicitement un tenant dans la base PostgreSQL de test.
+ *
+ * Depuis la migration 045, withTenant() ne crée plus implicitement
+ * les tenants absents : il vérifie leur existence et échoue si
+ * le tenant n'est pas provisionné.
+ *
+ * first_seen_at est un timestamp Unix en millisecondes, conformément
+ * à la convention définie dans la migration 016. Le pool privilégié
+ * du harness est utilisé pour ne pas dépendre des permissions RLS
+ * du rôle applicatif.
+ */
+export async function provisionTenant(
+  pg: TestPostgres,
+  tenantId: string,
+): Promise<void> {
+  await pg.pool.query(
+    `INSERT INTO tenants (id, first_seen_at)
+     VALUES ($1, $2)
+     ON CONFLICT (id) DO NOTHING`,
+    [tenantId, Date.now()],
+  );
+}
