@@ -13,6 +13,26 @@ afterAll(async () => {
 }, 30_000);
 
 describe('registre métier des tenants (migration 045)', () => {
+  it('le backfill conserve exactement le nombre de tenants préexistants et les active tous', async () => {
+    const r = await pg.pool.query(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE status = 'active')::int AS active,
+              count(*) FILTER (WHERE status IS NULL OR status NOT IN ('pending', 'active', 'suspended'))::int AS invalid
+       FROM tenants`,
+    );
+    expect(r.rows[0]).toEqual({
+      total: pg.tenantCountBefore045,
+      active: pg.tenantCountBefore045,
+      invalid: 0,
+    });
+    const fixtures = await pg.pool.query(
+      `SELECT count(*)::int AS n FROM tenants
+       WHERE id = ANY($1::uuid[]) AND status = 'active'`,
+      [['10000000-0000-4000-8000-000000000045', '10000000-0000-4000-8000-000000000046']],
+    );
+    expect(fixtures.rows[0].n).toBe(2);
+  });
+
   it('sync_app conserve SELECT sans pouvoir INSERT, UPDATE ou DELETE', async () => {
     const id = randomUUID();
     await pg.pool.query(
