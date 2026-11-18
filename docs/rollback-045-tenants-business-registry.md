@@ -383,9 +383,9 @@ WHERE migration_filename = '045_tenants_business_registry.sql';
 
 La seconde exécution n'est pas un no-op silencieux : elle retourne une erreur explicite avant toute opération destructive.
 
-### 6.3 Structure du script SQL inverse — squelette non exécutable tel quel
+### 6.3 Structure du script SQL inverse — plan du script candidat (non écrit, non exécutable)
 
-L'ensemble doit être exécuté dans une seule transaction PostgreSQL. Les précontrôles doivent vérifier les définitions exactes, pas seulement les noms.
+Voici la structure du script candidat. Les précontrôles 1 à 7 ci-dessous sont décrits en commentaires et **doivent être implémentés et testés** avant que ce squelette ne devienne un script opérationnel. Le bloc SQL présenté n'est donc pas un livrable exécutable ni un script prêt à lancer. Les contrôles devront vérifier les définitions exactes, pas seulement les noms, et l'ensemble devra être exécuté dans une seule transaction PostgreSQL.
 
 ~~~sql
 BEGIN;
@@ -395,10 +395,14 @@ SELECT pg_catalog.pg_advisory_xact_lock(
   pg_catalog.hashtextextended('rollback:045_tenants_business_registry.sql', 0)
 );
 
--- Détecter le registre AVANT toute instruction DDL.
+-- Détecter le registre AVANT toute instruction DDL de rollback.
 -- S'il existe, vérifier sa forme puis refuser une seconde exécution
 -- avant toute opération DDL de rollback. S'il est absent, le créer
--- dans cette transaction : un échec ultérieur annulera aussi sa création.
+-- dans cette transaction. Si l'INSERT final échoue (contrainte, privilège
+-- ou autre erreur), l'échec annule toute la transaction, y compris cette
+-- création : la table disparaît alors parce que son CREATE est rollbacké.
+-- C'est le comportement transactionnel attendu, pas une perte de données
+-- préexistantes ; l'opérateur peut corriger la cause puis rejouer le script.
 DO $registry$
 DECLARE
   registry_oid oid := pg_catalog.to_regclass('public.schema_rollbacks');
@@ -517,9 +521,11 @@ INSERT INTO public.schema_rollbacks (
 COMMIT;
 ~~~
 
-Ce squelette décrit l'ordre et les garde-fous ; il n'est pas un script prêt à exécuter. Les contrôles de capture et d'archive doivent être raccordés à un format de preuve vérifiable. Si un précontrôle échoue, le script lève une exception, la transaction est annulée et **il refuse de s'exécuter**. Aucun DROP COLUMN n'est permis avant validation de l'archive.
+Ce squelette décrit l'ordre et les garde-fous ; le script candidat complet n'est pas encore écrit. Les contrôles de capture et d'archive doivent être raccordés à un format de preuve vérifiable. Si un précontrôle échoue, le script lève une exception, la transaction est annulée et **il refuse de s'exécuter**. Aucun DROP COLUMN n'est permis avant validation de l'archive.
 
-Le registre créé et alimenté dans la même transaction ne conserve aucune trace de succès si la transaction échoue. Après un commit réussi, sa ligne bloque une seconde exécution. schema_migrations reste inchangé, ce qui évite le rejeu de 045 par le runner.
+**Comportement en cas d'échec et de rejeu :** si une erreur survient au milieu de l'opération, PostgreSQL annule la transaction entière. L'état de la base revient à celui d'après 045 ; les DDL transactionnels déjà exécutés dans cette transaction, ainsi que la création éventuelle de schema_rollbacks et toute insertion non validée, sont annulés. L'opérateur n'a donc rien à restaurer manuellement dans la base ; il doit examiner et corriger la cause de l'échec. Le script peut ensuite être rejoué : comme aucune ligne de succès n'a été validée dans schema_rollbacks, le garde-fou ROLLBACK_ALREADY_RECORDED ne bloque pas cette nouvelle tentative. La ligne schema_rollbacks n'est insérée et conservée qu'en cas de succès complet, au COMMIT.
+
+Après un commit réussi, la ligne du registre bloque une seconde exécution. schema_migrations reste inchangé, ce qui évite le rejeu de 045 par le runner.
 
 
 
