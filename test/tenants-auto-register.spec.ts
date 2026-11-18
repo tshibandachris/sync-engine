@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { withTenant } from '../src/with-tenant.js';
-import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 
 let pg: TestPostgres;
 
@@ -75,17 +74,35 @@ describe('withTenant — existence explicite du tenant', () => {
     }
   });
 
-  it('refuse explicitement une opération de maintenance sur un tenant absent', async () => {
+  it('bloque le callback de maintenance avant toute opération SQL si le tenant est absent', async () => {
     const tenantId = randomUUID();
-    const maintenance = new SyncMaintenanceService(pg.appDb);
+    const maintenanceCallback = vi.fn(async () => ({ logsDeleted: 0 }));
 
-    await expect(maintenance.purgeSyncLogs(tenantId)).rejects.toMatchObject({
+    await expect(withTenant(pg.appDb, tenantId, maintenanceCallback)).rejects.toMatchObject({
       name: 'TenantNotFoundError',
       code: 'TENANT_NOT_FOUND',
       tenantId,
     });
 
+    expect(maintenanceCallback).not.toHaveBeenCalled();
     expect(await tenantCount(tenantId)).toBe(0);
+  });
+
+  it('gère dix appels concurrents sans interblocage ni inscription implicite', async () => {
+    const tenantIds = Array.from({ length: 10 }, () => randomUUID());
+    const callbacks = tenantIds.map((value) => vi.fn(async () => value));
+
+    const results = await Promise.all(
+      tenantIds.map((tenantId, index) =>
+        withTenant(pg.appDb, tenantId, callbacks[index], { write: index % 2 === 0 }),
+      ),
+    );
+
+    expect(results).toEqual(tenantIds);
+    callbacks.forEach((callback) => expect(callback).toHaveBeenCalledOnce());
+    for (const tenantId of tenantIds) {
+      expect(await tenantCount(tenantId)).toBe(0);
+    }
   });
 
   it('conserve la sérialisation advisory des transactions avec write: true', async () => {
@@ -124,5 +141,21 @@ describe('withTenant — existence explicite du tenant', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual(['first', 'second']);
     expect(secondEntered).toBe(true);
+  });
+
+  it("préserve le comportement des identifiants mal formés sans inscription ni log d'erreur", async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const callback = vi.fn(async () => 'ok');
+    const before = (await pg.pool.query('SELECT count(*)::int AS n FROM tenants')).rows[0].n;
+
+    try {
+      await expect(withTenant(pg.appDb, 'not-a-uuid', callback)).resolves.toBe('ok');
+      const after = (await pg.pool.query('SELECT count(*)::int AS n FROM tenants')).rows[0].n;
+      expect(after).toBe(before);
+      expect(callback).toHaveBeenCalledOnce();
+      expect(errorLog).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });
