@@ -47,7 +47,7 @@ SELECT
 Dans `psql`, conserver également la sortie de :
 
 ```text
-\\dp public.tenants
+\dp public.tenants
 ```
 
 Capturer les droits explicites par rôle :
@@ -127,7 +127,7 @@ SELECT
   has_table_privilege('sync_app', 'public.tenants', 'DELETE') AS can_delete;
 ```
 
-Capturer aussi `\\dp public.tenants` et la requête `information_schema.role_table_grants` de la section 2.2. Si l'état effectif diffère de l'état attendu après 045, arrêter : il peut exister des droits indirects ou des changements hors migration.
+Capturer aussi `\dp public.tenants` et la requête `information_schema.role_table_grants` de la section 2.2. Si l'état effectif diffère de l'état attendu après 045, arrêter : il peut exister des droits indirects ou des changements hors migration.
 
 ### 3.3 Vérifier les tenants et les données
 
@@ -275,7 +275,7 @@ SELECT
   has_table_privilege('sync_app', 'public.tenants', 'DELETE') AS can_delete;
 ```
 
-Résultat exigé : `true, true, false, false`, dans cet ordre. Archiver aussi `\\dp public.tenants` et la requête `information_schema.role_table_grants`.
+Résultat exigé : `true, true, false, false`, dans cet ordre. Archiver aussi `\dp public.tenants` et la requête `information_schema.role_table_grants`.
 
 ### 7.2 Schéma et données
 
