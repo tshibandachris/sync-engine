@@ -73,8 +73,6 @@ ALTER TABLE public.tenants
         AND suspended_reason IS NULL)
     );
 
-COMMENT ON TABLE public.tenants IS
-  'Authoritative business tenant registry. Existing rows were backfilled active by migration 045; new tenants default to pending.';
 COMMENT ON COLUMN public.tenants.status IS
   'Tenant lifecycle: pending, active, or suspended. Only trusted provisioning may transition lifecycle state.';
 COMMENT ON COLUMN public.tenants.created_by IS
@@ -84,14 +82,13 @@ COMMENT ON COLUMN public.tenants.suspended_at IS
 COMMENT ON COLUMN public.tenants.suspended_reason IS
   'Non-empty audit reason required while status is suspended.';
 COMMENT ON TABLE public.tenants IS
-  'Authoritative business tenant registry. Services are intentionally not modelled until an authoritative service catalogue exists.';
+  'Authoritative business tenant registry. Existing rows were backfilled active by migration 045; new tenants default to pending. Services are intentionally not modelled until an authoritative service catalogue exists.';
 
 -- The runtime sync role may resolve an existing tenant but cannot create, alter,
 -- or delete tenant registry rows. The legacy best-effort INSERT in withTenant()
 -- is left untouched here and will be removed in a separate application change.
 REVOKE ALL ON TABLE public.tenants FROM PUBLIC, sync_app;
 GRANT SELECT ON TABLE public.tenants TO sync_app;
-GRANT SELECT ON TABLE public.tenants TO tenant_provisioning_executor;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.tenants TO tenant_provisioning_function_owner;
 
 DO $verify$
