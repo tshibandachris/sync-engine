@@ -4,7 +4,7 @@ import { JwtModule, JwtService } from '@nestjs/jwt';
 import request from 'supertest';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import * as schema from '../src/schema.js';
 import { AttachmentService } from '../src/sync-attachment.service.js';
 import { AttachmentController } from '../src/sync-attachment.controller.js';
@@ -111,6 +111,9 @@ describe('Attachments / HTTP', () => {
 
     await pg.pool.query('TRUNCATE check_ins, missions, sites, sync_idempotency_keys, sync_conflicts, attachments RESTART IDENTITY CASCADE');
     await pg.pool.query('ALTER SEQUENCE global_sync_seq RESTART WITH 1');
+
+    await provisionTenant(pg, tenantA);
+    await provisionTenant(pg, tenantB);
 
     await pg.pool.query(
       'INSERT INTO sites (id, tenant_id, name, latitude, longitude) VALUES ($1, $2, $3, $4, $5)',

@@ -5,7 +5,7 @@ import type { INestApplication } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET } from './helpers/jwt.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
@@ -89,6 +89,8 @@ describe('SyncLog interceptor', () => {
   }
 
   beforeAll(async () => {
+    await provisionTenant(pg, tenantId);
+
     // Seed a site and a mission so a pull has something to return and a
     // push has a valid target mission. Superuser pool: seeds bypass RLS.
     await pg.pool.query(

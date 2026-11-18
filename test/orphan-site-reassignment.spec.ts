@@ -15,7 +15,7 @@ import type { INestApplication } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET } from './helpers/jwt.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
@@ -98,6 +98,7 @@ describe('Bug 1 : site orphelin après réaffectation de mission', () => {
     const siteA = randomUUID();
     const siteB = randomUUID();
     const missionId = randomUUID();
+    await provisionTenant(pg, tenantId);
 
     for (const [id, name] of [[siteA, 'site-A'], [siteB, 'site-B']] as const) {
       await pg.pool.query(

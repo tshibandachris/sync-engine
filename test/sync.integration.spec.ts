@@ -3,7 +3,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { eq } from 'drizzle-orm';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
 import { SyncPushService, type SyncPushDto } from '../src/sync-push.service.js';
 import { SyncConflictService } from '../src/sync-conflict.service.js';
@@ -46,6 +46,7 @@ describe('Sync Engine / sync_seq integration', () => {
 });
 
 beforeEach(async () => {
+  await provisionTenant(pg, TEST_TENANT_ID);
   await pool.query(
     'TRUNCATE check_ins, missions, sites, sync_idempotency_keys, sync_conflicts RESTART IDENTITY CASCADE',
   );

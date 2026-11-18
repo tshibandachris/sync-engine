@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 import type {
   AttachmentStorage,
@@ -64,6 +64,8 @@ describe('scanTenantOrphans', () => {
   });
 
   beforeEach(async () => {
+    await provisionTenant(pg, tenantId);
+
     // Nettoyage par le superuser (RLS bypass).
     await pg.pool.query('DELETE FROM attachments WHERE tenant_id = $1', [tenantId]);
     await pg.pool.query('DELETE FROM check_ins WHERE tenant_id = $1', [tenantId]);

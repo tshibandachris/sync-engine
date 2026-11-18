@@ -35,7 +35,7 @@ import { JwtModule, JwtService } from '@nestjs/jwt';
 import type { AddressInfo } from 'node:net';
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET } from './helpers/jwt.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
@@ -176,6 +176,8 @@ describe('sync cursor gaps (out-of-order commit)', () => {
   }
 
   beforeAll(async () => {
+    await provisionTenant(pg, tenantId);
+
     // Sites and missions are not pushable: seed them in SQL, with the same
     // statements as sync.http.spec.ts (keep them identical if columns change).
     await pg.pool.query(

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -20,6 +20,8 @@ describe('bounded tenant maintenance purges', () => {
     const missionA = randomUUID();
     const missionB = randomUUID();
     const now = Date.now();
+    await provisionTenant(pg, tenantA);
+    await provisionTenant(pg, tenantB);
     await pg.pool.query(
       'INSERT INTO sites (id, tenant_id, name, latitude, longitude) VALUES ($1,$2,$3,0,0),($4,$5,$6,0,0)',
       [siteA, tenantA, 'batch-a', siteB, tenantB, 'batch-b'],
@@ -59,6 +61,8 @@ describe('bounded tenant maintenance purges', () => {
     const tenantA = randomUUID();
     const tenantB = randomUUID();
     const now = Date.now();
+    await provisionTenant(pg, tenantA);
+    await provisionTenant(pg, tenantB);
     await pg.pool.query(
       'INSERT INTO sync_logs (id, request_id, tenant_id, operation, status_code, started_at, duration_ms, records_in, records_out, conflicts, errors) ' +
       "SELECT gen_random_uuid(), gen_random_uuid(), $1, 'pull', 200, $2, 1, 0, 0, 0, 0 FROM generate_series(1, 5001)",
