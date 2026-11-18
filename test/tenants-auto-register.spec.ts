@@ -88,21 +88,18 @@ describe('withTenant — existence explicite du tenant', () => {
     expect(await tenantCount(tenantId)).toBe(0);
   });
 
-  it('gère dix appels concurrents sans interblocage ni inscription implicite', async () => {
-    const tenantIds = Array.from({ length: 10 }, () => randomUUID());
-    const callbacks = tenantIds.map((value) => vi.fn(async () => value));
+  it('gère dix appels concurrents sur un tenant pré-provisionné sans interblocage', async () => {
+    const tenantId = randomUUID();
+    await provisionTenant(tenantId);
 
     const results = await Promise.all(
-      tenantIds.map((tenantId, index) =>
-        withTenant(pg.appDb, tenantId, callbacks[index], { write: index % 2 === 0 }),
+      Array.from({ length: 10 }, (_, index) =>
+        withTenant(pg.appDb, tenantId, async () => index, { write: index % 2 === 0 }),
       ),
     );
 
-    expect(results).toEqual(tenantIds);
-    callbacks.forEach((callback) => expect(callback).toHaveBeenCalledOnce());
-    for (const tenantId of tenantIds) {
-      expect(await tenantCount(tenantId)).toBe(0);
-    }
+    expect(results).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(await tenantCount(tenantId)).toBe(1);
   });
 
   it('conserve la sérialisation advisory des transactions avec write: true', async () => {
