@@ -315,6 +315,13 @@ export class TestPostgres {
   await pool.query(migration16);
   for (const migration of posMigrations) await pool.query(migration);
 
+  // Migration 045 is included in every isolated PostgreSQL integration database.
+  const migration45 = fs.readFileSync(
+    path.join(migrationsDir, '045_tenants_business_registry.sql'),
+    'utf8',
+  );
+  await pool.query(migration45);
+
     /*
      * ========================================================
      * DRIZZLE
