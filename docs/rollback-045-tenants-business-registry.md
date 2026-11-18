@@ -395,29 +395,73 @@ SELECT pg_catalog.pg_advisory_xact_lock(
   pg_catalog.hashtextextended('rollback:045_tenants_business_registry.sql', 0)
 );
 
--- Créer le registre dans la transaction si absent.
-CREATE TABLE IF NOT EXISTS public.schema_rollbacks (
-  migration_filename text PRIMARY KEY,
-  rolled_back_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  rollback_version text NOT NULL,
-  reason text NOT NULL,
-  evidence_reference text NOT NULL,
-  capture_id text NOT NULL,
-  executed_by name NOT NULL DEFAULT current_user
-);
-
--- Refuser une seconde exécution avant tout DDL de rollback.
-DO $guard$
+-- Détecter le registre AVANT toute instruction DDL.
+-- S'il existe, vérifier sa forme puis refuser une seconde exécution
+-- avant toute opération DDL de rollback. S'il est absent, le créer
+-- dans cette transaction : un échec ultérieur annulera aussi sa création.
+DO $registry$
+DECLARE
+  registry_oid oid := pg_catalog.to_regclass('public.schema_rollbacks');
+  actual_columns text[];
+  expected_columns text[] := ARRAY[
+    'migration_filename:text',
+    'rolled_back_at:timestamp with time zone',
+    'rollback_version:text',
+    'reason:text',
+    'evidence_reference:text',
+    'capture_id:text',
+    'executed_by:name'
+  ];
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.schema_rollbacks
-    WHERE migration_filename = '045_tenants_business_registry.sql'
-  ) THEN
-    RAISE EXCEPTION
-      'ROLLBACK_ALREADY_RECORDED: 045_tenants_business_registry.sql';
+  IF registry_oid IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_class
+      WHERE oid = registry_oid AND relkind = 'r'
+    ) THEN
+      RAISE EXCEPTION 'ROLLBACK_REGISTRY_INVALID: public.schema_rollbacks is not a table';
+    END IF;
+
+    SELECT array_agg(
+      a.attname || ':' || pg_catalog.format_type(a.atttypid, a.atttypmod)
+      ORDER BY a.attnum
+    )
+    INTO actual_columns
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = registry_oid
+      AND a.attnum > 0 AND NOT a.attisdropped;
+
+    IF actual_columns IS DISTINCT FROM expected_columns
+       OR NOT EXISTS (
+         SELECT 1 FROM pg_catalog.pg_constraint c
+         WHERE c.conrelid = registry_oid AND c.contype = 'p'
+           AND pg_catalog.pg_get_constraintdef(c.oid) =
+               'PRIMARY KEY (migration_filename)'
+       ) THEN
+      RAISE EXCEPTION 'ROLLBACK_REGISTRY_INVALID: unexpected schema';
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM public.schema_rollbacks
+      WHERE migration_filename = '045_tenants_business_registry.sql'
+    ) THEN
+      RAISE EXCEPTION
+        'ROLLBACK_ALREADY_RECORDED: 045_tenants_business_registry.sql';
+    END IF;
+  ELSE
+    EXECUTE $create$
+      CREATE TABLE public.schema_rollbacks (
+        migration_filename text PRIMARY KEY,
+        rolled_back_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+        rollback_version text NOT NULL,
+        reason text NOT NULL,
+        evidence_reference text NOT NULL,
+        capture_id text NOT NULL,
+        executed_by name NOT NULL DEFAULT current_user
+      )
+    $create$;
   END IF;
 END
-$guard$;
+$registry$;
 
 -- Précontrôles fail-closed : chacun lève RAISE EXCEPTION en cas d'échec.
 -- 1) exactement une ligne 045 dans schema_migrations ;
