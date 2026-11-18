@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SyncPushService } from '../src/sync-push.service.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 
 describe('Products sync / integration', () => {
   let pg: TestPostgres;
@@ -21,6 +21,8 @@ describe('Products sync / integration', () => {
   afterAll(async () => { await pg.stop(); });
 
   beforeEach(async () => {
+    await provisionTenant(pg, tenantA);
+    await provisionTenant(pg, tenantB);
     await pg.pool.query('TRUNCATE products, check_ins, missions, sites, sync_idempotency_keys, sync_conflicts RESTART IDENTITY CASCADE');
     await pg.pool.query('ALTER SEQUENCE global_sync_seq RESTART WITH 1');
   });

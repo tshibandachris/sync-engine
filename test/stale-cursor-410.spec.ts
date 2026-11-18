@@ -27,7 +27,7 @@ import type { INestApplication } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { assertRunsAsAppRole } from './helpers/assert-app-role.js';
 import { TEST_JWT_SECRET } from './helpers/jwt.js';
 import { SyncPullService } from '../src/sync-pull.service.js';
@@ -116,6 +116,8 @@ describe('sync pull / stale cursor (410 GONE)', () => {
 
   beforeAll(async () => {
     pg = await startTestPostgres();
+    await provisionTenant(pg, tenantA);
+    await provisionTenant(pg, tenantB);
 
     // Same seed statements as sync.http.spec.ts.
     await pg.pool.query(

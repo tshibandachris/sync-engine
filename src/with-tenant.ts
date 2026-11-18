@@ -1,7 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from './schema.js';
-import { ensureTenantRegistered, markTenantKnown } from './tenant-registry.js';
 
 export type TransactionClient = Parameters<
   Parameters<NodePgDatabase<typeof schema>['transaction']>[0]
@@ -29,43 +28,55 @@ export interface WithTenantOptions {
    * serialises every write of the tenant and hurts throughput.
    */
   write?: boolean;
-  /** Skip tenant-registry INSERTs for the read-only maintenance capability. */
-  registerTenant?: boolean;
 }
 
 /**
- * Opens a transaction, sets the RLS tenant context, registers the tenant
- * in the registry (016) so maintenance can enumerate it later, and
- * (optionally) takes the per-tenant advisory lock, then runs the callback.
+ * Opens a transaction, sets the RLS tenant context, verifies that the tenant
+ * already exists, and (optionally) takes the per-tenant advisory lock before
+ * running the callback.
  *
- * set_config(..., true) is local to the transaction: it resets on
- * COMMIT or ROLLBACK. If the tenant id is malformed, PostgreSQL raises
- * rather than silently returning cross-tenant data.
+ * set_config(..., true) is local to the transaction: it resets on COMMIT or
+ * ROLLBACK. Non-UUID identifiers retain the legacy pass-through behavior;
+ * valid UUIDs must resolve to an existing tenant before the callback runs.
  *
- * The registration is best-effort: a failure is logged and dropped, and
- * the tenant stays out of the local cache so the next call retries.
- * markTenantKnown runs only after COMMIT, so a rolled-back transaction
- * does not leave a phantom entry in the cache.
+ * The existence check deliberately does not catch SQL errors: a failed
+ * SELECT (for example, insufficient privilege) must propagate unchanged.
  */
+export class TenantNotFoundError extends Error {
+  readonly code = 'TENANT_NOT_FOUND' as const;
+
+  constructor(readonly tenantId: string) {
+    super(`Tenant introuvable: ${tenantId}`);
+    this.name = 'TenantNotFoundError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function withTenant<T>(
   db: NodePgDatabase<typeof schema>,
   tenantId: string,
   fn: (tx: TransactionClient) => Promise<T>,
   options: WithTenantOptions = {},
 ): Promise<T> {
-  const state = { registered: false };
-
-  const result = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`,
     );
 
-    // Tenant registry (migration 016), so maintenance knows which tenants
-    // to walk. Runs before the write lock: waiting on this INSERT must
-    // not hold the advisory lock.
-    if (options.registerTenant !== false) {
-      state.registered = await ensureTenantRegistered(tx, tenantId);
+    if (UUID_RE.test(tenantId)) {
+      const existing = await tx.execute(
+        sql`SELECT id FROM tenants WHERE id = ${tenantId}::uuid LIMIT 1`,
+      );
+      if (existing.rows.length === 0) {
+        throw new TenantNotFoundError(tenantId);
+      }
     }
+
+    // L'existence du tenant est vérifiée ici. Le contrôle de son statut
+    // (pending, active, suspended) sera ajouté après merge de la migration 045.
+    // Voir migration 045 et ticket de suivi.
 
     if (options.write) {
       // Must run before any INSERT/UPDATE that fires the sync_seq
@@ -77,8 +88,4 @@ export async function withTenant<T>(
 
     return fn(tx);
   }, { isolationLevel: 'read committed' });
-
-  // Only after COMMIT: a rollback also rolled back the registration.
-  if (state.registered) markTenantKnown(tenantId);
-  return result;
 }

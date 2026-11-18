@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -29,6 +29,7 @@ describe('purgeTenantPendingAttachments', () => {
   });
 
   beforeEach(async () => {
+    await provisionTenant(pg, tenantId);
     await pg.pool.query('DELETE FROM attachments WHERE tenant_id = $1', [tenantId]);
     await pg.pool.query('DELETE FROM check_ins WHERE tenant_id = $1', [tenantId]);
     await pg.pool.query('DELETE FROM missions WHERE tenant_id = $1', [tenantId]);
@@ -119,6 +120,7 @@ describe('purgeTenantPendingAttachments', () => {
 
   it('ne touche pas aux pending des autres tenants', async () => {
     const otherTenant = randomUUID();
+    await provisionTenant(pg, otherTenant);
     const mine = await seed({ status: 'pending', ageDays: 30 });
 
     const otherSiteId = randomUUID();

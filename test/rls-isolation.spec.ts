@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import * as schema from '../src/schema.js';
 import { withTenant } from '../src/with-tenant.js';
 
@@ -22,6 +22,8 @@ describe('RLS isolation', () => {
 
   beforeAll(async () => {
     pg = await startTestPostgres();
+    await provisionTenant(pg, tenantA);
+    await provisionTenant(pg, tenantB);
 
     // Seed via the superuser pool (bypasses RLS).
     await pg.pool.query(

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 
 let pg: TestPostgres;
@@ -28,6 +28,7 @@ describe('maintenance privilege boundary', () => {
   });
 
   it('returns SQLSTATE 42501 when sync_app invokes nonce, tombstone, or sync-log purge', async () => {
+    // No provisionTenant(): this test checks direct role permissions, not tenant existence.
     const tenantId = randomUUID();
     const client = await pg.appPool.connect();
     const calls: Array<[string, unknown[]]> = [
@@ -48,6 +49,7 @@ describe('maintenance privilege boundary', () => {
 
   it('allows maintenance_login to invoke all three purge functions through maintenanceDb', async () => {
     const tenantId = randomUUID();
+    await provisionTenant(pg, tenantId);
     const service = new SyncMaintenanceService(pg.maintenanceDb);
     await service.purgeExpiredDeviceProofNonces(tenantId, 1);
     await service.purgeTenantTombstones(tenantId, 30);

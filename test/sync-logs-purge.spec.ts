@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
+import { provisionTenant, startTestPostgres, type TestPostgres } from './helpers/testcontainers-pg.js';
 import { SyncMaintenanceService } from '../src/sync-maintenance.service.js';
 import { sql } from 'drizzle-orm';
 import { withTenant } from '../src/with-tenant.js';
@@ -22,6 +22,8 @@ describe('purge_tenant_sync_logs', () => {
   const tenantB = randomUUID();
 
   beforeEach(async () => {
+    await provisionTenant(pg, tenantA);
+    await provisionTenant(pg, tenantB);
     await pg.pool.query('DELETE FROM sync_logs WHERE tenant_id IN ($1, $2)', [tenantA, tenantB]);
   });
 
@@ -167,7 +169,7 @@ describe('purge_tenant_sync_logs', () => {
         await tx.execute(sql`SELECT public.purge_tenant_sync_logs(${tenantB}::uuid, 30)`);
         const ctx = await tx.execute(sql`SELECT current_setting('app.current_tenant_id', true) AS v`);
         return String((ctx.rows[0] as Record<string, unknown>).v);
-      }, { registerTenant: false });
+      });
       expect(currentTenant).toBe(tenantA);
     } finally {
       // The Drizzle transaction owns and releases its connection.
