@@ -32,6 +32,8 @@ export class TestPostgres {
 
   readonly connectionOptions: { host: string; port: number; database: string };
 
+  readonly tenantCountBefore045: number;
+
   private constructor(
     container: Awaited<
       ReturnType<PostgreSqlContainer['start']>
@@ -47,6 +49,7 @@ export class TestPostgres {
     maintenancePool: Pool,
     maintenanceDb: ReturnType<typeof drizzle<typeof schema>>,
     connectionOptions: { host: string; port: number; database: string },
+    tenantCountBefore045: number,
   ) {
     this.container = container;
     this.pool = pool;
@@ -60,6 +63,7 @@ export class TestPostgres {
     this.maintenancePool = maintenancePool;
     this.maintenanceDb = maintenanceDb;
     this.connectionOptions = connectionOptions;
+    this.tenantCountBefore045 = tenantCountBefore045;
   }
 
   static async start(): Promise<TestPostgres> {
@@ -315,6 +319,37 @@ export class TestPostgres {
   await pool.query(migration16);
   for (const migration of posMigrations) await pool.query(migration);
 
+  // Seed known pre-migration rows so the 045 backfill is exercised, not vacuously tested.
+  await pool.query(
+    `INSERT INTO tenants (id, first_seen_at) VALUES
+      ('10000000-0000-4000-8000-000000000045', 1760000000000),
+      ('10000000-0000-4000-8000-000000000046', 1760000001000)`,
+  );
+  const tenantCountBefore045 = Number(
+    (await pool.query('SELECT count(*)::int AS n FROM tenants')).rows[0].n,
+  );
+
+  // Migration 045 is included in every isolated PostgreSQL integration database.
+  const migration45 = fs.readFileSync(
+    path.join(migrationsDir, '045_tenants_business_registry.sql'),
+    'utf8',
+  );
+  await pool.query(migration45);
+
+  const tenantBackfill = await pool.query(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE status = 'active')::int AS active,
+            count(*) FILTER (WHERE status IS NULL OR status NOT IN ('pending', 'active', 'suspended'))::int AS invalid
+       FROM tenants`,
+  );
+  if (
+    tenantBackfill.rows[0].total !== tenantCountBefore045 ||
+    tenantBackfill.rows[0].active !== tenantCountBefore045 ||
+    tenantBackfill.rows[0].invalid !== 0
+  ) {
+    throw new Error('Migration 045 tenant backfill verification failed');
+  }
+
     /*
      * ========================================================
      * DRIZZLE
@@ -394,6 +429,7 @@ export class TestPostgres {
       maintenancePool,
       maintenanceDb,
       { host: container.getHost(), port: container.getPort(), database: container.getDatabase() },
+      tenantCountBefore045,
     );
   }
 
